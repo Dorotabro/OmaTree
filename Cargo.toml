@@ -1,0 +1,12 @@
+[package]
+name = "omatree"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cxx = "1.0"
+cxx-qt = "0.10"
+cxx-qt-lib = { version = "0.10", features = ["qt_gui", "qt_qml"] }
+
+[build-dependencies]
+cxx-qt-build = { version = "0.10", features = ["link_qt_object_files"] }
