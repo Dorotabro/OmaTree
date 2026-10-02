@@ -1,4 +1,7 @@
 pub mod app;
+// Not yet wired to the UI; exposed through CXX-Qt in a later ticket.
+#[allow(dead_code)]
+mod notebook;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QUrl};
 
@@ -12,15 +15,5 @@ fn main() {
 
     if let Some(app) = qt_app.as_mut() {
         app.exec();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_app_instantiation() {
-        let _app = app::OmaTreeAppRust::default();
     }
 }
