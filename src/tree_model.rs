@@ -8,11 +8,11 @@
 use core::pin::Pin;
 
 use cxx_qt::CxxQtType;
-use cxx_qt_lib::{QList, QModelIndex, QString, QVariant};
+use cxx_qt_lib::{QList, QModelIndex, QString, QUrl, QVariant};
 
 use std::path::Path;
 
-use crate::document::Document;
+use crate::document::{with_default_extension, Document};
 use crate::notebook::{NodeId, Notebook};
 
 #[cxx_qt::bridge]
@@ -24,6 +24,8 @@ pub mod qobject {
         type QVariant = cxx_qt_lib::QVariant;
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
+        include!("cxx-qt-lib/qurl.h");
+        type QUrl = cxx_qt_lib::QUrl;
         include!("cxx-qt-lib/qlist.h");
         type QList_i32 = cxx_qt_lib::QList<i32>;
         include!("cxx-qt-lib/qtypes.h");
@@ -156,6 +158,33 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "openPath"]
         fn open_path(self: Pin<&mut NotebookModel>, path: &QString) -> QString;
+
+        /// Opens an existing notebook chosen in a file dialog. Never creates
+        /// a file. Returns an empty string on success, otherwise a message;
+        /// on failure the current notebook is left completely unchanged.
+        #[qinvokable]
+        #[cxx_name = "openFile"]
+        fn open_file(self: Pin<&mut NotebookModel>, url: &QUrl) -> QString;
+
+        /// The local path a Save As dialog result refers to, with `.omatree`
+        /// appended if no extension was given. Empty if `url` is not a local
+        /// file.
+        #[qinvokable]
+        #[cxx_name = "saveAsTarget"]
+        fn save_as_target(self: &NotebookModel, url: &QUrl) -> QString;
+
+        /// Whether Save As to `path` would replace some other existing file.
+        #[qinvokable]
+        #[cxx_name = "needsOverwriteConfirmation"]
+        fn needs_overwrite_confirmation(self: &NotebookModel, path: &QString) -> bool;
+
+        /// Saves under `path` and switches to it only if that succeeds.
+        /// `overwrite` must be true to replace an existing notebook. Returns
+        /// an empty string on success, otherwise a message; on failure the
+        /// path, name and dirty state are unchanged.
+        #[qinvokable]
+        #[cxx_name = "saveAs"]
+        fn save_as(self: Pin<&mut NotebookModel>, path: &QString, overwrite: bool) -> QString;
 
         /// Saves to the notebook's file. Returns an empty string on success,
         /// otherwise a message for the user; dirty stays set on failure.
@@ -422,20 +451,73 @@ impl qobject::NotebookModel {
         ok
     }
 
-    fn open_path(mut self: Pin<&mut Self>, path: &QString) -> QString {
+    /// Swaps in a fully built document. Replacing the whole notebook is the
+    /// one legitimate model reset.
+    fn replace_document(mut self: Pin<&mut Self>, document: Document) {
+        self.as_mut().begin_reset_model();
+        self.as_mut().rust_mut().document = document;
+        self.as_mut().end_reset_model();
+        self.as_mut().sync_state();
+    }
+
+    fn open_path(self: Pin<&mut Self>, path: &QString) -> QString {
         let path = String::from(path);
-        match Document::open(Path::new(&path)) {
+        self.finish_open(&path, Document::open(Path::new(&path)))
+    }
+
+    fn open_file(self: Pin<&mut Self>, url: &QUrl) -> QString {
+        let Some(path) = url.to_local_file().map(String::from) else {
+            return QString::from("That location is not a local file.");
+        };
+        self.finish_open(&path, Document::open_existing(Path::new(&path)))
+    }
+
+    fn finish_open(
+        self: Pin<&mut Self>,
+        path: &str,
+        result: Result<Document, crate::document::DocumentError>,
+    ) -> QString {
+        match result {
             Err(e) => {
                 eprintln!("omatree: could not open {path}: {e}");
                 QString::from(e.open_message().as_str())
             }
             Ok(document) => {
-                // Replacing the whole notebook is the one legitimate reset.
-                self.as_mut().begin_reset_model();
-                self.as_mut().rust_mut().document = document;
-                self.as_mut().end_reset_model();
-                self.as_mut().sync_state();
+                self.replace_document(document);
                 QString::default()
+            }
+        }
+    }
+
+    fn save_as_target(&self, url: &QUrl) -> QString {
+        match url.to_local_file() {
+            Some(path) => {
+                let path = with_default_extension(Path::new(&String::from(path)));
+                QString::from(path.to_string_lossy().as_ref())
+            }
+            None => QString::default(),
+        }
+    }
+
+    fn needs_overwrite_confirmation(&self, path: &QString) -> bool {
+        self.rust()
+            .document
+            .save_as_needs_confirmation(Path::new(&String::from(path)))
+    }
+
+    fn save_as(mut self: Pin<&mut Self>, path: &QString, overwrite: bool) -> QString {
+        let path = String::from(path);
+        let result = self
+            .as_mut()
+            .rust_mut()
+            .document
+            .save_as(Path::new(&path), overwrite);
+        self.as_mut().sync_state();
+        match result {
+            Ok(()) => QString::default(),
+            Err(e) => {
+                eprintln!("omatree: save as {path} failed: {e}");
+                QString::from(e.save_as_message().as_str())
             }
         }
     }

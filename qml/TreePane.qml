@@ -12,6 +12,9 @@ Item {
     signal newRootRequested
     signal newChildRequested
     signal deleteRequested
+    signal openRequested
+    signal saveRequested
+    signal saveAsRequested
 
     // Expands ancestors of `index` and scrolls it into view.
     function reveal(index) {
@@ -86,6 +89,34 @@ Item {
                 flat: true
                 enabled: pane.selection.currentIndex.valid
                 onClicked: pane.newChildRequested()
+            }
+            Item {
+                Layout.fillWidth: true
+            }
+            // The only document controls on screen: one small menu.
+            Button {
+                id: fileButton
+
+                text: qsTr("File")
+                flat: true
+                onClicked: fileMenu.popup(fileButton, 0, -fileMenu.implicitHeight)
+
+                Menu {
+                    id: fileMenu
+
+                    MenuItem {
+                        text: qsTr("Open…\tCtrl+O")
+                        onTriggered: pane.openRequested()
+                    }
+                    MenuItem {
+                        text: qsTr("Save\tCtrl+S")
+                        onTriggered: pane.saveRequested()
+                    }
+                    MenuItem {
+                        text: qsTr("Save As…\tCtrl+Shift+S")
+                        onTriggered: pane.saveAsRequested()
+                    }
+                }
             }
         }
     }

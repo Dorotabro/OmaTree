@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs
 import org.omatree
 
 ApplicationWindow {
@@ -66,12 +67,69 @@ ApplicationWindow {
         return error === "";
     }
 
+    // --- Document workflow -------------------------------------------------
+    // The document only changes (path, contents, dirty) inside the model, and
+    // only after an Open or Save As has fully succeeded. QML just sequences
+    // the dialogs. A "continuation" is a function to run once the step before
+    // it has succeeded; it is dropped on cancel or failure.
+
+    // What to do after a pending Save As succeeds (or null).
+    property var afterSaveAs: null
+
+    function runContinuation(then) {
+        if (then)
+            then();
+    }
+
+    // Ctrl+S: save in place, or Save As if the notebook has no file yet.
+    function saveCurrent() {
+        if (notebook.hasPath())
+            save();
+        else
+            startSaveAs(null);
+    }
+
+    function startSaveAs(then) {
+        afterSaveAs = then;
+        saveDialog.open();
+    }
+
+    function finishSaveAs(path, overwrite) {
+        const error = notebook.saveAs(path, overwrite);
+        const then = afterSaveAs;
+        afterSaveAs = null;
+        if (error !== "")
+            showError(error);
+        else
+            runContinuation(then);
+    }
+
+    // Runs `then` straight away if nothing would be lost, otherwise asks the
+    // user first (Save / Discard / Cancel).
+    function whenSafeToLeave(then) {
+        if (notebook.dirty)
+            confirmUnsaved.ask(then);
+        else
+            then();
+    }
+
+    function requestOpen() {
+        whenSafeToLeave(() => openDialog.open());
+    }
+
+    function requestClose() {
+        whenSafeToLeave(() => {
+            root.discardOnClose = true;
+            root.close();
+        });
+    }
+
     Component.onCompleted: openStartupPath()
 
     onClosing: close => {
         if (notebook.dirty && !discardOnClose) {
             close.accepted = false;
-            confirmClose.ask();
+            requestClose();
         }
     }
 
@@ -128,7 +186,15 @@ ApplicationWindow {
     }
     Shortcut {
         sequence: "Ctrl+S"
-        onActivated: root.save()
+        onActivated: root.saveCurrent()
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+S"
+        onActivated: root.startSaveAs(null)
+    }
+    Shortcut {
+        sequence: "Ctrl+O"
+        onActivated: root.requestOpen()
     }
     Shortcut {
         sequence: "F2"
@@ -158,6 +224,9 @@ ApplicationWindow {
             onNewRootRequested: root.createRoot()
             onNewChildRequested: root.createChild()
             onDeleteRequested: confirmDelete.askAboutSelection()
+            onOpenRequested: root.requestOpen()
+            onSaveRequested: root.saveCurrent()
+            onSaveAsRequested: root.startSaveAs(null)
         }
 
         EditorPane {
@@ -197,18 +266,16 @@ ApplicationWindow {
         }
     }
 
+    // Shown before anything that would drop unsaved changes (Open, close).
     Dialog {
-        id: confirmClose
+        id: confirmUnsaved
 
-        function ask() {
-            const name = notebook.documentName;
-            if (notebook.hasPath()) {
-                message2.text = qsTr("“%1” has unsaved changes.").arg(name);
-                standardButtons = Dialog.Save | Dialog.Discard | Dialog.Cancel;
-            } else {
-                message2.text = qsTr("This notebook has no file, so its changes can't be saved.");
-                standardButtons = Dialog.Discard | Dialog.Cancel;
-            }
+        // Run after the user saves or discards.
+        property var continuation: null
+
+        function ask(then) {
+            continuation = then;
+            unsavedText.text = notebook.hasPath() ? qsTr("“%1” has unsaved changes.").arg(notebook.documentName) : qsTr("This notebook has not been saved yet.");
             open();
         }
 
@@ -218,21 +285,104 @@ ApplicationWindow {
         width: 340
         modal: true
         title: qsTr("Unsaved changes")
-        // Save closes only if the save worked; a failure shows the error and
-        // keeps the window open.
+        standardButtons: Dialog.Save | Dialog.Discard | Dialog.Cancel
+        // The Save button reads "Save As…" for a notebook with no file, and
+        // Discard is not "Close without Saving", since it is also used by Open.
+        onAboutToShow: {
+            const save = standardButton(Dialog.Save);
+            if (save)
+                save.text = notebook.hasPath() ? qsTr("Save") : qsTr("Save As…");
+            const discard = standardButton(Dialog.Discard);
+            if (discard)
+                discard.text = qsTr("Discard");
+        }
+        // Save: carry on only if the save worked. A failed or cancelled save
+        // keeps the current notebook and drops the pending action.
         onAccepted: {
-            if (root.save())
-                root.close();
+            const then = continuation;
+            continuation = null;
+            if (notebook.hasPath()) {
+                if (root.save())
+                    root.runContinuation(then);
+            } else {
+                root.startSaveAs(then);
+            }
         }
+        // Discard only lets the pending action proceed; the notebook itself
+        // is not touched here.
         onDiscarded: {
-            root.discardOnClose = true;
-            root.close();
+            const then = continuation;
+            continuation = null;
+            root.runContinuation(then);
         }
+        onRejected: continuation = null
 
         contentItem: Label {
-            id: message2
+            id: unsavedText
             wrapMode: Text.Wrap
         }
+    }
+
+    Dialog {
+        id: confirmOverwrite
+
+        property string path: ""
+
+        function ask(target) {
+            path = target;
+            overwriteText.text = qsTr("“%1” already exists. Replace it with this notebook?").arg(target.split("/").pop());
+            open();
+        }
+
+        parent: Overlay.overlay
+        x: Math.round((parent.width - width) / 2)
+        y: Math.round((parent.height - height) / 2)
+        width: 340
+        modal: true
+        title: qsTr("Replace file")
+        standardButtons: Dialog.Yes | Dialog.No
+        onAccepted: root.finishSaveAs(path, true)
+        onRejected: root.afterSaveAs = null
+
+        contentItem: Label {
+            id: overwriteText
+            wrapMode: Text.Wrap
+        }
+    }
+
+    FileDialog {
+        id: openDialog
+
+        title: qsTr("Open notebook")
+        fileMode: FileDialog.OpenFile
+        nameFilters: [qsTr("OmaTree notebooks (*.omatree)"), qsTr("All files (*)")]
+        onAccepted: {
+            const error = notebook.openFile(selectedFile);
+            if (error !== "")
+                root.showError(error);
+        }
+    }
+
+    FileDialog {
+        id: saveDialog
+
+        title: qsTr("Save notebook as")
+        fileMode: FileDialog.SaveFile
+        nameFilters: [qsTr("OmaTree notebooks (*.omatree)"), qsTr("All files (*)")]
+        // We confirm overwrites ourselves, after `.omatree` has been appended.
+        options: FileDialog.DontConfirmOverwrite
+        onAccepted: {
+            const path = notebook.saveAsTarget(selectedFile);
+            if (path === "") {
+                root.afterSaveAs = null;
+                root.showError(qsTr("Please choose a file on this computer."));
+            } else if (notebook.needsOverwriteConfirmation(path)) {
+                confirmOverwrite.ask(path);
+            } else {
+                root.finishSaveAs(path, false);
+            }
+        }
+        onRejected: root.afterSaveAs = null
     }
 
     Dialog {
