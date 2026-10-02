@@ -32,7 +32,7 @@ The intended interface is approximately:
     │                    │                             │
     │ ▾ Projects         │ OmaTree                     │
     │   ├ OmaTree        │                             │
-    │   │ ├ Ideas        │ A stupidly simple tree     │
+    │   │ ├ Ideas        │ A stupidly simple tree      │
     │   │ └ Bugs         │ of notes.                   │
     │   └ Threatwright   │                             │
     │                    │                             │
