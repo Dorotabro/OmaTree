@@ -10,6 +10,9 @@ use core::pin::Pin;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QList, QModelIndex, QString, QVariant};
 
+use std::path::Path;
+
+use crate::document::Document;
 use crate::notebook::{NodeId, Notebook};
 
 #[cxx_qt::bridge]
@@ -33,6 +36,8 @@ pub mod qobject {
         #[qobject]
         #[qml_element]
         #[base = QAbstractItemModel]
+        #[qproperty(bool, dirty, READ, NOTIFY)]
+        #[qproperty(QString, document_name, cxx_name = "documentName", READ, NOTIFY)]
         type NotebookModel = super::NotebookModelRust;
     }
 
@@ -65,6 +70,13 @@ pub mod qobject {
         #[inherit]
         #[cxx_name = "endRemoveRows"]
         fn end_remove_rows(self: Pin<&mut NotebookModel>);
+
+        #[inherit]
+        #[cxx_name = "beginResetModel"]
+        fn begin_reset_model(self: Pin<&mut NotebookModel>);
+        #[inherit]
+        #[cxx_name = "endResetModel"]
+        fn end_reset_model(self: Pin<&mut NotebookModel>);
     }
 
     unsafe extern "RustQt" {
@@ -136,15 +148,48 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "setBody"]
         fn set_body(self: Pin<&mut NotebookModel>, index: &QModelIndex, body: &QString) -> bool;
+
+        /// Replaces the notebook with the one stored at `path` (created
+        /// empty if the path does not exist). Returns an empty string on
+        /// success, otherwise a message for the user; on failure nothing
+        /// changes.
+        #[qinvokable]
+        #[cxx_name = "openPath"]
+        fn open_path(self: Pin<&mut NotebookModel>, path: &QString) -> QString;
+
+        /// Saves to the notebook's file. Returns an empty string on success,
+        /// otherwise a message for the user; dirty stays set on failure.
+        #[qinvokable]
+        fn save(self: Pin<&mut NotebookModel>) -> QString;
+
+        /// Whether the notebook has a file to save to.
+        #[qinvokable]
+        #[cxx_name = "hasPath"]
+        fn has_path(self: &NotebookModel) -> bool;
     }
 }
 
 const DISPLAY_ROLE: i32 = 0;
 const EDIT_ROLE: i32 = 2;
 
-#[derive(Default)]
+/// The model owns the single open `Document` (and through it the one
+/// `Notebook`). `dirty` and `document_name` mirror it for QML.
 pub struct NotebookModelRust {
-    notebook: Notebook,
+    document: Document,
+    dirty: bool,
+    document_name: QString,
+}
+
+impl Default for NotebookModelRust {
+    fn default() -> Self {
+        let document = Document::untitled();
+        let document_name = QString::from(document.display_name().as_str());
+        NotebookModelRust {
+            document,
+            dirty: false,
+            document_name,
+        }
+    }
 }
 
 /// Resolves a (row, column, internal id) triple to a live node.
@@ -187,7 +232,7 @@ impl qobject::NotebookModel {
             return None;
         }
         resolve(
-            &self.rust().notebook,
+            self.rust().document.notebook(),
             index.row(),
             index.column(),
             index.internal_id(),
@@ -195,7 +240,7 @@ impl qobject::NotebookModel {
     }
 
     fn index_for(&self, id: NodeId) -> QModelIndex {
-        let nb = &self.rust().notebook;
+        let nb = self.rust().document.notebook();
         match (position(nb, id), usize::try_from(id.get())) {
             (Some(row), Ok(raw)) => self.create_index(row, 0, raw.into()),
             _ => QModelIndex::default(),
@@ -218,7 +263,7 @@ impl qobject::NotebookModel {
         let Some(parent) = self.parent_for(parent) else {
             return QModelIndex::default();
         };
-        match child_at(&self.rust().notebook, parent, row) {
+        match child_at(self.rust().document.notebook(), parent, row) {
             Some(id) => self.index_for(id),
             None => QModelIndex::default(),
         }
@@ -228,7 +273,13 @@ impl qobject::NotebookModel {
         let Some(id) = self.node_for(child) else {
             return QModelIndex::default();
         };
-        match self.rust().notebook.get(id).and_then(|n| n.parent_id()) {
+        match self
+            .rust()
+            .document
+            .notebook()
+            .get(id)
+            .and_then(|n| n.parent_id())
+        {
             Some(parent) => self.index_for(parent),
             None => QModelIndex::default(),
         }
@@ -238,7 +289,7 @@ impl qobject::NotebookModel {
         let Some(parent) = self.parent_for(parent) else {
             return 0;
         };
-        i32::try_from(child_count(&self.rust().notebook, parent)).unwrap_or(i32::MAX)
+        i32::try_from(child_count(self.rust().document.notebook(), parent)).unwrap_or(i32::MAX)
     }
 
     fn column_count(&self, _parent: &QModelIndex) -> i32 {
@@ -251,24 +302,39 @@ impl qobject::NotebookModel {
         }
         match self
             .node_for(index)
-            .and_then(|id| self.rust().notebook.get(id))
+            .and_then(|id| self.rust().document.notebook().get(id))
         {
             Some(node) => QVariant::from(&QString::from(node.title())),
             None => QVariant::default(),
         }
     }
 
+    /// Pushes the document's dirty flag and name to QML.
+    fn sync_state(mut self: Pin<&mut Self>) {
+        let dirty = self.rust().document.is_dirty();
+        if self.rust().dirty != dirty {
+            self.as_mut().rust_mut().dirty = dirty;
+            self.as_mut().dirty_changed();
+        }
+        let name = QString::from(self.rust().document.display_name().as_str());
+        if self.rust().document_name != name {
+            self.as_mut().rust_mut().document_name = name;
+            self.as_mut().document_name_changed();
+        }
+    }
+
     fn create_root(mut self: Pin<&mut Self>, title: &QString) -> QModelIndex {
-        let row = child_count(&self.rust().notebook, None);
+        let row = child_count(self.rust().document.notebook(), None);
         let row = i32::try_from(row).unwrap_or(i32::MAX);
         self.as_mut()
             .begin_insert_rows(&QModelIndex::default(), row, row);
         let id = self
             .as_mut()
             .rust_mut()
-            .notebook
+            .document
             .create_root(&String::from(title));
         self.as_mut().end_insert_rows();
+        self.as_mut().sync_state();
         self.index_for(id)
     }
 
@@ -281,15 +347,16 @@ impl qobject::NotebookModel {
         let Some(parent_id) = self.node_for(parent) else {
             return QModelIndex::default();
         };
-        let row = child_count(&self.rust().notebook, Some(parent_id));
+        let row = child_count(self.rust().document.notebook(), Some(parent_id));
         let row = i32::try_from(row).unwrap_or(i32::MAX);
         self.as_mut().begin_insert_rows(parent, row, row);
         let created = self
             .as_mut()
             .rust_mut()
-            .notebook
+            .document
             .create_child(parent_id, &String::from(title));
         self.as_mut().end_insert_rows();
+        self.as_mut().sync_state();
         match created {
             Ok(id) => self.index_for(id),
             Err(_) => QModelIndex::default(),
@@ -303,7 +370,7 @@ impl qobject::NotebookModel {
         if self
             .as_mut()
             .rust_mut()
-            .notebook
+            .document
             .rename(id, &String::from(title))
             .is_err()
         {
@@ -312,6 +379,7 @@ impl qobject::NotebookModel {
         let index = self.index_for(id);
         self.as_mut()
             .data_changed(&index, &index, &QList::<i32>::default());
+        self.as_mut().sync_state();
         true
     }
 
@@ -319,20 +387,21 @@ impl qobject::NotebookModel {
         let Some(id) = self.node_for(index) else {
             return false;
         };
-        let Some(row) = position(&self.rust().notebook, id) else {
+        let Some(row) = position(self.rust().document.notebook(), id) else {
             return false;
         };
         let parent = self.parent(&self.index_for(id));
         self.as_mut().begin_remove_rows(&parent, row, row);
-        let removed = self.as_mut().rust_mut().notebook.delete(id).is_ok();
+        let removed = self.as_mut().rust_mut().document.delete(id).is_ok();
         self.as_mut().end_remove_rows();
+        self.as_mut().sync_state();
         removed
     }
 
     fn body(&self, index: &QModelIndex) -> QString {
         match self
             .node_for(index)
-            .and_then(|id| self.rust().notebook.get(id))
+            .and_then(|id| self.rust().document.notebook().get(id))
         {
             Some(node) => QString::from(node.body()),
             None => QString::default(),
@@ -343,11 +412,48 @@ impl qobject::NotebookModel {
         let Some(id) = self.node_for(index) else {
             return false;
         };
-        self.as_mut()
+        let ok = self
+            .as_mut()
             .rust_mut()
-            .notebook
+            .document
             .set_body(id, &String::from(body))
-            .is_ok()
+            .is_ok();
+        self.as_mut().sync_state();
+        ok
+    }
+
+    fn open_path(mut self: Pin<&mut Self>, path: &QString) -> QString {
+        let path = String::from(path);
+        match Document::open(Path::new(&path)) {
+            Err(e) => {
+                eprintln!("omatree: could not open {path}: {e}");
+                QString::from(e.open_message().as_str())
+            }
+            Ok(document) => {
+                // Replacing the whole notebook is the one legitimate reset.
+                self.as_mut().begin_reset_model();
+                self.as_mut().rust_mut().document = document;
+                self.as_mut().end_reset_model();
+                self.as_mut().sync_state();
+                QString::default()
+            }
+        }
+    }
+
+    fn save(mut self: Pin<&mut Self>) -> QString {
+        let result = self.as_mut().rust_mut().document.save();
+        self.as_mut().sync_state();
+        match result {
+            Ok(()) => QString::default(),
+            Err(e) => {
+                eprintln!("omatree: save failed: {e}");
+                QString::from(e.save_message().as_str())
+            }
+        }
+    }
+
+    fn has_path(&self) -> bool {
+        self.rust().document.has_path()
     }
 }
 

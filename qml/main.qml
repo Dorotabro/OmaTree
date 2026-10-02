@@ -11,7 +11,7 @@ ApplicationWindow {
     minimumWidth: 480
     minimumHeight: 320
     visible: true
-    title: qsTr("OmaTree")
+    title: qsTr("OmaTree — %1%2").arg(notebook.documentName).arg(notebook.dirty ? " *" : "")
 
     // The one and only notebook model, shared by every part of the UI.
     NotebookModel {
@@ -24,7 +24,56 @@ ApplicationWindow {
         model: notebook
     }
 
+    // Replacing the whole notebook resets the model. The selection model
+    // would drop its index silently on reset, leaving the editor showing the
+    // old note, so clear it explicitly while the old index is still valid.
+    Connections {
+        target: notebook
+        function onModelAboutToBeReset() {
+            selection.clear();
+            selection.clearCurrentIndex();
+        }
+    }
+
     readonly property string defaultTitle: qsTr("New note")
+
+    // Set once the user has chosen to throw away unsaved changes on close.
+    property bool discardOnClose: false
+
+    function showError(text) {
+        errorMessage.text = text;
+        errorDialog.open();
+    }
+
+    // Optional notebook path from the command line: `omatree [path]`.
+    function openStartupPath() {
+        const args = Qt.application.arguments.slice(1);
+        if (args.length > 1) {
+            showError(qsTr("OmaTree takes at most one notebook path."));
+            return;
+        }
+        if (args.length === 1) {
+            const error = notebook.openPath(args[0]);
+            if (error !== "")
+                showError(error);
+        }
+    }
+
+    function save() {
+        const error = notebook.save();
+        if (error !== "")
+            showError(error);
+        return error === "";
+    }
+
+    Component.onCompleted: openStartupPath()
+
+    onClosing: close => {
+        if (notebook.dirty && !discardOnClose) {
+            close.accepted = false;
+            confirmClose.ask();
+        }
+    }
 
     function select(index) {
         selection.setCurrentIndex(index, ItemSelectionModel.ClearAndSelect);
@@ -76,6 +125,10 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+Shift+N"
         onActivated: root.createChild()
+    }
+    Shortcut {
+        sequence: "Ctrl+S"
+        onActivated: root.save()
     }
     Shortcut {
         sequence: "F2"
@@ -140,6 +193,61 @@ ApplicationWindow {
 
         contentItem: Label {
             id: message
+            wrapMode: Text.Wrap
+        }
+    }
+
+    Dialog {
+        id: confirmClose
+
+        function ask() {
+            const name = notebook.documentName;
+            if (notebook.hasPath()) {
+                message2.text = qsTr("“%1” has unsaved changes.").arg(name);
+                standardButtons = Dialog.Save | Dialog.Discard | Dialog.Cancel;
+            } else {
+                message2.text = qsTr("This notebook has no file, so its changes can't be saved.");
+                standardButtons = Dialog.Discard | Dialog.Cancel;
+            }
+            open();
+        }
+
+        parent: Overlay.overlay
+        x: Math.round((parent.width - width) / 2)
+        y: Math.round((parent.height - height) / 2)
+        width: 340
+        modal: true
+        title: qsTr("Unsaved changes")
+        // Save closes only if the save worked; a failure shows the error and
+        // keeps the window open.
+        onAccepted: {
+            if (root.save())
+                root.close();
+        }
+        onDiscarded: {
+            root.discardOnClose = true;
+            root.close();
+        }
+
+        contentItem: Label {
+            id: message2
+            wrapMode: Text.Wrap
+        }
+    }
+
+    Dialog {
+        id: errorDialog
+
+        parent: Overlay.overlay
+        x: Math.round((parent.width - width) / 2)
+        y: Math.round((parent.height - height) / 2)
+        width: 340
+        modal: true
+        title: qsTr("OmaTree")
+        standardButtons: Dialog.Ok
+
+        contentItem: Label {
+            id: errorMessage
             wrapMode: Text.Wrap
         }
     }
