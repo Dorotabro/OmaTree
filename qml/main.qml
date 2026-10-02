@@ -13,6 +13,10 @@ Window {
         id: app
     }
 
+    NotebookModel {
+        id: model
+    }
+
     Text {
         anchors.centerIn: parent
         text: "OmaTree"

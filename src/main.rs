@@ -5,6 +5,7 @@ mod notebook;
 // Not yet wired to the application.
 #[allow(dead_code)]
 mod storage;
+pub mod tree_model;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QUrl};
 
