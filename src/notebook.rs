@@ -11,6 +11,11 @@ impl NodeId {
     pub fn get(self) -> u64 {
         self.0
     }
+
+    /// For rebuilding persisted ids; fresh ids only come from `Notebook`.
+    pub(crate) fn from_raw(raw: u64) -> Self {
+        NodeId(raw)
+    }
 }
 
 /// A single note. Read-only to callers; only `Notebook` mutates nodes, so
@@ -25,6 +30,23 @@ pub struct Node {
 }
 
 impl Node {
+    /// Unvalidated; only meant to be passed to `Notebook::from_nodes`.
+    pub(crate) fn from_parts(
+        id: NodeId,
+        parent_id: Option<NodeId>,
+        position: usize,
+        title: String,
+        body: String,
+    ) -> Self {
+        Node {
+            id,
+            parent_id,
+            position,
+            title,
+            body,
+        }
+    }
+
     pub fn id(&self) -> NodeId {
         self.id
     }
@@ -51,12 +73,15 @@ impl Node {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotebookError {
     NodeNotFound(NodeId),
+    /// Nodes handed to `Notebook::from_nodes` do not form a valid tree.
+    InvalidStructure(&'static str),
 }
 
 impl fmt::Display for NotebookError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             NotebookError::NodeNotFound(id) => write!(f, "node {} does not exist", id.0),
+            NotebookError::InvalidStructure(why) => write!(f, "invalid notebook: {why}"),
         }
     }
 }
@@ -72,6 +97,72 @@ pub struct Notebook {
 impl Notebook {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Rebuilds a notebook from existing nodes, preserving their ids.
+    ///
+    /// Fails unless ids are unique, every parent exists, the nodes form a
+    /// tree (no cycles), and each sibling group has positions `0..n`.
+    /// New ids continue after the highest existing one.
+    pub(crate) fn from_nodes(nodes: Vec<Node>) -> Result<Self, NotebookError> {
+        let mut map = BTreeMap::new();
+        for node in nodes {
+            if map.insert(node.id, node).is_some() {
+                return Err(NotebookError::InvalidStructure("duplicate node id"));
+            }
+        }
+
+        let mut groups: BTreeMap<Option<NodeId>, Vec<usize>> = BTreeMap::new();
+        for node in map.values() {
+            if let Some(parent) = node.parent_id {
+                if !map.contains_key(&parent) {
+                    return Err(NotebookError::InvalidStructure("parent does not exist"));
+                }
+            }
+            groups
+                .entry(node.parent_id)
+                .or_default()
+                .push(node.position);
+        }
+        for positions in groups.values_mut() {
+            positions.sort_unstable();
+            if !positions.iter().copied().eq(0..positions.len()) {
+                return Err(NotebookError::InvalidStructure(
+                    "sibling positions are not contiguous",
+                ));
+            }
+        }
+
+        let next_id = match map.keys().next_back() {
+            Some(max) => max
+                .0
+                .checked_add(1)
+                .ok_or(NotebookError::InvalidStructure("node id out of range"))?,
+            None => 0,
+        };
+        let notebook = Notebook {
+            nodes: map,
+            next_id,
+        };
+
+        // With every parent present, any node not reachable from a root
+        // must be part of a cycle.
+        if notebook.in_tree_order().len() != notebook.nodes.len() {
+            return Err(NotebookError::InvalidStructure("parent cycle"));
+        }
+        Ok(notebook)
+    }
+
+    /// All nodes, parents before their children, siblings in order.
+    pub(crate) fn in_tree_order(&self) -> Vec<&Node> {
+        let mut out = self.siblings(None);
+        let mut i = 0;
+        while i < out.len() {
+            let children = self.siblings(Some(out[i].id));
+            out.extend(children);
+            i += 1;
+        }
+        out
     }
 
     pub fn create_root(&mut self, title: &str) -> NodeId {

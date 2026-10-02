@@ -2,6 +2,9 @@ pub mod app;
 // Not yet wired to the UI; exposed through CXX-Qt in a later ticket.
 #[allow(dead_code)]
 mod notebook;
+// Not yet wired to the application.
+#[allow(dead_code)]
+mod storage;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QUrl};
 
