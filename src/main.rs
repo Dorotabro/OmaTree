@@ -2,6 +2,7 @@ pub mod app;
 mod document;
 mod notebook;
 mod recovery;
+mod search;
 mod storage;
 mod theme;
 pub mod theme_model;

@@ -416,6 +416,47 @@ impl Notebook {
         }
     }
 
+    /// Every node in the order the tree is shown: each note, then its
+    /// children (in sibling order), depth first. One pass over the notes.
+    pub(crate) fn depth_first(&self) -> Vec<&Node> {
+        let mut children: BTreeMap<Option<NodeId>, Vec<&Node>> = BTreeMap::new();
+        for node in self.nodes.values() {
+            children.entry(node.parent_id).or_default().push(node);
+        }
+        for group in children.values_mut() {
+            group.sort_by_key(|n| n.position);
+        }
+        let mut out = Vec::with_capacity(self.nodes.len());
+        let mut stack: Vec<&Node> = children
+            .get(&None)
+            .map(|roots| roots.iter().rev().copied().collect())
+            .unwrap_or_default();
+        while let Some(node) = stack.pop() {
+            out.push(node);
+            if let Some(kids) = children.get(&Some(node.id)) {
+                stack.extend(kids.iter().rev().copied());
+            }
+        }
+        out
+    }
+
+    /// The titles of the note's ancestors, outermost first, joined with " › ".
+    /// Empty for a top-level note (or one that does not exist).
+    pub(crate) fn breadcrumb(&self, id: NodeId) -> String {
+        let mut titles = Vec::new();
+        let mut current = self.nodes.get(&id).and_then(|n| n.parent_id);
+        // Bounded, so corrupt data can never loop forever.
+        for _ in 0..=self.nodes.len() {
+            let Some(parent) = current.and_then(|p| self.nodes.get(&p)) else {
+                break;
+            };
+            titles.push(parent.title.as_str());
+            current = parent.parent_id;
+        }
+        titles.reverse();
+        titles.join(" › ")
+    }
+
     /// All nodes, parents before their children, siblings in order.
     pub(crate) fn in_tree_order(&self) -> Vec<&Node> {
         let mut out = self.siblings(None);

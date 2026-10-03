@@ -36,6 +36,42 @@ Item {
         tree.forceActiveFocus();
     }
 
+    // --- Search ------------------------------------------------------------
+    // While searching, the result list takes the tree's place. The tree, its
+    // expansion and the selection stay exactly as they were underneath.
+
+    property bool searching: false
+
+    function startSearch() {
+        searching = true;
+        searchPane.open();
+    }
+
+    // Leaves search without touching the selection (Escape, or a note having
+    // been chosen).
+    function stopSearch() {
+        if (!searching)
+            return;
+        searching = false;
+        searchPane.reset();
+        focusTree();
+    }
+
+    // The user picked result `index`. The note is looked up again now, as a
+    // new index, and then shown in its real place in the tree.
+    function openResult(index) {
+        const found = notebook.activateSearchResult(index);
+        if (!found.valid) {
+            // The note is gone (or the list was stale): select nothing, and
+            // bring the list up to date.
+            searchPane.search(false);
+            return;
+        }
+        stopSearch();
+        selection.setCurrentIndex(found, ItemSelectionModel.ClearAndSelect);
+        reveal(found);
+    }
+
     // --- Drag and drop -----------------------------------------------------
     // A row is dragged with the pointer. Where it would land is worked out
     // from the pointer position (upper/lower quarter of a row: before/after
@@ -142,11 +178,23 @@ Item {
         anchors.fill: parent
         spacing: 0
 
+        SearchPane {
+            id: searchPane
+
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: pane.searching
+            notebook: pane.notebook
+            onActivateRequested: index => pane.openResult(index)
+            onCloseRequested: pane.stopSearch()
+        }
+
         TreeView {
             id: tree
 
             Layout.fillWidth: true
             Layout.fillHeight: true
+            visible: !pane.searching
             clip: true
             model: pane.notebook
             selectionModel: pane.selection
@@ -245,17 +293,29 @@ Item {
                 text: qsTr("New note")
                 flat: true
                 horizontalPadding: 8
+                // Just wide enough for the label; the style's default is wider.
+                implicitWidth: implicitContentWidth + leftPadding + rightPadding
                 onClicked: pane.newRootRequested()
             }
             Button {
                 text: qsTr("New child")
                 flat: true
                 horizontalPadding: 8
+                // Just wide enough for the label; the style's default is wider.
+                implicitWidth: implicitContentWidth + leftPadding + rightPadding
                 enabled: pane.selection.currentIndex.valid
                 onClicked: pane.newChildRequested()
             }
             Item {
                 Layout.fillWidth: true
+            }
+            Button {
+                text: qsTr("Search")
+                flat: true
+                horizontalPadding: 8
+                // Just wide enough for the label; the style's default is wider.
+                implicitWidth: implicitContentWidth + leftPadding + rightPadding
+                onClicked: pane.startSearch()
             }
             // The only document controls on screen: one small menu.
             Button {
@@ -264,6 +324,8 @@ Item {
                 text: qsTr("File")
                 flat: true
                 horizontalPadding: 8
+                // Just wide enough for the label; the style's default is wider.
+                implicitWidth: implicitContentWidth + leftPadding + rightPadding
                 onClicked: fileMenu.popup(fileButton, 0, -fileMenu.implicitHeight)
 
                 Menu {
@@ -302,7 +364,7 @@ Item {
     // Shown instead of an empty-looking tree.
     ColumnLayout {
         anchors.centerIn: parent
-        visible: tree.rows === 0
+        visible: tree.rows === 0 && !pane.searching
         spacing: 12
 
         Label {

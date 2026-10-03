@@ -253,6 +253,8 @@ ApplicationWindow {
     }
 
     function select(index) {
+        // Whatever made this selection should be seen in the tree.
+        treePane.stopSearch();
         selection.setCurrentIndex(index, ItemSelectionModel.ClearAndSelect);
         treePane.reveal(index);
     }
@@ -338,6 +340,10 @@ ApplicationWindow {
     Shortcut {
         sequence: "Alt+Down"
         onActivated: root.moveSelected(1)
+    }
+    Shortcut {
+        sequence: "Ctrl+F"
+        onActivated: treePane.startSearch()
     }
     Shortcut {
         sequence: "F2"

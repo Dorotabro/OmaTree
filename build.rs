@@ -7,6 +7,7 @@ fn main() {
         "qml/EditorPane.qml",
         "qml/RecoveryDialog.qml",
         "qml/ThemedDialog.qml",
+        "qml/SearchPane.qml",
     ]))
     .qt_module("Quick")
     .files(["src/app.rs", "src/tree_model.rs", "src/theme_model.rs"])

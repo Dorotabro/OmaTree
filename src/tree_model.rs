@@ -15,6 +15,7 @@ use std::path::Path;
 use crate::document::{with_default_extension, Document};
 use crate::notebook::{NodeId, Notebook, NotebookError};
 use crate::recovery::RecoveryError;
+use crate::search::{self, SearchResult};
 
 #[cxx_qt::bridge]
 pub mod qobject {
@@ -42,6 +43,7 @@ pub mod qobject {
         #[qproperty(bool, dirty, READ, NOTIFY)]
         #[qproperty(QString, document_name, cxx_name = "documentName", READ, NOTIFY)]
         #[qproperty(i32, recovery_revision, cxx_name = "recoveryRevision", READ, NOTIFY)]
+        #[qproperty(i32, search_revision, cxx_name = "searchRevision", READ, NOTIFY)]
         type NotebookModel = super::NotebookModelRust;
     }
 
@@ -300,6 +302,45 @@ pub mod qobject {
         #[cxx_name = "restoreCheckpoint"]
         fn restore_checkpoint(self: Pin<&mut NotebookModel>, index: i32) -> QString;
 
+        // Search. Results are a throwaway list derived from the notebook, kept
+        // only so the list can be shown; the notebook, the document and the
+        // selection are never touched. Entries are addressed by position and
+        // never by node id. Bind to `searchRevision` to refresh a view.
+
+        /// Runs a search over titles and bodies (case-insensitive substring;
+        /// the query is trimmed) and replaces the stored results. Returns how
+        /// many notes matched.
+        #[qinvokable]
+        fn search(self: Pin<&mut NotebookModel>, query: &QString) -> i32;
+
+        /// Forgets the results.
+        #[qinvokable]
+        #[cxx_name = "clearSearch"]
+        fn clear_search(self: Pin<&mut NotebookModel>);
+
+        #[qinvokable]
+        #[cxx_name = "searchCount"]
+        fn search_count(self: &NotebookModel) -> i32;
+
+        #[qinvokable]
+        #[cxx_name = "searchTitle"]
+        fn search_title(self: &NotebookModel, index: i32) -> QString;
+
+        /// Ancestors as "A › B"; empty for a top-level note.
+        #[qinvokable]
+        #[cxx_name = "searchPath"]
+        fn search_path(self: &NotebookModel, index: i32) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "searchSnippet"]
+        fn search_snippet(self: &NotebookModel, index: i32) -> QString;
+
+        /// A fresh index for the note behind a result, looked up now. Invalid
+        /// if the result is out of range or the note no longer exists.
+        #[qinvokable]
+        #[cxx_name = "activateSearchResult"]
+        fn activate_search_result(self: &NotebookModel, index: i32) -> QModelIndex;
+
         /// Saves to the notebook's file. Returns an empty string on success,
         /// otherwise a message for the user; dirty stays set on failure.
         #[qinvokable]
@@ -322,6 +363,10 @@ pub struct NotebookModelRust {
     dirty: bool,
     document_name: QString,
     recovery_revision: i32,
+    /// The latest search results: derived, display-only, replaced on every
+    /// search. Holds node ids, which stay inside Rust.
+    search_results: Vec<SearchResult>,
+    search_revision: i32,
 }
 
 impl Default for NotebookModelRust {
@@ -333,6 +378,8 @@ impl Default for NotebookModelRust {
             dirty: false,
             document_name,
             recovery_revision: 0,
+            search_results: Vec::new(),
+            search_revision: 0,
         }
     }
 }
@@ -487,6 +534,64 @@ impl qobject::NotebookModel {
         if self.rust().document_name != name {
             self.as_mut().rust_mut().document_name = name;
             self.as_mut().document_name_changed();
+        }
+    }
+
+    /// Tells QML the search results changed.
+    fn bump_search(mut self: Pin<&mut Self>) {
+        let next = self.rust().search_revision.wrapping_add(1);
+        self.as_mut().rust_mut().search_revision = next;
+        self.as_mut().search_revision_changed();
+    }
+
+    fn search(mut self: Pin<&mut Self>, query: &QString) -> i32 {
+        let results = search::search(self.rust().document.notebook(), &String::from(query));
+        let count = count_to_i32(results.len());
+        self.as_mut().rust_mut().search_results = results;
+        self.as_mut().bump_search();
+        count
+    }
+
+    fn clear_search(mut self: Pin<&mut Self>) {
+        if !self.rust().search_results.is_empty() {
+            self.as_mut().rust_mut().search_results.clear();
+            self.as_mut().bump_search();
+        }
+    }
+
+    fn search_result(&self, index: i32) -> Option<&SearchResult> {
+        usize::try_from(index)
+            .ok()
+            .and_then(|i| self.rust().search_results.get(i))
+    }
+
+    fn search_count(&self) -> i32 {
+        count_to_i32(self.rust().search_results.len())
+    }
+
+    fn search_title(&self, index: i32) -> QString {
+        self.search_result(index)
+            .map_or_else(QString::default, |r| QString::from(r.title.as_str()))
+    }
+
+    fn search_path(&self, index: i32) -> QString {
+        self.search_result(index)
+            .map_or_else(QString::default, |r| QString::from(r.breadcrumb.as_str()))
+    }
+
+    fn search_snippet(&self, index: i32) -> QString {
+        self.search_result(index)
+            .map_or_else(QString::default, |r| QString::from(r.snippet.as_str()))
+    }
+
+    fn activate_search_result(&self, index: i32) -> QModelIndex {
+        // Never trust anything captured when the search ran: look the note up
+        // again now, so a deleted note gives an invalid index, not another one.
+        match self.search_result(index) {
+            Some(result) if self.rust().document.notebook().get(result.id).is_some() => {
+                self.index_for(result.id)
+            }
+            _ => QModelIndex::default(),
         }
     }
 
