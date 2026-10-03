@@ -76,6 +76,20 @@ pub mod qobject {
         fn end_remove_rows(self: Pin<&mut NotebookModel>);
 
         #[inherit]
+        #[cxx_name = "beginMoveRows"]
+        fn begin_move_rows(
+            self: Pin<&mut NotebookModel>,
+            source_parent: &QModelIndex,
+            source_first: i32,
+            source_last: i32,
+            destination_parent: &QModelIndex,
+            destination_child: i32,
+        ) -> bool;
+        #[inherit]
+        #[cxx_name = "endMoveRows"]
+        fn end_move_rows(self: Pin<&mut NotebookModel>);
+
+        #[inherit]
         #[cxx_name = "beginResetModel"]
         fn begin_reset_model(self: Pin<&mut NotebookModel>);
         #[inherit]
@@ -148,6 +162,39 @@ pub mod qobject {
 
         #[qinvokable]
         fn rename(self: Pin<&mut NotebookModel>, index: &QModelIndex, title: &QString) -> bool;
+
+        /// Moves a node, with its subtree, under `parent` (an invalid index
+        /// means top level) at final sibling position `position`. A position
+        /// past the end means the last slot. Returns a fresh index for the
+        /// node, whether it moved or was already there; an invalid index if
+        /// the move is refused (missing or stale index, or a cycle). Any
+        /// index held from before the move must not be reused.
+        #[qinvokable]
+        #[cxx_name = "moveNode"]
+        fn move_node(
+            self: Pin<&mut NotebookModel>,
+            index: &QModelIndex,
+            parent: &QModelIndex,
+            position: i32,
+        ) -> QModelIndex;
+
+        /// Like `moveNode`, for drag and drop: `row` is the row of `parent`'s
+        /// children the node is dropped *before*, as the user sees the tree
+        /// now (so `rowCount(parent)` means "at the end").
+        #[qinvokable]
+        #[cxx_name = "dropNode"]
+        fn drop_node(
+            self: Pin<&mut NotebookModel>,
+            index: &QModelIndex,
+            parent: &QModelIndex,
+            row: i32,
+        ) -> QModelIndex;
+
+        /// Whether the node may be placed under `parent` (invalid = top
+        /// level): false for stale indexes and for itself or a descendant.
+        #[qinvokable]
+        #[cxx_name = "canDrop"]
+        fn can_drop(self: &NotebookModel, index: &QModelIndex, parent: &QModelIndex) -> bool;
 
         /// Deletes the node and its subtree.
         #[qinvokable]
@@ -517,6 +564,106 @@ impl qobject::NotebookModel {
             }
             Err(e) => QString::from(e.message()),
         }
+    }
+
+    /// The target parent of a move: `Some(None)` for top level (invalid
+    /// index), `Some(Some(id))` for a live node, `None` for a stale index.
+    fn move_target(&self, parent: &QModelIndex) -> Option<Option<NodeId>> {
+        self.parent_for(parent)
+    }
+
+    fn can_drop(&self, index: &QModelIndex, parent: &QModelIndex) -> bool {
+        match (self.node_for(index), self.move_target(parent)) {
+            (Some(id), Some(parent)) => self.rust().document.notebook().can_reparent(id, parent),
+            _ => false,
+        }
+    }
+
+    fn move_node(
+        mut self: Pin<&mut Self>,
+        index: &QModelIndex,
+        parent: &QModelIndex,
+        position: i32,
+    ) -> QModelIndex {
+        let (Some(id), Some(parent)) = (self.node_for(index), self.move_target(parent)) else {
+            return QModelIndex::default();
+        };
+        let Ok(position) = usize::try_from(position) else {
+            return QModelIndex::default();
+        };
+        self.as_mut().apply_move(id, parent, position)
+    }
+
+    fn drop_node(
+        mut self: Pin<&mut Self>,
+        index: &QModelIndex,
+        parent: &QModelIndex,
+        row: i32,
+    ) -> QModelIndex {
+        let (Some(id), Some(parent)) = (self.node_for(index), self.move_target(parent)) else {
+            return QModelIndex::default();
+        };
+        let Ok(slot) = usize::try_from(row) else {
+            return QModelIndex::default();
+        };
+        // Dropping "before row N" counts rows with the dragged node still in
+        // place. Removing it from above N shifts the slot up by one; the
+        // pure notebook only ever sees final positions.
+        let final_position = match self.rust().document.notebook().get(id) {
+            Some(node) if node.parent_id() == parent && node.position() < slot => slot - 1,
+            _ => slot,
+        };
+        self.as_mut().apply_move(id, parent, final_position)
+    }
+
+    /// Performs a validated move with proper row-move notifications and
+    /// returns a fresh index for the node (invalid if refused).
+    fn apply_move(
+        mut self: Pin<&mut Self>,
+        id: NodeId,
+        parent: Option<NodeId>,
+        position: usize,
+    ) -> QModelIndex {
+        let plan = match self.rust().document.plan_move(id, parent, position) {
+            Ok(Some(plan)) => plan,
+            Ok(None) => return self.index_for(id), // already there: nothing happens
+            Err(_) => return QModelIndex::default(),
+        };
+        let index_of = |this: &Self, node: Option<NodeId>| {
+            node.map_or_else(QModelIndex::default, |n| this.index_for(n))
+        };
+        let source_parent = index_of(&self, plan.old_parent);
+        let destination_parent = index_of(&self, plan.new_parent);
+        let row = count_to_i32(plan.old_position);
+        // Qt's destination row is where the rows are inserted, counted before
+        // they are taken out. Moving down inside one parent therefore needs
+        // one more than the final position; moving up or to another parent
+        // uses the final position as it is.
+        let moving_down =
+            plan.old_parent == plan.new_parent && plan.new_position > plan.old_position;
+        let destination = count_to_i32(plan.new_position + usize::from(moving_down));
+
+        if !self.as_mut().begin_move_rows(
+            &source_parent,
+            row,
+            row,
+            &destination_parent,
+            destination,
+        ) {
+            return QModelIndex::default();
+        }
+        let result = self
+            .as_mut()
+            .rust_mut()
+            .document
+            .move_node(id, parent, position);
+        self.as_mut().end_move_rows();
+        self.as_mut().sync_state();
+        self.as_mut().bump_recovery();
+        if matches!(result, Ok(true)) {
+            self.as_mut().document_mutated();
+        }
+        self.index_for(id)
     }
 
     fn create_root(mut self: Pin<&mut Self>, title: &QString) -> QModelIndex {

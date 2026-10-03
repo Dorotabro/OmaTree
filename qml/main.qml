@@ -206,6 +206,22 @@ ApplicationWindow {
         treePane.reveal(index);
     }
 
+    // Alt+Up / Alt+Down: one place up or down among its siblings. The model
+    // returns a fresh index, since the old one may be stale after a move.
+    function moveSelected(step) {
+        if (!selection.currentIndex.valid)
+            return;
+        const parentIndex = notebook.parent(selection.currentIndex);
+        const target = selection.currentIndex.row + step;
+        if (target < 0 || target >= notebook.rowCount(parentIndex))
+            return;
+        const moved = notebook.moveNode(selection.currentIndex, parentIndex, target);
+        if (moved.valid) {
+            selection.setCurrentIndex(moved, ItemSelectionModel.ClearAndSelect);
+            treePane.reveal(moved);
+        }
+    }
+
     function createRoot() {
         const index = notebook.createRoot(defaultTitle);
         select(index);
@@ -263,6 +279,14 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+O"
         onActivated: root.requestOpen()
+    }
+    Shortcut {
+        sequence: "Alt+Up"
+        onActivated: root.moveSelected(-1)
+    }
+    Shortcut {
+        sequence: "Alt+Down"
+        onActivated: root.moveSelected(1)
     }
     Shortcut {
         sequence: "F2"

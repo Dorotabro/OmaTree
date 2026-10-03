@@ -5,7 +5,7 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::notebook::{NodeId, Notebook, NotebookError};
+use crate::notebook::{MovePlan, NodeId, Notebook, NotebookError};
 use crate::recovery::{unix_now, Checkpoint, Recovery, RecoveryError, TrashEntry};
 use crate::storage::{Storage, StorageError};
 
@@ -322,6 +322,40 @@ impl Document {
     fn mark_structural_change(&mut self) {
         self.active_dirty = true;
         self.recovery_dirty = true;
+    }
+
+    /// Validates a move without changing anything; `None` means it would
+    /// change nothing. See `Notebook::plan_move` for the position rules.
+    pub(crate) fn plan_move(
+        &self,
+        id: NodeId,
+        new_parent: Option<NodeId>,
+        new_position: usize,
+    ) -> Result<Option<MovePlan>, NotebookError> {
+        self.notebook.plan_move(id, new_parent, new_position)
+    }
+
+    /// Moves a node and its subtree to `new_parent` at final sibling index
+    /// `new_position`. A real move takes exactly one checkpoint of the tree
+    /// as it was ("Before moving …") and then marks both kinds of state
+    /// dirty, so the next save is a full, recovery-aware one. A failed or
+    /// no-op move changes nothing at all. Returns whether the tree changed.
+    pub fn move_node(
+        &mut self,
+        id: NodeId,
+        new_parent: Option<NodeId>,
+        new_position: usize,
+    ) -> Result<bool, NotebookError> {
+        // Prove the move works on a copy before touching anything.
+        let mut moved = self.notebook.clone();
+        if !moved.move_node(id, new_parent, new_position)? {
+            return Ok(false);
+        }
+        let title = self.notebook.get(id).map_or("", |n| n.title()).to_string();
+        self.create_checkpoint(&format!("Before moving \"{title}\""));
+        self.notebook = moved;
+        self.mark_structural_change();
+        Ok(true)
     }
 
     /// Pretends the document was just saved. Tests only.
@@ -1753,5 +1787,128 @@ mod tests {
         let doc = Document::open_existing(&path).unwrap();
         assert_eq!(doc.recovery().trash()[0].root().id(), b);
         assert_eq!(titles(doc.notebook(), None), ["a", "c", "d"]);
+    }
+
+    // ---- moving nodes ----
+
+    #[test]
+    fn a_real_move_creates_exactly_one_checkpoint_naming_the_node() {
+        let (mut doc, [projects, inbox, omatree, ..]) = clean_sample();
+        assert!(doc.recovery().checkpoints().is_empty());
+        assert!(doc.move_node(omatree, Some(inbox), 0).unwrap());
+        let checkpoints = doc.recovery().checkpoints();
+        assert_eq!(checkpoints.len(), 1);
+        assert_eq!(checkpoints[0].reason(), "Before moving \"OmaTree\"");
+        assert!(doc.recovery().trash().is_empty(), "moving is not deleting");
+        assert_eq!(
+            doc.notebook().get(omatree).unwrap().parent_id(),
+            Some(inbox)
+        );
+        assert_eq!(titles(doc.notebook(), Some(projects)), ["Threatwright"]);
+    }
+
+    #[test]
+    fn no_op_and_failed_moves_change_nothing() {
+        let (mut doc, [projects, inbox, omatree, _, ideas]) = clean_sample();
+        let before = doc.notebook().snapshot_nodes();
+        // no-ops
+        assert!(!doc.move_node(omatree, Some(projects), 0).unwrap());
+        assert!(!doc.move_node(projects, None, 0).unwrap());
+        // failures: cycle, missing node, missing parent
+        assert!(doc.move_node(projects, Some(ideas), 0).is_err());
+        assert!(doc.move_node(projects, Some(projects), 0).is_err());
+        let gone = doc.create_root("gone");
+        doc.delete(gone).unwrap();
+        doc.save_as_dirty_reset_for_test();
+        let checkpoints = doc.recovery().checkpoints().len();
+        assert!(doc.move_node(gone, None, 0).is_err());
+        assert!(doc.move_node(inbox, Some(gone), 0).is_err());
+
+        assert_eq!(doc.dirty_domains(), (false, false));
+        assert_eq!(doc.recovery().checkpoints().len(), checkpoints);
+        assert_eq!(sorted(doc.notebook().snapshot_nodes()), sorted(before));
+    }
+
+    #[test]
+    fn a_move_marks_active_and_recovery_state_dirty() {
+        let (mut doc, [_, inbox, omatree, ..]) = clean_sample();
+        assert_eq!(doc.dirty_domains(), (false, false));
+        doc.move_node(omatree, Some(inbox), 0).unwrap();
+        assert_eq!(doc.dirty_domains(), (true, true));
+        assert!(doc.is_dirty());
+    }
+
+    #[test]
+    fn restoring_the_checkpoint_undoes_the_move_exactly() {
+        let (mut doc, [projects, inbox, omatree, ..]) = clean_sample();
+        let before = doc.notebook().snapshot_nodes();
+        doc.move_node(projects, Some(inbox), 0).unwrap();
+        doc.move_node(omatree, None, 0).unwrap();
+        assert_ne!(
+            sorted(doc.notebook().snapshot_nodes()),
+            sorted(before.clone())
+        );
+        // The oldest checkpoint is the tree before the first move.
+        doc.restore_checkpoint(0).unwrap();
+        assert_eq!(sorted(doc.notebook().snapshot_nodes()), sorted(before));
+    }
+
+    #[test]
+    fn a_moved_structure_survives_save_and_reopen() {
+        let dir = TempDir::new();
+        let path = dir.join("moved.omatree");
+        let (mut doc, [projects, inbox, omatree, threat, _]) = sample();
+        doc.save_as(&path, false).unwrap();
+        doc.move_node(omatree, Some(inbox), 0).unwrap();
+        doc.move_node(threat, None, 0).unwrap();
+        doc.move_node(projects, None, 99).unwrap();
+        let expected = doc.notebook().snapshot_nodes();
+        doc.save().unwrap(); // recovery dirty: the full save
+        assert_eq!(doc.dirty_domains(), (false, false));
+        drop(doc);
+
+        let reopened = Document::open_existing(&path).unwrap();
+        assert_eq!(
+            sorted(reopened.notebook().snapshot_nodes()),
+            sorted(expected)
+        );
+        assert_eq!(reopened.recovery().checkpoints().len(), 3);
+        assert_eq!(
+            titles(reopened.notebook(), None),
+            ["Threatwright", "Inbox", "Projects"]
+        );
+    }
+
+    #[test]
+    fn a_moved_structure_survives_save_as() {
+        let dir = TempDir::new();
+        let (mut doc, [_, inbox, omatree, ..]) = sample();
+        doc.move_node(omatree, Some(inbox), 0).unwrap();
+        let expected = doc.notebook().snapshot_nodes();
+        let target = dir.join("copy.omatree");
+        doc.save_as(&target, false).unwrap();
+        drop(doc);
+        let copy = Document::open_existing(&target).unwrap();
+        assert_eq!(sorted(copy.notebook().snapshot_nodes()), sorted(expected));
+        assert_eq!(copy.recovery().checkpoints().len(), 1);
+    }
+
+    #[test]
+    fn trash_restore_still_works_after_nodes_were_moved() {
+        let (mut doc, [projects, inbox, omatree, threat, ideas]) = sample();
+        doc.move_node(threat, Some(inbox), 0).unwrap();
+        doc.delete(omatree).unwrap(); // OmaTree and Ideas go to Trash
+        assert!(doc.notebook().get(ideas).is_none());
+        // Its parent (Projects) is still there, so it returns beneath it.
+        doc.restore_trash(0).unwrap();
+        assert_eq!(
+            doc.notebook().get(omatree).unwrap().parent_id(),
+            Some(projects)
+        );
+        assert_eq!(
+            doc.notebook().get(ideas).unwrap().parent_id(),
+            Some(omatree)
+        );
+        assert_eq!(doc.notebook().get(threat).unwrap().parent_id(), Some(inbox));
     }
 }
