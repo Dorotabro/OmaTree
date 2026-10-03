@@ -384,3 +384,8 @@ fn theme_follows_an_isolated_palette() {
 fn keyboard_help_and_dialog_smoke() {
     scenario("keyboard");
 }
+
+#[test]
+fn moved_expanded_subtree_matches_the_document_when_revealed() {
+    scenario("moveexpanded");
+}

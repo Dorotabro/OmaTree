@@ -127,6 +127,9 @@ Item {
         syncing = true;
         tree.expandToIndex(index);
         syncing = false;
+        // Rows that just came into view (a moved subtree under a path that
+        // was closed) open as the document remembers, and no further.
+        restoreExpansion();
         Qt.callLater(() => {
             const row = tree.rowAtIndex(index);
             if (row >= 0)
@@ -371,8 +374,11 @@ Item {
             // by the document. (Ctrl+click and Ctrl+arrows are recursive and
             // are handled by the row and the keys above.)
             onExpanded: (row, depth) => {
-                if (!pane.syncing)
-                    pane.notebook.setExpanded(tree.index(row, 0), true);
+                if (pane.syncing)
+                    return;
+                pane.notebook.setExpanded(tree.index(row, 0), true);
+                // Children that come into view keep their remembered state.
+                Qt.callLater(pane.restoreExpansion);
             }
             onCollapsed: (row, recursively) => {
                 if (!pane.syncing)

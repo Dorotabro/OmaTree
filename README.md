@@ -138,4 +138,11 @@ Windows and macOS support are intended, but are not yet a development priority.
 
 ## License
 
-License not yet decided.
+OmaTree is licensed under either of
+
+- [Apache License, Version 2.0](LICENSE-APACHE)
+- [MIT License](LICENSE-MIT)
+
+at your option.
+
+Third-party components are listed in [THIRD_PARTY.md](THIRD_PARTY.md).
