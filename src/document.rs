@@ -107,7 +107,11 @@ pub struct Document {
     recovery: Recovery,
     storage: Option<Storage>,
     path: Option<PathBuf>,
-    dirty: bool,
+    /// The active notebook differs from what was last written.
+    active_dirty: bool,
+    /// Trash or checkpoints differ from what was last written. Implies a
+    /// full save; ordinary edits never set this.
+    recovery_dirty: bool,
 }
 
 impl Document {
@@ -118,7 +122,8 @@ impl Document {
             recovery: Recovery::default(),
             storage: None,
             path: None,
-            dirty: false,
+            active_dirty: false,
+            recovery_dirty: false,
         }
     }
 
@@ -133,7 +138,8 @@ impl Document {
                 recovery: Recovery::default(),
                 storage: Some(Storage::create(path)?),
                 path: Some(path.to_path_buf()),
-                dirty: false,
+                active_dirty: false,
+                recovery_dirty: false,
             }),
             Err(e) => Err(DocumentError::Io(e)),
         }
@@ -149,15 +155,33 @@ impl Document {
             recovery,
             storage: Some(storage),
             path: Some(path.to_path_buf()),
-            dirty: false,
+            active_dirty: false,
+            recovery_dirty: false,
         })
     }
 
-    /// Writes the whole notebook. Dirty is cleared only on success.
+    /// Saves to the document's file, writing as little as is safe:
+    ///
+    /// - nothing dirty: no database write at all;
+    /// - only the active notebook dirty (ordinary edits): just the active
+    ///   nodes and id counter, leaving Trash and checkpoints untouched;
+    /// - recovery state dirty, or the file still at schema version 1: the
+    ///   full atomic save (which also migrates a version 1 file).
+    ///
+    /// Dirty flags are cleared only after the write succeeded.
     pub fn save(&mut self) -> Result<(), DocumentError> {
         let storage = self.storage.as_mut().ok_or(DocumentError::NoPath)?;
-        storage.save_document(&self.notebook, &self.recovery)?;
-        self.dirty = false;
+        if !self.active_dirty && !self.recovery_dirty {
+            return Ok(());
+        }
+        if self.recovery_dirty || !storage.is_current_schema() {
+            storage.save_document(&self.notebook, &self.recovery)?;
+            self.active_dirty = false;
+            self.recovery_dirty = false;
+        } else {
+            storage.save_active(&self.notebook)?;
+            self.active_dirty = false;
+        }
         Ok(())
     }
 
@@ -199,7 +223,8 @@ impl Document {
 
         self.storage = Some(target);
         self.path = Some(path.to_path_buf());
-        self.dirty = false;
+        self.active_dirty = false;
+        self.recovery_dirty = false;
         Ok(())
     }
 
@@ -224,8 +249,16 @@ impl Document {
         &self.notebook
     }
 
+    /// Unsaved changes of any kind. The two kinds are an internal detail
+    /// that only decides how much `save` has to write.
     pub fn is_dirty(&self) -> bool {
-        self.dirty
+        self.active_dirty || self.recovery_dirty
+    }
+
+    /// (active dirty, recovery dirty). Tests only.
+    #[cfg(test)]
+    fn dirty_domains(&self) -> (bool, bool) {
+        (self.active_dirty, self.recovery_dirty)
     }
 
     pub fn has_path(&self) -> bool {
@@ -241,30 +274,31 @@ impl Document {
     }
 
     // Mutations. Each marks the document dirty only if it succeeded and
-    // actually changed something.
+    // actually changed something. Ordinary edits dirty only the active
+    // state; structural operations (below) dirty the recovery state too.
 
     pub fn create_root(&mut self, title: &str) -> NodeId {
-        self.dirty = true;
+        self.active_dirty = true;
         self.notebook.create_root(title)
     }
 
     pub fn create_child(&mut self, parent: NodeId, title: &str) -> Result<NodeId, NotebookError> {
         let id = self.notebook.create_child(parent, title)?;
-        self.dirty = true;
+        self.active_dirty = true;
         Ok(id)
     }
 
     pub fn rename(&mut self, id: NodeId, title: &str) -> Result<(), NotebookError> {
         let unchanged = self.notebook.get(id).is_some_and(|n| n.title() == title);
         self.notebook.rename(id, title)?;
-        self.dirty |= !unchanged;
+        self.active_dirty |= !unchanged;
         Ok(())
     }
 
     pub fn set_body(&mut self, id: NodeId, body: &str) -> Result<(), NotebookError> {
         let unchanged = self.notebook.get(id).is_some_and(|n| n.body() == body);
         self.notebook.set_body(id, body)?;
-        self.dirty |= !unchanged;
+        self.active_dirty |= !unchanged;
         Ok(())
     }
 
@@ -277,14 +311,22 @@ impl Document {
         self.create_checkpoint(&reason);
         self.recovery.push_trash(entry);
         self.notebook.delete(id)?;
-        self.dirty = true;
+        self.mark_structural_change();
         Ok(())
+    }
+
+    /// A structural change replaced or restructured the tree and touched
+    /// Trash or checkpoints, so both kinds of state need saving.
+    fn mark_structural_change(&mut self) {
+        self.active_dirty = true;
+        self.recovery_dirty = true;
     }
 
     /// Pretends the document was just saved. Tests only.
     #[cfg(test)]
     fn save_as_dirty_reset_for_test(&mut self) {
-        self.dirty = false;
+        self.active_dirty = false;
+        self.recovery_dirty = false;
     }
 
     // Recovery.
@@ -295,10 +337,12 @@ impl Document {
 
     /// Records the current notebook as a recovery checkpoint (keeping only
     /// the newest few). Call this before any operation that restructures
-    /// or replaces the tree. It does not itself make the document dirty.
+    /// or replaces the tree. The recovery history changed, so the next save
+    /// must be a full one.
     pub fn create_checkpoint(&mut self, reason: &str) {
         let checkpoint = Checkpoint::of(&self.notebook, reason, unix_now());
         self.recovery.add_checkpoint(checkpoint);
+        self.recovery_dirty = true;
     }
 
     /// Where Trash entry `index` (oldest first) would be restored: its
@@ -337,7 +381,7 @@ impl Document {
         self.create_checkpoint(&reason);
         self.notebook = restored;
         self.recovery.take_trash(index);
-        self.dirty = true;
+        self.mark_structural_change();
         Ok(root)
     }
 
@@ -357,7 +401,7 @@ impl Document {
 
         self.create_checkpoint(&reason);
         self.notebook = restored;
-        self.dirty = true;
+        self.mark_structural_change();
         Ok(())
     }
 }
@@ -1254,5 +1298,444 @@ mod tests {
         assert!(doc.delete(gone).is_err());
         assert_eq!(doc.recovery().trash().len(), 1);
         assert_eq!(doc.recovery().checkpoints().len(), 1);
+    }
+
+    // ---- dirty domains and save scope ----
+
+    use crate::storage::{dump_table, install_write_guards, remove_write_guards, RECOVERY_TABLES};
+
+    fn recovery_dumps(path: &Path) -> Vec<Vec<String>> {
+        RECOVERY_TABLES
+            .iter()
+            .map(|t| dump_table(path, t))
+            .collect()
+    }
+
+    fn file_user_version(path: &Path) -> i64 {
+        rusqlite::Connection::open(path)
+            .unwrap()
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap()
+    }
+
+    fn table_exists(path: &Path, table: &str) -> bool {
+        let conn = rusqlite::Connection::open(path).unwrap();
+        let n: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [table],
+                |r| r.get(0),
+            )
+            .unwrap();
+        n == 1
+    }
+
+    /// A saved, clean version 2 notebook whose Trash and checkpoints are not
+    /// empty: Projects was deleted, Inbox and a note remain.
+    fn file_with_recovery_history(dir: &TempDir, name: &str) -> PathBuf {
+        let path = dir.join(name);
+        let mut doc = Document::open(&path).unwrap();
+        let projects = doc.create_root("Projects");
+        doc.create_child(projects, "Child").unwrap();
+        doc.create_root("Inbox");
+        doc.delete(projects).unwrap();
+        let note = doc.create_root("Note");
+        doc.set_body(note, "body").unwrap();
+        doc.save().unwrap();
+        assert_eq!(doc.dirty_domains(), (false, false));
+        assert!(!doc.recovery().trash().is_empty());
+        assert!(!doc.recovery().checkpoints().is_empty());
+        path
+    }
+
+    fn clean_sample() -> (Document, [NodeId; 5]) {
+        let (mut doc, ids) = sample();
+        doc.save_as_dirty_reset_for_test();
+        (doc, ids)
+    }
+
+    #[test]
+    fn ordinary_edits_mark_only_the_active_state_dirty() {
+        let (mut doc, [projects, _, omatree, ..]) = clean_sample();
+        assert_eq!(doc.dirty_domains(), (false, false));
+
+        doc.set_body(projects, "edited").unwrap();
+        assert_eq!(doc.dirty_domains(), (true, false), "body edit");
+
+        doc.save_as_dirty_reset_for_test();
+        doc.rename(omatree, "Renamed").unwrap();
+        assert_eq!(doc.dirty_domains(), (true, false), "rename");
+
+        doc.save_as_dirty_reset_for_test();
+        doc.create_root("another");
+        assert_eq!(doc.dirty_domains(), (true, false), "create root");
+
+        doc.save_as_dirty_reset_for_test();
+        doc.create_child(projects, "child").unwrap();
+        assert_eq!(doc.dirty_domains(), (true, false), "create child");
+        assert!(doc.is_dirty());
+    }
+
+    #[test]
+    fn structural_operations_mark_both_states_dirty() {
+        let (mut doc, [projects, _, _, threat, _]) = clean_sample();
+        doc.delete(threat).unwrap();
+        assert_eq!(doc.dirty_domains(), (true, true), "delete");
+
+        doc.save_as_dirty_reset_for_test();
+        doc.restore_trash(0).unwrap();
+        assert_eq!(doc.dirty_domains(), (true, true), "restore from Trash");
+
+        doc.save_as_dirty_reset_for_test();
+        doc.restore_checkpoint(0).unwrap();
+        assert_eq!(doc.dirty_domains(), (true, true), "restore checkpoint");
+
+        doc.save_as_dirty_reset_for_test();
+        let _ = projects;
+        doc.create_checkpoint("explicit, for a future structural operation");
+        assert_eq!(
+            doc.dirty_domains(),
+            (false, true),
+            "a bare checkpoint is recovery state"
+        );
+    }
+
+    #[test]
+    fn unchanged_and_failed_mutations_leave_both_flags_alone() {
+        let (mut doc, [projects, _, omatree, ..]) = clean_sample();
+        let title = doc.notebook().get(omatree).unwrap().title().to_string();
+        let body = doc.notebook().get(omatree).unwrap().body().to_string();
+        doc.rename(omatree, &title).unwrap();
+        doc.set_body(omatree, &body).unwrap();
+        assert_eq!(doc.dirty_domains(), (false, false), "identical text");
+
+        doc.delete(projects).unwrap();
+        doc.save_as_dirty_reset_for_test();
+        let missing = projects; // now in Trash, not active
+        assert!(doc.create_child(missing, "x").is_err());
+        assert!(doc.rename(missing, "x").is_err());
+        assert!(doc.set_body(missing, "x").is_err());
+        assert!(doc.delete(missing).is_err());
+        assert!(doc.restore_trash(9).is_err());
+        assert!(doc.restore_checkpoint(9).is_err());
+        assert_eq!(doc.dirty_domains(), (false, false), "failed operations");
+    }
+
+    #[test]
+    fn an_ordinary_save_writes_only_active_state() {
+        let dir = TempDir::new();
+        let path = file_with_recovery_history(&dir, "a.omatree");
+        let before = recovery_dumps(&path);
+        install_write_guards(&path, &RECOVERY_TABLES);
+
+        let mut doc = Document::open_existing(&path).unwrap();
+        let root = doc.notebook().roots()[0].id();
+        doc.set_body(root, "edited body").unwrap();
+        doc.rename(root, "Renamed").unwrap();
+        let fresh = doc.create_root("Fresh");
+        doc.create_child(fresh, "Fresh child").unwrap();
+        assert_eq!(doc.dirty_domains(), (true, false));
+
+        doc.save()
+            .expect("an ordinary save must not touch recovery tables");
+        assert_eq!(
+            doc.dirty_domains(),
+            (false, false),
+            "clears the active flag"
+        );
+        drop(doc);
+
+        assert_eq!(recovery_dumps(&path), before, "rows and rowids unchanged");
+        let reopened = Document::open_existing(&path).unwrap();
+        assert_eq!(reopened.notebook().get(root).unwrap().body(), "edited body");
+        assert_eq!(reopened.notebook().get(root).unwrap().title(), "Renamed");
+        assert_eq!(titles(reopened.notebook(), Some(fresh)), ["Fresh child"]);
+        assert_eq!(reopened.recovery().trash().len(), 1);
+    }
+
+    #[test]
+    fn trash_and_checkpoints_survive_many_ordinary_saves() {
+        let dir = TempDir::new();
+        let path = file_with_recovery_history(&dir, "many.omatree");
+        let original = Document::open_existing(&path).unwrap();
+        let (trash, checkpoints) = (
+            original.recovery().trash().to_vec(),
+            original.recovery().checkpoints().to_vec(),
+        );
+        drop(original);
+        install_write_guards(&path, &RECOVERY_TABLES);
+
+        let mut doc = Document::open_existing(&path).unwrap();
+        for i in 0..6 {
+            doc.create_root(&format!("n{i}"));
+            doc.save().unwrap();
+            let root = doc.notebook().roots()[0].id();
+            doc.set_body(root, &format!("edit {i}")).unwrap();
+            doc.save().unwrap();
+        }
+        drop(doc);
+
+        let reopened = Document::open_existing(&path).unwrap();
+        assert_eq!(reopened.recovery().trash(), &trash[..]);
+        assert_eq!(reopened.recovery().checkpoints(), &checkpoints[..]);
+        assert_eq!(reopened.notebook().roots().len(), 2 + 6);
+    }
+
+    #[test]
+    fn delete_then_save_is_a_full_save_clearing_both_flags() {
+        let dir = TempDir::new();
+        let path = file_with_recovery_history(&dir, "d.omatree");
+        let mut doc = Document::open_existing(&path).unwrap();
+        let (trash_before, cps_before) = (
+            doc.recovery().trash().len(),
+            doc.recovery().checkpoints().len(),
+        );
+        let victim = doc.notebook().roots()[0].id();
+        doc.delete(victim).unwrap();
+        assert_eq!(doc.dirty_domains(), (true, true));
+        doc.save().unwrap();
+        assert_eq!(doc.dirty_domains(), (false, false));
+        drop(doc);
+
+        let reopened = Document::open_existing(&path).unwrap();
+        assert_eq!(reopened.recovery().trash().len(), trash_before + 1);
+        assert_eq!(reopened.recovery().checkpoints().len(), cps_before + 1);
+        assert!(reopened.notebook().get(victim).is_none());
+    }
+
+    #[test]
+    fn recovery_dirty_alone_forces_a_full_save() {
+        let dir = TempDir::new();
+        let path = file_with_recovery_history(&dir, "r.omatree");
+        let mut doc = Document::open_existing(&path).unwrap();
+        doc.create_checkpoint("manual checkpoint");
+        assert_eq!(doc.dirty_domains(), (false, true));
+        doc.save().unwrap();
+        assert_eq!(doc.dirty_domains(), (false, false));
+        drop(doc);
+        let reopened = Document::open_existing(&path).unwrap();
+        assert_eq!(
+            reopened.recovery().checkpoints().last().unwrap().reason(),
+            "manual checkpoint"
+        );
+    }
+
+    #[test]
+    fn a_failed_full_save_leaves_both_flags_set_and_the_file_unchanged() {
+        let dir = TempDir::new();
+        let path = file_with_recovery_history(&dir, "ff.omatree");
+        install_write_guards(&path, &["checkpoints"]); // the full save will hit this
+        let before = std::fs::read(&path).unwrap();
+
+        let mut doc = Document::open_existing(&path).unwrap();
+        let victim = doc.notebook().roots()[0].id();
+        doc.delete(victim).unwrap();
+        assert!(doc.save().is_err());
+        assert_eq!(
+            doc.dirty_domains(),
+            (true, true),
+            "flags survive the failure"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before, "all-or-nothing");
+
+        remove_write_guards(&path);
+        doc.save().unwrap();
+        assert_eq!(doc.dirty_domains(), (false, false));
+    }
+
+    #[test]
+    fn a_failed_active_save_leaves_the_dirty_state_and_old_data_intact() {
+        let dir = TempDir::new();
+        let path = file_with_recovery_history(&dir, "fa.omatree");
+        install_write_guards(&path, &["notebook_meta"]); // nodes are rewritten first
+        let before = std::fs::read(&path).unwrap();
+        let old_titles = {
+            let d = Document::open_existing(&path).unwrap();
+            titles(d.notebook(), None)
+        };
+
+        let mut doc = Document::open_existing(&path).unwrap();
+        doc.create_root("will not stick");
+        assert_eq!(doc.dirty_domains(), (true, false));
+        assert!(doc.save().is_err());
+        assert_eq!(
+            doc.dirty_domains(),
+            (true, false),
+            "unchanged by the failure"
+        );
+        drop(doc);
+        assert_eq!(std::fs::read(&path).unwrap(), before, "rolled back");
+        let d = Document::open_existing(&path).unwrap();
+        assert_eq!(titles(d.notebook(), None), old_titles);
+    }
+
+    #[test]
+    fn a_clean_save_writes_nothing_at_all() {
+        let dir = TempDir::new();
+        let path = file_with_recovery_history(&dir, "clean.omatree");
+        install_write_guards(
+            &path,
+            &[
+                "nodes",
+                "notebook_meta",
+                "trash_entries",
+                "trash_nodes",
+                "checkpoints",
+                "checkpoint_nodes",
+            ],
+        );
+        let before = std::fs::read(&path).unwrap();
+
+        let mut doc = Document::open_existing(&path).unwrap();
+        doc.save().expect("a clean save is a successful no-op");
+        doc.save().unwrap();
+        assert_eq!(doc.dirty_domains(), (false, false));
+        drop(doc);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn a_clean_version_1_notebook_is_not_migrated_by_saving() {
+        let dir = TempDir::new();
+        let path = dir.join("v1.omatree");
+        write_v1(&path);
+        let before = std::fs::read(&path).unwrap();
+        let mut doc = Document::open_existing(&path).unwrap();
+        doc.save().unwrap();
+        drop(doc);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(file_user_version(&path), 1);
+    }
+
+    /// A version 1 notebook, written as an older OmaTree would have.
+    fn write_v1(path: &Path) {
+        let conn = rusqlite::Connection::open(path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE nodes (
+                 id INTEGER PRIMARY KEY,
+                 parent_id INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
+                 position INTEGER NOT NULL CHECK (position >= 0),
+                 title TEXT NOT NULL,
+                 body TEXT NOT NULL);
+             CREATE INDEX nodes_parent ON nodes(parent_id, position);
+             INSERT INTO nodes VALUES (3, NULL, 0, 'Old', 'old body');
+             INSERT INTO nodes VALUES (7, 3, 0, 'Old child', '');
+             PRAGMA user_version = 1;",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn the_first_save_of_a_version_1_notebook_is_the_full_migration() {
+        let dir = TempDir::new();
+        let path = dir.join("v1.omatree");
+        write_v1(&path);
+        let mut doc = Document::open_existing(&path).unwrap();
+        assert_eq!(file_user_version(&path), 1, "opening does not migrate");
+
+        // An ordinary edit (active state only) still migrates on first save.
+        let old = NodeId::from_raw(3);
+        doc.set_body(old, "edited").unwrap();
+        assert_eq!(doc.dirty_domains(), (true, false));
+        doc.save().unwrap();
+        assert_eq!(doc.dirty_domains(), (false, false));
+        drop(doc);
+
+        assert_eq!(file_user_version(&path), 2);
+        for table in RECOVERY_TABLES {
+            assert!(table_exists(&path, table), "{table}");
+        }
+        assert!(table_exists(&path, "notebook_meta"));
+        let migrated = Document::open_existing(&path).unwrap();
+        assert_eq!(migrated.notebook().get(old).unwrap().body(), "edited");
+        assert_eq!(titles(migrated.notebook(), Some(old)), ["Old child"]);
+        assert_eq!(migrated.notebook().next_id(), 8);
+        assert!(migrated.recovery().trash().is_empty());
+    }
+
+    #[test]
+    fn saves_after_a_version_1_migration_can_be_active_only() {
+        let dir = TempDir::new();
+        let path = dir.join("v1.omatree");
+        write_v1(&path);
+        let mut doc = Document::open_existing(&path).unwrap();
+        // Populate recovery state with a structural save, which migrates.
+        doc.delete(NodeId::from_raw(7)).unwrap();
+        doc.save().unwrap();
+        assert_eq!(file_user_version(&path), 2);
+        let before = recovery_dumps(&path);
+        assert!(before.iter().any(|rows| !rows.is_empty()));
+        install_write_guards(&path, &RECOVERY_TABLES);
+
+        doc.set_body(NodeId::from_raw(3), "later edit").unwrap();
+        doc.save()
+            .expect("active-only now that the file is version 2");
+        drop(doc);
+        assert_eq!(recovery_dumps(&path), before);
+    }
+
+    #[test]
+    fn save_as_writes_a_complete_independent_document() {
+        let dir = TempDir::new();
+        let source = file_with_recovery_history(&dir, "source.omatree");
+        let target = dir.join("copy.omatree");
+        let mut doc = Document::open_existing(&source).unwrap();
+        let (trash, checkpoints) = (
+            doc.recovery().trash().to_vec(),
+            doc.recovery().checkpoints().to_vec(),
+        );
+        assert_eq!(doc.dirty_domains(), (false, false), "nothing is dirty");
+
+        doc.save_as(&target, false).unwrap();
+        assert_eq!(doc.dirty_domains(), (false, false));
+        drop(doc);
+        std::fs::remove_file(&source).unwrap(); // the copy must not depend on it
+
+        let copy = Document::open_existing(&target).unwrap();
+        assert_eq!(copy.recovery().trash(), &trash[..]);
+        assert_eq!(copy.recovery().checkpoints(), &checkpoints[..]);
+        assert_eq!(titles(copy.notebook(), None), ["Inbox", "Note"]);
+    }
+
+    #[test]
+    fn save_as_clears_both_dirty_domains() {
+        let dir = TempDir::new();
+        let target = dir.join("both.omatree");
+        let (mut doc, [projects, ..]) = sample();
+        doc.delete(projects).unwrap();
+        assert_eq!(doc.dirty_domains(), (true, true));
+        doc.save_as(&target, false).unwrap();
+        assert_eq!(doc.dirty_domains(), (false, false));
+
+        // A failed Save As clears nothing.
+        doc.set_body(doc.notebook().roots()[0].id(), "x").unwrap();
+        doc.delete(doc.notebook().roots()[0].id()).unwrap();
+        let bad = dir.join("no-such-dir").join("x.omatree");
+        assert!(doc.save_as(&bad, false).is_err());
+        assert_eq!(doc.dirty_domains(), (true, true));
+    }
+
+    #[test]
+    fn node_ids_stay_monotonic_across_ordinary_and_full_saves() {
+        let dir = TempDir::new();
+        let path = dir.join("ids.omatree");
+        let mut doc = Document::open(&path).unwrap();
+        let a = doc.create_root("a");
+        let b = doc.create_root("b");
+        doc.delete(b).unwrap(); // highest id now only in Trash
+        doc.save().unwrap(); // full
+        let c = doc.create_root("c");
+        doc.save().unwrap(); // active-only
+        assert!(c > b && c > a);
+        drop(doc);
+
+        let mut doc = Document::open_existing(&path).unwrap();
+        let d = doc.create_root("d");
+        assert!(d > c, "{d:?} must be above {c:?}");
+        doc.save().unwrap();
+        drop(doc);
+        let doc = Document::open_existing(&path).unwrap();
+        assert_eq!(doc.recovery().trash()[0].root().id(), b);
+        assert_eq!(titles(doc.notebook(), None), ["a", "c", "d"]);
     }
 }

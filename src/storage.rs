@@ -177,7 +177,7 @@ impl Storage {
         tx.execute("DELETE FROM nodes", [])?;
 
         write_nodes(&tx, notebook)?;
-        write_meta(&tx, notebook, recovery)?;
+        write_meta(&tx, full_next_id(notebook, recovery)?)?;
         write_trash(&tx, recovery)?;
         write_checkpoints(&tx, recovery)?;
 
@@ -186,6 +186,37 @@ impl Storage {
         }
         tx.commit()?;
         self.version = SCHEMA_VERSION;
+        Ok(())
+    }
+
+    /// Whether the file is already at the current schema version, i.e. it
+    /// has the recovery tables and supports `save_active`.
+    pub fn is_current_schema(&self) -> bool {
+        self.version >= SCHEMA_VERSION
+    }
+
+    /// Persists only the active state: the `nodes` table and the next node
+    /// id, in one transaction. Trash and checkpoint tables are not touched
+    /// at all. Only for a file that is already at the current schema; a
+    /// version 1 file needs the migrating `save_document` instead.
+    pub fn save_active(&mut self, notebook: &Notebook) -> Result<(), StorageError> {
+        if !self.is_current_schema() {
+            return Err(StorageError::UnsupportedSchemaVersion(self.version));
+        }
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM nodes", [])?;
+        write_nodes(&tx, notebook)?;
+        // The stored counter only ever goes up, so ids that live only in
+        // Trash or checkpoints can never become reusable through this path.
+        let next = i64::try_from(notebook.next_id())
+            .map_err(|_| StorageError::InvalidData("node id counter is too large".into()))?;
+        tx.execute(
+            "INSERT INTO notebook_meta (id, next_node_id) VALUES (1, ?1)
+             ON CONFLICT (id) DO UPDATE SET
+                 next_node_id = max(next_node_id, excluded.next_node_id)",
+            [next],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -308,11 +339,7 @@ fn write_nodes(tx: &Transaction, notebook: &Notebook) -> Result<(), StorageError
 }
 
 /// The id counter must stay above every id that exists anywhere.
-fn write_meta(
-    tx: &Transaction,
-    notebook: &Notebook,
-    recovery: &Recovery,
-) -> Result<(), StorageError> {
+fn full_next_id(notebook: &Notebook, recovery: &Recovery) -> Result<u64, StorageError> {
     let mut next = notebook.next_id();
     if let Some(max) = recovery.max_node_id() {
         let needed = max
@@ -320,7 +347,11 @@ fn write_meta(
             .ok_or_else(|| StorageError::InvalidData("node id out of range".into()))?;
         next = next.max(needed);
     }
-    let next = i64::try_from(next)
+    Ok(next)
+}
+
+fn write_meta(tx: &Transaction, next_id: u64) -> Result<(), StorageError> {
+    let next = i64::try_from(next_id)
         .map_err(|_| StorageError::InvalidData("node id counter is too large".into()))?;
     tx.execute(
         "INSERT INTO notebook_meta (id, next_node_id) VALUES (1, ?1)",
@@ -443,6 +474,68 @@ fn id_from_sql(raw: i64) -> Result<NodeId, StorageError> {
         .map(NodeId::from_raw)
         .map_err(|_| StorageError::InvalidData(format!("negative node id {raw}")))
 }
+
+/// Test support: makes any INSERT, UPDATE or DELETE on `tables` abort, so a
+/// test can prove a save never writes there (rather than merely that the
+/// contents compare equal afterwards).
+#[cfg(test)]
+pub(crate) fn install_write_guards(path: &Path, tables: &[&str]) {
+    let conn = Connection::open(path).unwrap();
+    for table in tables {
+        for event in ["INSERT", "UPDATE", "DELETE"] {
+            conn.execute_batch(&format!(
+                "CREATE TRIGGER guard_{table}_{event} BEFORE {event} ON {table}
+                 BEGIN SELECT RAISE(ABORT, 'guarded table written: {table}'); END;"
+            ))
+            .unwrap();
+        }
+    }
+}
+
+/// Test support: removes every trigger installed by `install_write_guards`.
+#[cfg(test)]
+pub(crate) fn remove_write_guards(path: &Path) {
+    let conn = Connection::open(path).unwrap();
+    let names: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+            .unwrap();
+        let rows = stmt.query_map([], |row| row.get(0)).unwrap();
+        rows.map(Result::unwrap).collect()
+    };
+    for name in names {
+        conn.execute_batch(&format!("DROP TRIGGER {name}")).unwrap();
+    }
+}
+
+/// Test support: every row of `table` with its rowid, as text, in rowid order.
+#[cfg(test)]
+pub(crate) fn dump_table(path: &Path, table: &str) -> Vec<String> {
+    let conn = Connection::open(path).unwrap();
+    let mut stmt = conn
+        .prepare(&format!("SELECT rowid, * FROM {table} ORDER BY rowid"))
+        .unwrap();
+    let columns = stmt.column_count();
+    let rows = stmt
+        .query_map([], |row| {
+            let mut values = Vec::new();
+            for i in 0..columns {
+                values.push(format!("{:?}", row.get::<_, rusqlite::types::Value>(i)?));
+            }
+            Ok(values.join(","))
+        })
+        .unwrap();
+    rows.map(Result::unwrap).collect()
+}
+
+/// The four tables that make up recovery state.
+#[cfg(test)]
+pub(crate) const RECOVERY_TABLES: [&str; 4] = [
+    "trash_entries",
+    "trash_nodes",
+    "checkpoints",
+    "checkpoint_nodes",
+];
 
 #[cfg(test)]
 mod tests {
@@ -1023,5 +1116,148 @@ mod tests {
             storage.load_document(),
             Err(StorageError::InvalidData(_))
         ));
+    }
+
+    // ---- active-only saves ----
+
+    fn recovery_dumps(path: &Path) -> Vec<Vec<String>> {
+        RECOVERY_TABLES
+            .iter()
+            .map(|t| dump_table(path, t))
+            .collect()
+    }
+
+    /// A version 2 file holding `sample_state()`, plus the state itself.
+    fn populated_v2_file(db: &TempDb) -> (Notebook, Recovery) {
+        let (nb, recovery) = sample_state();
+        Storage::create(db.path())
+            .unwrap()
+            .save_document(&nb, &recovery)
+            .unwrap();
+        (nb, recovery)
+    }
+
+    #[test]
+    fn active_save_persists_the_nodes_and_the_id_counter() {
+        let db = TempDb::new();
+        populated_v2_file(&db);
+        // As the application does: work on the notebook loaded from the file.
+        let (mut nb, _) = Storage::open(db.path()).unwrap().load_document().unwrap();
+        let ids: Vec<NodeId> = nb.roots().iter().map(|n| n.id()).collect();
+        nb.rename(ids[0], "Renamed").unwrap();
+        nb.set_body(ids[1], "new body").unwrap();
+        let fresh = nb.create_root("Fresh");
+        let doomed = nb.create_root("Doomed");
+        nb.delete(doomed).unwrap(); // the highest id is gone, the counter is not
+        let counter = nb.next_id();
+        assert!(counter > doomed.get());
+
+        let mut storage = Storage::open(db.path()).unwrap();
+        storage.save_active(&nb).unwrap();
+        drop(storage);
+
+        let (mut loaded, _) = Storage::open(db.path()).unwrap().load_document().unwrap();
+        assert_eq!(loaded.snapshot_nodes(), nb.snapshot_nodes());
+        assert_eq!(loaded.get(fresh).unwrap().title(), "Fresh");
+        assert_eq!(loaded.next_id(), counter);
+        assert!(loaded.create_root("next").get() >= counter);
+        let stored: i64 = Connection::open(db.path())
+            .unwrap()
+            .query_row("SELECT next_node_id FROM notebook_meta", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(stored as u64, counter);
+    }
+
+    #[test]
+    fn active_save_never_lowers_the_stored_id_counter() {
+        let db = TempDb::new();
+        let (_, recovery) = populated_v2_file(&db); // counter is 71: Trash holds id 70
+        let low = Notebook::new(); // a notebook whose own counter is 0
+        let mut storage = Storage::open(db.path()).unwrap();
+        storage.save_active(&low).unwrap();
+        drop(storage);
+        let (mut loaded, loaded_recovery) =
+            Storage::open(db.path()).unwrap().load_document().unwrap();
+        assert!(loaded.next_id() >= 71);
+        assert!(loaded.create_root("x").get() > 70);
+        assert_eq!(loaded_recovery.trash(), recovery.trash());
+    }
+
+    #[test]
+    fn active_save_never_writes_a_recovery_table() {
+        let db = TempDb::new();
+        let (mut nb, recovery) = populated_v2_file(&db);
+        assert!(!recovery.trash().is_empty() && !recovery.checkpoints().is_empty());
+        let before = recovery_dumps(db.path());
+        assert!(before.iter().all(|rows| !rows.is_empty()));
+        install_write_guards(db.path(), &RECOVERY_TABLES);
+
+        nb.create_root("one more");
+        let mut storage = Storage::open(db.path()).unwrap();
+        storage
+            .save_active(&nb)
+            .expect("no recovery table may be written");
+        storage.save_active(&nb).expect("and again");
+        drop(storage);
+
+        assert_eq!(recovery_dumps(db.path()), before, "rows, rowids and all");
+        let (loaded, loaded_recovery) = Storage::open(db.path()).unwrap().load_document().unwrap();
+        assert_eq!(loaded.snapshot_nodes(), nb.snapshot_nodes());
+        assert_eq!(loaded_recovery.trash(), recovery.trash());
+        assert_eq!(loaded_recovery.checkpoints(), recovery.checkpoints());
+    }
+
+    #[test]
+    fn the_write_guards_do_detect_a_full_save() {
+        // Control for the test above: if the guards were ineffective it
+        // would prove nothing. A full save rewrites recovery tables, so with
+        // the guards installed it must fail, and roll back completely.
+        let db = TempDb::new();
+        let (nb, recovery) = populated_v2_file(&db);
+        install_write_guards(db.path(), &RECOVERY_TABLES);
+        let before = std::fs::read(db.path()).unwrap();
+
+        let mut storage = Storage::open(db.path()).unwrap();
+        let err = storage.save_document(&nb, &recovery).unwrap_err();
+        assert!(err.to_string().contains("guarded table written"), "{err}");
+        drop(storage);
+        assert_eq!(std::fs::read(db.path()).unwrap(), before);
+    }
+
+    #[test]
+    fn a_failed_active_save_rolls_back_and_leaves_the_previous_state_valid() {
+        let db = TempDb::new();
+        let (nb, recovery) = populated_v2_file(&db);
+        // The nodes table is rewritten first; the metadata write then fails.
+        install_write_guards(db.path(), &["notebook_meta"]);
+        let before = std::fs::read(db.path()).unwrap();
+
+        let mut changed = nb.clone();
+        changed.create_root("never saved");
+        let mut storage = Storage::open(db.path()).unwrap();
+        assert!(storage.save_active(&changed).is_err());
+        drop(storage);
+
+        assert_eq!(std::fs::read(db.path()).unwrap(), before);
+        let (loaded, loaded_recovery) = Storage::open(db.path()).unwrap().load_document().unwrap();
+        assert_eq!(loaded.snapshot_nodes(), nb.snapshot_nodes());
+        assert_eq!(loaded_recovery.trash(), recovery.trash());
+    }
+
+    #[test]
+    fn active_save_refuses_a_version_1_file_and_leaves_it_untouched() {
+        let db = TempDb::new();
+        write_v1_file(db.path());
+        let before = std::fs::read(db.path()).unwrap();
+        let mut storage = Storage::open(db.path()).unwrap();
+        assert!(!storage.is_current_schema());
+        let (nb, _) = storage.load_document().unwrap();
+        assert!(matches!(
+            storage.save_active(&nb),
+            Err(StorageError::UnsupportedSchemaVersion(1))
+        ));
+        drop(storage);
+        assert_eq!(std::fs::read(db.path()).unwrap(), before);
+        assert_eq!(file_version(db.path()), 1);
     }
 }
