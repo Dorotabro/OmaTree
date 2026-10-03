@@ -75,6 +75,8 @@ pub enum NotebookError {
     NodeNotFound(NodeId),
     /// Nodes handed to `Notebook::from_nodes` do not form a valid tree.
     InvalidStructure(&'static str),
+    /// A node being restored has the same id as an active node.
+    IdCollision(NodeId),
 }
 
 impl fmt::Display for NotebookError {
@@ -82,13 +84,14 @@ impl fmt::Display for NotebookError {
         match self {
             NotebookError::NodeNotFound(id) => write!(f, "node {} does not exist", id.0),
             NotebookError::InvalidStructure(why) => write!(f, "invalid notebook: {why}"),
+            NotebookError::IdCollision(id) => write!(f, "node {} already exists", id.0),
         }
     }
 }
 
 impl std::error::Error for NotebookError {}
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Notebook {
     nodes: BTreeMap<NodeId, Node>,
     next_id: u64,
@@ -151,6 +154,120 @@ impl Notebook {
             return Err(NotebookError::InvalidStructure("parent cycle"));
         }
         Ok(notebook)
+    }
+
+    /// Like `from_nodes`, but the id counter is at least `next_id`, so ids
+    /// that only exist elsewhere (Trash, checkpoints) are never reused.
+    pub(crate) fn from_nodes_with_next_id(
+        nodes: Vec<Node>,
+        next_id: u64,
+    ) -> Result<Self, NotebookError> {
+        let mut notebook = Self::from_nodes(nodes)?;
+        notebook.next_id = notebook.next_id.max(next_id);
+        Ok(notebook)
+    }
+
+    /// The next id that will be handed out.
+    pub(crate) fn next_id(&self) -> u64 {
+        self.next_id
+    }
+
+    /// Makes sure ids up to and including `max_id` are never handed out.
+    pub(crate) fn reserve_ids_through(&mut self, max_id: u64) -> Result<(), NotebookError> {
+        let needed = max_id
+            .checked_add(1)
+            .ok_or(NotebookError::InvalidStructure("node id out of range"))?;
+        self.next_id = self.next_id.max(needed);
+        Ok(())
+    }
+
+    /// A copy of every node (parents before children), for checkpoints.
+    pub(crate) fn snapshot_nodes(&self) -> Vec<Node> {
+        self.in_tree_order().into_iter().cloned().collect()
+    }
+
+    /// The node and all its descendants, root first, parents before
+    /// children. The root keeps its original parent and position.
+    pub(crate) fn subtree(&self, id: NodeId) -> Result<Vec<Node>, NotebookError> {
+        let mut out = vec![self.require(id)?.clone()];
+        let mut i = 0;
+        while i < out.len() {
+            let children = self.siblings(Some(out[i].id));
+            out.extend(children.into_iter().cloned());
+            i += 1;
+        }
+        Ok(out)
+    }
+
+    /// A notebook made of `nodes`, keeping this notebook's id counter so
+    /// ids are never reused across the replacement.
+    pub(crate) fn with_nodes_keeping_counter(
+        &self,
+        nodes: Vec<Node>,
+    ) -> Result<Notebook, NotebookError> {
+        Self::from_nodes_with_next_id(nodes, self.next_id)
+    }
+
+    /// Where `nodes` (a subtree, root first) would be restored: beneath its
+    /// original parent if that is still active, at its original position
+    /// clamped to the siblings available (a former root returns among the
+    /// roots the same way); if the original parent is gone, at the end of the
+    /// root list. Fails if any node id is already active.
+    pub(crate) fn restore_placement(
+        &self,
+        nodes: &[Node],
+    ) -> Result<(Option<NodeId>, usize), NotebookError> {
+        if let Some(clash) = nodes.iter().find(|n| self.nodes.contains_key(&n.id)) {
+            return Err(NotebookError::IdCollision(clash.id));
+        }
+        let root = nodes
+            .first()
+            .ok_or(NotebookError::InvalidStructure("empty subtree"))?;
+        let roots = self.siblings(None).len();
+        Ok(match root.parent_id {
+            // It was a root: back to its old place among the roots.
+            None => (None, root.position.min(roots)),
+            Some(parent) if self.nodes.contains_key(&parent) => (
+                Some(parent),
+                root.position.min(self.siblings(Some(parent)).len()),
+            ),
+            // Its parent is gone: last root.
+            Some(_) => (None, roots),
+        })
+    }
+
+    /// Inserts a subtree at `restore_placement`, shifting later siblings
+    /// down. Never replaces an active node. Returns where the root went.
+    pub(crate) fn restore_subtree(
+        &mut self,
+        nodes: Vec<Node>,
+    ) -> Result<(Option<NodeId>, usize), NotebookError> {
+        let (parent, position) = self.restore_placement(&nodes)?;
+        let max_id = nodes.iter().map(|n| n.id.0).max().unwrap_or(0);
+        let next_id = max_id
+            .checked_add(1)
+            .ok_or(NotebookError::InvalidStructure("node id out of range"))?;
+
+        let later: Vec<NodeId> = self
+            .siblings(parent)
+            .iter()
+            .filter(|n| n.position >= position)
+            .map(|n| n.id)
+            .collect();
+        for id in later {
+            if let Some(node) = self.nodes.get_mut(&id) {
+                node.position += 1;
+            }
+        }
+        for (i, mut node) in nodes.into_iter().enumerate() {
+            if i == 0 {
+                node.parent_id = parent;
+                node.position = position;
+            }
+            self.nodes.insert(node.id, node);
+        }
+        self.next_id = self.next_id.max(next_id);
+        Ok((parent, position))
     }
 
     /// All nodes, parents before their children, siblings in order.

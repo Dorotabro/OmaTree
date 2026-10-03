@@ -6,6 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::notebook::{NodeId, Notebook, NotebookError};
+use crate::recovery::{unix_now, Checkpoint, Recovery, RecoveryError, TrashEntry};
 use crate::storage::{Storage, StorageError};
 
 #[derive(Debug)]
@@ -103,6 +104,7 @@ pub fn with_default_extension(path: &Path) -> PathBuf {
 
 pub struct Document {
     notebook: Notebook,
+    recovery: Recovery,
     storage: Option<Storage>,
     path: Option<PathBuf>,
     dirty: bool,
@@ -113,6 +115,7 @@ impl Document {
     pub fn untitled() -> Self {
         Document {
             notebook: Notebook::new(),
+            recovery: Recovery::default(),
             storage: None,
             path: None,
             dirty: false,
@@ -127,6 +130,7 @@ impl Document {
             Ok(_) => Self::open_existing(path),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Document {
                 notebook: Notebook::new(),
+                recovery: Recovery::default(),
                 storage: Some(Storage::create(path)?),
                 path: Some(path.to_path_buf()),
                 dirty: false,
@@ -139,9 +143,10 @@ impl Document {
     pub fn open_existing(path: &Path) -> Result<Self, DocumentError> {
         std::fs::metadata(path).map_err(DocumentError::Io)?;
         let storage = Storage::open(path)?;
-        let notebook = storage.load()?;
+        let (notebook, recovery) = storage.load_document()?;
         Ok(Document {
             notebook,
+            recovery,
             storage: Some(storage),
             path: Some(path.to_path_buf()),
             dirty: false,
@@ -151,7 +156,7 @@ impl Document {
     /// Writes the whole notebook. Dirty is cleared only on success.
     pub fn save(&mut self) -> Result<(), DocumentError> {
         let storage = self.storage.as_mut().ok_or(DocumentError::NoPath)?;
-        storage.save(&self.notebook)?;
+        storage.save_document(&self.notebook, &self.recovery)?;
         self.dirty = false;
         Ok(())
     }
@@ -184,7 +189,7 @@ impl Document {
         } else {
             Storage::create(path)?
         };
-        if let Err(e) = target.save(&self.notebook) {
+        if let Err(e) = target.save_document(&self.notebook, &self.recovery) {
             drop(target);
             if !existed {
                 let _ = std::fs::remove_file(path);
@@ -263,8 +268,95 @@ impl Document {
         Ok(())
     }
 
+    /// Moves a node and its whole subtree to Trash, after taking a checkpoint
+    /// of the notebook as it is now. Nothing changes if the node is missing.
     pub fn delete(&mut self, id: NodeId) -> Result<(), NotebookError> {
+        let subtree = self.notebook.subtree(id)?;
+        let reason = format!("Before deleting \"{}\"", subtree[0].title());
+        let entry = TrashEntry::new(unix_now(), subtree)?;
+        self.create_checkpoint(&reason);
+        self.recovery.push_trash(entry);
         self.notebook.delete(id)?;
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// Pretends the document was just saved. Tests only.
+    #[cfg(test)]
+    fn save_as_dirty_reset_for_test(&mut self) {
+        self.dirty = false;
+    }
+
+    // Recovery.
+
+    pub fn recovery(&self) -> &Recovery {
+        &self.recovery
+    }
+
+    /// Records the current notebook as a recovery checkpoint (keeping only
+    /// the newest few). Call this before any operation that restructures
+    /// or replaces the tree. It does not itself make the document dirty.
+    pub fn create_checkpoint(&mut self, reason: &str) {
+        let checkpoint = Checkpoint::of(&self.notebook, reason, unix_now());
+        self.recovery.add_checkpoint(checkpoint);
+    }
+
+    /// Where Trash entry `index` (oldest first) would be restored: its
+    /// parent (None = top level) and sibling position. Fails if restoring
+    /// would collide with an active node.
+    pub fn plan_trash_restore(
+        &self,
+        index: usize,
+    ) -> Result<(Option<NodeId>, usize), RecoveryError> {
+        let entry = self
+            .recovery
+            .trash()
+            .get(index)
+            .ok_or(RecoveryError::NoSuchEntry)?;
+        Ok(self.notebook.restore_placement(entry.nodes())?)
+    }
+
+    /// Restores a Trash entry, after checkpointing the current notebook, and
+    /// removes it from Trash. The original parent and position are used when
+    /// possible, otherwise the subtree becomes the last root. On failure
+    /// nothing changes. Returns the restored root's id.
+    pub fn restore_trash(&mut self, index: usize) -> Result<NodeId, RecoveryError> {
+        let entry = self
+            .recovery
+            .trash()
+            .get(index)
+            .ok_or(RecoveryError::NoSuchEntry)?;
+        let reason = format!("Before restoring \"{}\" from Trash", entry.title());
+        let root = entry.root().id();
+        let nodes = entry.nodes().to_vec();
+
+        // Try it on a copy first so a failure leaves the document as it was.
+        let mut restored = self.notebook.clone();
+        restored.restore_subtree(nodes)?;
+
+        self.create_checkpoint(&reason);
+        self.notebook = restored;
+        self.recovery.take_trash(index);
+        self.dirty = true;
+        Ok(root)
+    }
+
+    /// Replaces the active notebook with checkpoint `index` (oldest first),
+    /// after checkpointing the notebook being replaced. Trash and the other
+    /// checkpoints are kept, and ids are never reused. Not saved to disk.
+    pub fn restore_checkpoint(&mut self, index: usize) -> Result<(), RecoveryError> {
+        let checkpoint = self
+            .recovery
+            .checkpoints()
+            .get(index)
+            .ok_or(RecoveryError::NoSuchEntry)?;
+        let reason = format!("Before restoring checkpoint \"{}\"", checkpoint.reason());
+        let restored = self
+            .notebook
+            .with_nodes_keeping_counter(checkpoint.nodes().to_vec())?;
+
+        self.create_checkpoint(&reason);
+        self.notebook = restored;
         self.dirty = true;
         Ok(())
     }
@@ -769,5 +861,398 @@ mod tests {
         assert_eq!(add("/tmp/notes.db"), PathBuf::from("/tmp/notes.db"));
         assert_eq!(add("/tmp/my.notes"), PathBuf::from("/tmp/my.notes"));
         assert_eq!(add("/tmp/.hidden"), PathBuf::from("/tmp/.hidden.omatree"));
+    }
+
+    // ---- Trash and checkpoints ----
+
+    fn sorted(mut nodes: Vec<crate::notebook::Node>) -> Vec<crate::notebook::Node> {
+        nodes.sort_by_key(|n| n.id());
+        nodes
+    }
+
+    /// Projects
+    /// ├── OmaTree        (body "omatree body")
+    /// │   └── Ideas      (body "ideas body")
+    /// └── Threatwright
+    /// Inbox
+    fn sample() -> (Document, [NodeId; 5]) {
+        let mut doc = Document::untitled();
+        let projects = doc.create_root("Projects");
+        let inbox = doc.create_root("Inbox");
+        let omatree = doc.create_child(projects, "OmaTree").unwrap();
+        let threat = doc.create_child(projects, "Threatwright").unwrap();
+        let ideas = doc.create_child(omatree, "Ideas").unwrap();
+        doc.set_body(omatree, "omatree body").unwrap();
+        doc.set_body(ideas, "ideas body").unwrap();
+        (doc, [projects, inbox, omatree, threat, ideas])
+    }
+
+    #[test]
+    fn deleting_a_leaf_moves_it_to_trash() {
+        let (mut doc, [_, _, _, threat, _]) = sample();
+        doc.delete(threat).unwrap();
+        assert!(doc.notebook().get(threat).is_none());
+        let trash = doc.recovery().trash();
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].title(), "Threatwright");
+        assert_eq!(trash[0].node_count(), 1);
+        assert!(trash[0].deleted_at() > 0);
+        assert!(doc.is_dirty());
+    }
+
+    #[test]
+    fn deleting_a_parent_stores_the_whole_subtree() {
+        let (mut doc, [projects, inbox, omatree, threat, ideas]) = sample();
+        doc.delete(projects).unwrap();
+        assert_eq!(titles(doc.notebook(), None), ["Inbox"]);
+        let entry = &doc.recovery().trash()[0];
+        assert_eq!(entry.node_count(), 4);
+        let ids: Vec<NodeId> = sorted(entry.nodes().to_vec())
+            .iter()
+            .map(|n| n.id())
+            .collect();
+        assert_eq!(ids, [projects, omatree, threat, ideas]);
+        assert!(doc.notebook().get(inbox).is_some());
+    }
+
+    #[test]
+    fn trash_preserves_ids_titles_bodies_hierarchy_and_original_placement() {
+        let (mut doc, [projects, _, omatree, _, ideas]) = sample();
+        let before = doc.notebook().subtree(projects).unwrap();
+        doc.delete(projects).unwrap();
+        let entry = &doc.recovery().trash()[0];
+        assert_eq!(entry.nodes()[0], before[0], "root first");
+        assert_eq!(sorted(entry.nodes().to_vec()), sorted(before));
+        assert_eq!(entry.root().id(), projects);
+        assert_eq!(entry.root().parent_id(), None);
+        assert_eq!(entry.root().position(), 0);
+        let find = |id| entry.nodes().iter().find(|n| n.id() == id).unwrap();
+        assert_eq!(find(omatree).parent_id(), Some(projects));
+        assert_eq!(find(ideas).parent_id(), Some(omatree));
+        assert_eq!(find(ideas).body(), "ideas body");
+        assert_eq!(find(omatree).title(), "OmaTree");
+    }
+
+    #[test]
+    fn trash_survives_save_and_reopen() {
+        let dir = TempDir::new();
+        let path = dir.join("t.omatree");
+        let (mut doc, [projects, ..]) = sample();
+        doc.delete(projects).unwrap();
+        let saved = doc.recovery().trash()[0].clone();
+        doc.save_as(&path, false).unwrap();
+        doc.save().unwrap();
+        drop(doc);
+
+        let reopened = Document::open_existing(&path).unwrap();
+        assert_eq!(reopened.recovery().trash(), &[saved]);
+        assert!(!reopened.is_dirty());
+    }
+
+    #[test]
+    fn restoring_trash_reproduces_the_subtree() {
+        let (mut doc, [projects, ..]) = sample();
+        let before = doc.notebook().snapshot_nodes();
+        let subtree_before = doc.notebook().subtree(projects).unwrap();
+        doc.delete(projects).unwrap();
+        let restored = doc.restore_trash(0).unwrap();
+        assert_eq!(restored, projects);
+        assert_eq!(
+            sorted(doc.notebook().subtree(projects).unwrap()),
+            sorted(subtree_before)
+        );
+        assert_eq!(sorted(doc.notebook().snapshot_nodes()), sorted(before));
+    }
+
+    #[test]
+    fn restore_uses_the_original_parent_and_position() {
+        let mut doc = Document::untitled();
+        let parent = doc.create_root("P");
+        let a = doc.create_child(parent, "a").unwrap();
+        let b = doc.create_child(parent, "b").unwrap();
+        let c = doc.create_child(parent, "c").unwrap();
+        doc.delete(b).unwrap();
+        assert_eq!(doc.plan_trash_restore(0).unwrap(), (Some(parent), 1));
+        doc.restore_trash(0).unwrap();
+        assert_eq!(titles(doc.notebook(), Some(parent)), ["a", "b", "c"]);
+        let positions: Vec<usize> = doc
+            .notebook()
+            .children(parent)
+            .unwrap()
+            .iter()
+            .map(|n| n.position())
+            .collect();
+        assert_eq!(positions, [0, 1, 2]);
+        assert_eq!(doc.notebook().get(b).unwrap().parent_id(), Some(parent));
+        let _ = (a, c);
+    }
+
+    #[test]
+    fn restore_falls_back_to_the_end_of_the_roots_if_the_parent_is_gone() {
+        let mut doc = Document::untitled();
+        let parent = doc.create_root("P");
+        doc.create_root("other");
+        let child = doc.create_child(parent, "child").unwrap();
+        doc.delete(child).unwrap();
+        doc.delete(parent).unwrap(); // its subtree no longer contains `child`
+        doc.create_root("later");
+        // Newest Trash entry is P; restore the older one (the child).
+        let index = doc
+            .recovery()
+            .trash()
+            .iter()
+            .position(|e| e.title() == "child")
+            .unwrap();
+        assert_eq!(doc.plan_trash_restore(index).unwrap(), (None, 2));
+        doc.restore_trash(index).unwrap();
+        assert_eq!(titles(doc.notebook(), None), ["other", "later", "child"]);
+        assert_eq!(doc.notebook().get(child).unwrap().parent_id(), None);
+    }
+
+    #[test]
+    fn restore_clamps_an_unavailable_sibling_position() {
+        let mut doc = Document::untitled();
+        let parent = doc.create_root("P");
+        let a = doc.create_child(parent, "a").unwrap();
+        let b = doc.create_child(parent, "b").unwrap();
+        let c = doc.create_child(parent, "c").unwrap();
+        doc.delete(c).unwrap(); // position 2
+        doc.delete(a).unwrap();
+        doc.delete(b).unwrap();
+        assert!(doc.notebook().children(parent).unwrap().is_empty());
+        let index = doc
+            .recovery()
+            .trash()
+            .iter()
+            .position(|e| e.title() == "c")
+            .unwrap();
+        assert_eq!(doc.plan_trash_restore(index).unwrap(), (Some(parent), 0));
+        doc.restore_trash(index).unwrap();
+        assert_eq!(titles(doc.notebook(), Some(parent)), ["c"]);
+        assert_eq!(doc.notebook().get(c).unwrap().position(), 0);
+    }
+
+    #[test]
+    fn a_deleted_root_returns_to_its_original_place_among_the_roots() {
+        let mut doc = Document::untitled();
+        doc.create_root("first");
+        let middle = doc.create_root("middle");
+        doc.create_root("last");
+        doc.delete(middle).unwrap();
+        assert_eq!(doc.plan_trash_restore(0).unwrap(), (None, 1));
+        doc.restore_trash(0).unwrap();
+        assert_eq!(titles(doc.notebook(), None), ["first", "middle", "last"]);
+    }
+
+    #[test]
+    fn restoring_removes_the_entry_from_trash() {
+        let (mut doc, [_, _, _, threat, _]) = sample();
+        doc.delete(threat).unwrap();
+        doc.restore_trash(0).unwrap();
+        assert!(doc.recovery().trash().is_empty());
+        assert!(matches!(
+            doc.restore_trash(0),
+            Err(RecoveryError::NoSuchEntry)
+        ));
+    }
+
+    #[test]
+    fn restore_id_collisions_fail_cleanly() {
+        let (mut doc, [projects, ..]) = sample();
+        doc.delete(projects).unwrap();
+        // Restoring the pre-delete checkpoint brings the same ids back.
+        doc.restore_checkpoint(0).unwrap();
+        assert!(doc.notebook().get(projects).is_some());
+
+        let notebook_before = doc.notebook().snapshot_nodes();
+        let trash_before = doc.recovery().trash().to_vec();
+        let checkpoints_before = doc.recovery().checkpoints().len();
+        doc.save_as_dirty_reset_for_test();
+
+        assert_eq!(doc.plan_trash_restore(0), Err(RecoveryError::IdCollision));
+        assert_eq!(doc.restore_trash(0), Err(RecoveryError::IdCollision));
+        assert_eq!(doc.notebook().snapshot_nodes(), notebook_before);
+        assert_eq!(doc.recovery().trash(), &trash_before[..]);
+        assert_eq!(doc.recovery().checkpoints().len(), checkpoints_before);
+        assert!(
+            !doc.is_dirty(),
+            "a failed restore must not mark the document dirty"
+        );
+    }
+
+    #[test]
+    fn node_ids_are_not_reused_after_delete_save_and_reopen() {
+        let dir = TempDir::new();
+        let path = dir.join("ids.omatree");
+        let mut doc = Document::open(&path).unwrap();
+        let a = doc.create_root("a");
+        let b = doc.create_root("b");
+        doc.delete(b).unwrap(); // the highest id now lives only in Trash
+        doc.save().unwrap();
+        drop(doc);
+
+        let mut doc = Document::open_existing(&path).unwrap();
+        let c = doc.create_root("c");
+        assert!(c > b && c > a, "{c:?} must be above {b:?}");
+        doc.save().unwrap();
+        drop(doc);
+
+        let doc = Document::open_existing(&path).unwrap();
+        assert_eq!(doc.recovery().trash()[0].root().id(), b);
+        assert!(doc.notebook().get(b).is_none());
+    }
+
+    #[test]
+    fn a_checkpoint_is_created_before_delete_and_holds_the_exact_prior_tree() {
+        let (mut doc, [projects, ..]) = sample();
+        assert!(doc.recovery().checkpoints().is_empty());
+        let before = doc.notebook().snapshot_nodes();
+        doc.delete(projects).unwrap();
+        let checkpoints = doc.recovery().checkpoints();
+        assert_eq!(checkpoints.len(), 1);
+        assert_eq!(checkpoints[0].reason(), "Before deleting \"Projects\"");
+        assert!(checkpoints[0].created_at() > 0);
+        assert_eq!(sorted(checkpoints[0].nodes().to_vec()), sorted(before));
+    }
+
+    #[test]
+    fn restoring_a_checkpoint_restores_the_previous_tree_and_keeps_trash() {
+        let (mut doc, [projects, ..]) = sample();
+        let before = doc.notebook().snapshot_nodes();
+        doc.delete(projects).unwrap();
+        doc.delete(doc.notebook().roots()[0].id()).unwrap(); // also delete Inbox
+        assert!(doc.notebook().roots().is_empty());
+
+        // Newest-first would be index 1; stored oldest-first, "Before
+        // deleting Projects" is index 0.
+        doc.restore_checkpoint(0).unwrap();
+        assert_eq!(sorted(doc.notebook().snapshot_nodes()), sorted(before));
+        assert_eq!(doc.recovery().trash().len(), 2, "Trash stays intact");
+        assert!(doc.is_dirty());
+    }
+
+    #[test]
+    fn restoring_a_checkpoint_checkpoints_the_state_being_replaced() {
+        let (mut doc, [projects, ..]) = sample();
+        doc.delete(projects).unwrap();
+        let replaced = doc.notebook().snapshot_nodes();
+        let count = doc.recovery().checkpoints().len();
+        doc.restore_checkpoint(0).unwrap();
+        let checkpoints = doc.recovery().checkpoints();
+        assert_eq!(checkpoints.len(), count + 1);
+        let newest = checkpoints.last().unwrap();
+        assert_eq!(
+            newest.reason(),
+            "Before restoring checkpoint \"Before deleting \"Projects\"\""
+        );
+        assert_eq!(sorted(newest.nodes().to_vec()), sorted(replaced.clone()));
+
+        // So the restore itself can be undone.
+        doc.restore_checkpoint(checkpoints.len() - 1).unwrap();
+        assert_eq!(sorted(doc.notebook().snapshot_nodes()), sorted(replaced));
+    }
+
+    #[test]
+    fn restoring_trash_checkpoints_the_state_being_replaced() {
+        let (mut doc, [_, _, _, threat, _]) = sample();
+        doc.delete(threat).unwrap();
+        let before_restore = doc.notebook().snapshot_nodes();
+        doc.restore_trash(0).unwrap();
+        let newest = doc.recovery().checkpoints().last().unwrap();
+        assert_eq!(
+            newest.reason(),
+            "Before restoring \"Threatwright\" from Trash"
+        );
+        assert_eq!(sorted(newest.nodes().to_vec()), sorted(before_restore));
+    }
+
+    #[test]
+    fn ordinary_edits_and_renames_create_no_checkpoints() {
+        let (mut doc, [projects, _, omatree, ..]) = sample();
+        doc.set_body(projects, "typing, typing, typing").unwrap();
+        doc.set_body(projects, "more typing").unwrap();
+        doc.rename(omatree, "OmaTree 2").unwrap();
+        doc.create_root("another");
+        assert!(doc.recovery().checkpoints().is_empty());
+        assert!(doc.recovery().trash().is_empty());
+    }
+
+    #[test]
+    fn checkpoint_history_is_capped_at_the_newest_100() {
+        let mut doc = Document::untitled();
+        for i in 0..105 {
+            doc.create_checkpoint(&format!("c{i}"));
+        }
+        let checkpoints = doc.recovery().checkpoints();
+        assert_eq!(checkpoints.len(), 100);
+        assert_eq!(checkpoints[0].reason(), "c5");
+        assert_eq!(checkpoints[99].reason(), "c104");
+    }
+
+    #[test]
+    fn save_as_preserves_trash_and_checkpoints() {
+        let dir = TempDir::new();
+        let first = dir.join("first.omatree");
+        let second = dir.join("second.omatree");
+        let (mut doc, [projects, ..]) = sample();
+        doc.save_as(&first, false).unwrap();
+        doc.delete(projects).unwrap();
+        doc.save().unwrap();
+        doc.save_as(&second, false).unwrap();
+        let trash = doc.recovery().trash().to_vec();
+        let checkpoints = doc.recovery().checkpoints().to_vec();
+        drop(doc);
+
+        for path in [&second, &first] {
+            let reopened = Document::open_existing(path).unwrap();
+            assert_eq!(reopened.recovery().trash(), &trash[..], "{path:?}");
+            assert_eq!(
+                reopened.recovery().checkpoints(),
+                &checkpoints[..],
+                "{path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn recovery_operations_set_dirty_and_inspecting_does_not() {
+        let dir = TempDir::new();
+        let path = dir.join("dirty.omatree");
+        let (mut doc, [projects, ..]) = sample();
+        doc.save_as(&path, false).unwrap();
+        assert!(!doc.is_dirty());
+
+        let _ = (doc.recovery().trash(), doc.recovery().checkpoints());
+        let _ = doc.plan_trash_restore(0);
+        assert!(!doc.is_dirty(), "looking at recovery state is not a change");
+
+        doc.delete(projects).unwrap();
+        assert!(doc.is_dirty(), "delete");
+        doc.save().unwrap();
+
+        doc.restore_trash(0).unwrap();
+        assert!(doc.is_dirty(), "restore from Trash");
+        doc.save().unwrap();
+
+        doc.restore_checkpoint(0).unwrap();
+        assert!(doc.is_dirty(), "restore checkpoint");
+        doc.save().unwrap();
+        assert!(!doc.is_dirty());
+    }
+
+    #[test]
+    fn failed_recovery_operations_change_nothing() {
+        let (mut doc, [projects, ..]) = sample();
+        doc.delete(projects).unwrap();
+        doc.save_as_dirty_reset_for_test();
+        assert_eq!(doc.restore_trash(7), Err(RecoveryError::NoSuchEntry));
+        assert_eq!(doc.restore_checkpoint(7), Err(RecoveryError::NoSuchEntry));
+        assert!(!doc.is_dirty());
+        assert_eq!(doc.recovery().checkpoints().len(), 1);
+        // Deleting a missing node does not touch recovery state either.
+        let gone = projects;
+        assert!(doc.delete(gone).is_err());
+        assert_eq!(doc.recovery().trash().len(), 1);
+        assert_eq!(doc.recovery().checkpoints().len(), 1);
     }
 }

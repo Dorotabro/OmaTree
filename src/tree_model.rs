@@ -14,6 +14,7 @@ use std::path::Path;
 
 use crate::document::{with_default_extension, Document};
 use crate::notebook::{NodeId, Notebook};
+use crate::recovery::RecoveryError;
 
 #[cxx_qt::bridge]
 pub mod qobject {
@@ -40,6 +41,7 @@ pub mod qobject {
         #[base = QAbstractItemModel]
         #[qproperty(bool, dirty, READ, NOTIFY)]
         #[qproperty(QString, document_name, cxx_name = "documentName", READ, NOTIFY)]
+        #[qproperty(i32, recovery_revision, cxx_name = "recoveryRevision", READ, NOTIFY)]
         type NotebookModel = super::NotebookModelRust;
     }
 
@@ -186,6 +188,53 @@ pub mod qobject {
         #[cxx_name = "saveAs"]
         fn save_as(self: Pin<&mut NotebookModel>, path: &QString, overwrite: bool) -> QString;
 
+        // Recovery. Entries are addressed by position in the lists below,
+        // newest first, never by node id. Bind to `recoveryRevision` to
+        // refresh a view when anything here changes.
+
+        #[qinvokable]
+        #[cxx_name = "trashCount"]
+        fn trash_count(self: &NotebookModel) -> i32;
+
+        #[qinvokable]
+        #[cxx_name = "trashTitle"]
+        fn trash_title(self: &NotebookModel, index: i32) -> QString;
+
+        /// Seconds since the Unix epoch.
+        #[qinvokable]
+        #[cxx_name = "trashDeletedAt"]
+        fn trash_deleted_at(self: &NotebookModel, index: i32) -> i64;
+
+        /// How many notes the trashed subtree contains.
+        #[qinvokable]
+        #[cxx_name = "trashSize"]
+        fn trash_size(self: &NotebookModel, index: i32) -> i32;
+
+        /// Puts a trashed subtree back. Returns an empty string on success,
+        /// otherwise a message; on failure nothing changes.
+        #[qinvokable]
+        #[cxx_name = "restoreTrash"]
+        fn restore_trash(self: Pin<&mut NotebookModel>, index: i32) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "checkpointCount"]
+        fn checkpoint_count(self: &NotebookModel) -> i32;
+
+        #[qinvokable]
+        #[cxx_name = "checkpointReason"]
+        fn checkpoint_reason(self: &NotebookModel, index: i32) -> QString;
+
+        /// Seconds since the Unix epoch.
+        #[qinvokable]
+        #[cxx_name = "checkpointCreatedAt"]
+        fn checkpoint_created_at(self: &NotebookModel, index: i32) -> i64;
+
+        /// Replaces the whole notebook with a checkpoint (resetting the
+        /// model). Leaves the document dirty; nothing is saved.
+        #[qinvokable]
+        #[cxx_name = "restoreCheckpoint"]
+        fn restore_checkpoint(self: Pin<&mut NotebookModel>, index: i32) -> QString;
+
         /// Saves to the notebook's file. Returns an empty string on success,
         /// otherwise a message for the user; dirty stays set on failure.
         #[qinvokable]
@@ -207,6 +256,7 @@ pub struct NotebookModelRust {
     document: Document,
     dirty: bool,
     document_name: QString,
+    recovery_revision: i32,
 }
 
 impl Default for NotebookModelRust {
@@ -217,6 +267,7 @@ impl Default for NotebookModelRust {
             document,
             dirty: false,
             document_name,
+            recovery_revision: 0,
         }
     }
 }
@@ -249,6 +300,17 @@ fn child_count(nb: &Notebook, parent: Option<NodeId>) -> usize {
         None => nb.roots().len(),
         Some(p) => nb.children(p).map_or(0, |c| c.len()),
     }
+}
+
+/// Maps a position in a newest-first list to an index into the stored
+/// oldest-first list.
+fn nth_newest(len: usize, position: i32) -> Option<usize> {
+    let position = usize::try_from(position).ok()?;
+    (position < len).then(|| len - 1 - position)
+}
+
+fn count_to_i32(len: usize) -> i32 {
+    i32::try_from(len).unwrap_or(i32::MAX)
 }
 
 fn position(nb: &Notebook, id: NodeId) -> Option<i32> {
@@ -352,6 +414,96 @@ impl qobject::NotebookModel {
         }
     }
 
+    /// Tells QML the Trash or checkpoint lists may have changed.
+    fn bump_recovery(mut self: Pin<&mut Self>) {
+        let next = self.rust().recovery_revision.wrapping_add(1);
+        self.as_mut().rust_mut().recovery_revision = next;
+        self.as_mut().recovery_revision_changed();
+    }
+
+    fn trash_count(&self) -> i32 {
+        count_to_i32(self.rust().document.recovery().trash().len())
+    }
+
+    fn trash_entry(&self, index: i32) -> Option<&crate::recovery::TrashEntry> {
+        let trash = self.rust().document.recovery().trash();
+        nth_newest(trash.len(), index).map(|i| &trash[i])
+    }
+
+    fn trash_title(&self, index: i32) -> QString {
+        self.trash_entry(index)
+            .map_or_else(QString::default, |e| QString::from(e.title()))
+    }
+
+    fn trash_deleted_at(&self, index: i32) -> i64 {
+        self.trash_entry(index).map_or(0, |e| e.deleted_at())
+    }
+
+    fn trash_size(&self, index: i32) -> i32 {
+        self.trash_entry(index)
+            .map_or(0, |e| count_to_i32(e.node_count()))
+    }
+
+    fn restore_trash(mut self: Pin<&mut Self>, index: i32) -> QString {
+        let len = self.rust().document.recovery().trash().len();
+        let Some(stored) = nth_newest(len, index) else {
+            return QString::from(RecoveryError::NoSuchEntry.message());
+        };
+        // The restored root appears as one inserted row (its descendants come
+        // with it), so announce exactly that row.
+        let (parent, row) = match self.rust().document.plan_trash_restore(stored) {
+            Ok(placement) => placement,
+            Err(e) => return QString::from(e.message()),
+        };
+        let parent_index = parent.map_or_else(QModelIndex::default, |id| self.index_for(id));
+        let row = count_to_i32(row);
+        self.as_mut().begin_insert_rows(&parent_index, row, row);
+        let result = self.as_mut().rust_mut().document.restore_trash(stored);
+        self.as_mut().end_insert_rows();
+        self.as_mut().sync_state();
+        self.as_mut().bump_recovery();
+        match result {
+            Ok(_) => QString::default(),
+            Err(e) => QString::from(e.message()),
+        }
+    }
+
+    fn checkpoint_count(&self) -> i32 {
+        count_to_i32(self.rust().document.recovery().checkpoints().len())
+    }
+
+    fn checkpoint_entry(&self, index: i32) -> Option<&crate::recovery::Checkpoint> {
+        let list = self.rust().document.recovery().checkpoints();
+        nth_newest(list.len(), index).map(|i| &list[i])
+    }
+
+    fn checkpoint_reason(&self, index: i32) -> QString {
+        self.checkpoint_entry(index)
+            .map_or_else(QString::default, |c| QString::from(c.reason()))
+    }
+
+    fn checkpoint_created_at(&self, index: i32) -> i64 {
+        self.checkpoint_entry(index).map_or(0, |c| c.created_at())
+    }
+
+    fn restore_checkpoint(mut self: Pin<&mut Self>, index: i32) -> QString {
+        let len = self.rust().document.recovery().checkpoints().len();
+        let Some(stored) = nth_newest(len, index) else {
+            return QString::from(RecoveryError::NoSuchEntry.message());
+        };
+        // The whole tree is replaced, so this is a genuine model reset. QML
+        // clears the selection on `modelAboutToBeReset`.
+        self.as_mut().begin_reset_model();
+        let result = self.as_mut().rust_mut().document.restore_checkpoint(stored);
+        self.as_mut().end_reset_model();
+        self.as_mut().sync_state();
+        self.as_mut().bump_recovery();
+        match result {
+            Ok(()) => QString::default(),
+            Err(e) => QString::from(e.message()),
+        }
+    }
+
     fn create_root(mut self: Pin<&mut Self>, title: &QString) -> QModelIndex {
         let row = child_count(self.rust().document.notebook(), None);
         let row = i32::try_from(row).unwrap_or(i32::MAX);
@@ -424,6 +576,7 @@ impl qobject::NotebookModel {
         let removed = self.as_mut().rust_mut().document.delete(id).is_ok();
         self.as_mut().end_remove_rows();
         self.as_mut().sync_state();
+        self.as_mut().bump_recovery();
         removed
     }
 
@@ -458,6 +611,7 @@ impl qobject::NotebookModel {
         self.as_mut().rust_mut().document = document;
         self.as_mut().end_reset_model();
         self.as_mut().sync_state();
+        self.as_mut().bump_recovery();
     }
 
     fn open_path(self: Pin<&mut Self>, path: &QString) -> QString {
@@ -561,6 +715,16 @@ mod tests {
     /// What `index_for` stores in a QModelIndex for `id`.
     fn index_parts(nb: &Notebook, id: NodeId) -> (i32, i32, usize) {
         (position(nb, id).unwrap(), 0, id.get() as usize)
+    }
+
+    #[test]
+    fn recovery_lists_are_addressed_newest_first() {
+        assert_eq!(nth_newest(3, 0), Some(2));
+        assert_eq!(nth_newest(3, 1), Some(1));
+        assert_eq!(nth_newest(3, 2), Some(0));
+        assert_eq!(nth_newest(3, 3), None);
+        assert_eq!(nth_newest(3, -1), None);
+        assert_eq!(nth_newest(0, 0), None);
     }
 
     #[test]

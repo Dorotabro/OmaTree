@@ -15,6 +15,7 @@ Item {
     signal openRequested
     signal saveRequested
     signal saveAsRequested
+    signal recoveryRequested
 
     // Expands ancestors of `index` and scrolls it into view.
     function reveal(index) {
@@ -115,6 +116,11 @@ Item {
                     MenuItem {
                         text: qsTr("Save As…\tCtrl+Shift+S")
                         onTriggered: pane.saveAsRequested()
+                    }
+                    MenuSeparator {}
+                    MenuItem {
+                        text: qsTr("Recovery…")
+                        onTriggered: pane.recoveryRequested()
                     }
                 }
             }

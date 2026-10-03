@@ -227,6 +227,7 @@ ApplicationWindow {
             onOpenRequested: root.requestOpen()
             onSaveRequested: root.saveCurrent()
             onSaveAsRequested: root.startSaveAs(null)
+            onRecoveryRequested: recoveryDialog.open()
         }
 
         EditorPane {
@@ -247,7 +248,7 @@ ApplicationWindow {
                 return;
             const index = selection.currentIndex;
             const name = notebook.data(index, Qt.DisplayRole);
-            message.text = notebook.rowCount(index) > 0 ? qsTr("Delete “%1” and everything beneath it?").arg(name) : qsTr("Delete “%1”?").arg(name);
+            message.text = notebook.rowCount(index) > 0 ? qsTr("Move “%1” and everything beneath it to Trash?").arg(name) : qsTr("Move “%1” to Trash?").arg(name);
             open();
         }
 
@@ -256,7 +257,7 @@ ApplicationWindow {
         y: Math.round((parent.height - height) / 2)
         width: 340
         modal: true
-        title: qsTr("Delete note")
+        title: qsTr("Move to Trash")
         standardButtons: Dialog.Yes | Dialog.No
         onAccepted: root.deleteSelected()
 
@@ -383,6 +384,13 @@ ApplicationWindow {
             }
         }
         onRejected: root.afterSaveAs = null
+    }
+
+    RecoveryDialog {
+        id: recoveryDialog
+
+        notebook: notebook
+        onFailed: message => root.showError(message)
     }
 
     Dialog {

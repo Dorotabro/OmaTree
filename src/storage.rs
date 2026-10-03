@@ -1,15 +1,22 @@
 //! SQLite persistence for notebooks. One notebook is one database file.
+//!
+//! Schema version 1 stores only the active nodes. Version 2 adds the id
+//! counter, Trash and recovery checkpoints. Version 1 files stay readable and
+//! are migrated to version 2 only by a successful save.
 
 use std::fmt;
 use std::path::Path;
 
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{params, Connection, OpenFlags, Transaction};
 
 use crate::notebook::{Node, NodeId, Notebook, NotebookError};
+use crate::recovery::{Checkpoint, Recovery, TrashEntry};
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
+const OLDEST_READABLE_VERSION: i64 = 1;
 
-const SCHEMA: &str = "
+/// The active notebook, as in version 1.
+const NODES_SCHEMA: &str = "
     CREATE TABLE nodes (
         id        INTEGER PRIMARY KEY,
         parent_id INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
@@ -18,6 +25,44 @@ const SCHEMA: &str = "
         body      TEXT NOT NULL
     );
     CREATE INDEX nodes_parent ON nodes(parent_id, position);
+";
+
+/// What version 2 adds. Node rows of a trash entry or checkpoint are plain
+/// rows too; their `parent_id` is not a foreign key because a trashed
+/// subtree's original parent may no longer exist.
+const RECOVERY_SCHEMA: &str = "
+    CREATE TABLE notebook_meta (
+        id           INTEGER PRIMARY KEY CHECK (id = 1),
+        next_node_id INTEGER NOT NULL CHECK (next_node_id >= 0)
+    );
+    CREATE TABLE trash_entries (
+        id           INTEGER PRIMARY KEY,
+        deleted_at   INTEGER NOT NULL,
+        root_node_id INTEGER NOT NULL
+    );
+    CREATE TABLE trash_nodes (
+        entry_id  INTEGER NOT NULL REFERENCES trash_entries(id) ON DELETE CASCADE,
+        node_id   INTEGER NOT NULL,
+        parent_id INTEGER,
+        position  INTEGER NOT NULL CHECK (position >= 0),
+        title     TEXT NOT NULL,
+        body      TEXT NOT NULL,
+        PRIMARY KEY (entry_id, node_id)
+    );
+    CREATE TABLE checkpoints (
+        id         INTEGER PRIMARY KEY,
+        created_at INTEGER NOT NULL,
+        reason     TEXT NOT NULL
+    );
+    CREATE TABLE checkpoint_nodes (
+        checkpoint_id INTEGER NOT NULL REFERENCES checkpoints(id) ON DELETE CASCADE,
+        node_id       INTEGER NOT NULL,
+        parent_id     INTEGER,
+        position      INTEGER NOT NULL CHECK (position >= 0),
+        title         TEXT NOT NULL,
+        body          TEXT NOT NULL,
+        PRIMARY KEY (checkpoint_id, node_id)
+    );
 ";
 
 #[derive(Debug)]
@@ -55,10 +100,12 @@ impl From<NotebookError> for StorageError {
 
 pub struct Storage {
     conn: Connection,
+    /// Schema version of the file as it is on disk right now (1 or 2).
+    version: i64,
 }
 
 impl Storage {
-    /// Creates the schema in a new (or empty) database file.
+    /// Creates a version 2 notebook in a new (or empty) database file.
     /// Refuses to touch a database that already contains anything.
     pub fn create(path: &Path) -> Result<Self, StorageError> {
         let mut conn = Connection::open(path)?;
@@ -77,13 +124,23 @@ impl Storage {
         }
 
         let tx = conn.transaction()?;
-        tx.execute_batch(SCHEMA)?;
+        tx.execute_batch(NODES_SCHEMA)?;
+        tx.execute_batch(RECOVERY_SCHEMA)?;
+        tx.execute(
+            "INSERT INTO notebook_meta (id, next_node_id) VALUES (1, 0)",
+            [],
+        )?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         tx.commit()?;
-        Ok(Storage { conn })
+        Ok(Storage {
+            conn,
+            version: SCHEMA_VERSION,
+        })
     }
 
-    /// Opens an existing notebook; never creates a file.
+    /// Opens an existing notebook (schema version 1 or 2); never creates a
+    /// file and never modifies one. A version 1 file is only upgraded by a
+    /// later successful `save_document`.
     pub fn open(path: &Path) -> Result<Self, StorageError> {
         let conn = Connection::open_with_flags(
             path,
@@ -92,68 +149,284 @@ impl Storage {
         conn.pragma_update(None, "foreign_keys", true)?;
 
         let version = user_version(&conn)?;
-        if version != SCHEMA_VERSION {
+        if !(OLDEST_READABLE_VERSION..=SCHEMA_VERSION).contains(&version) {
             return Err(StorageError::UnsupportedSchemaVersion(version));
         }
-        Ok(Storage { conn })
+        Ok(Storage { conn, version })
     }
 
-    /// Replaces the stored notebook with `notebook` in a single transaction.
-    /// On any failure the previous contents remain.
-    pub fn save(&mut self, notebook: &Notebook) -> Result<(), StorageError> {
+    /// Replaces everything stored (active notebook, id counter, Trash and
+    /// checkpoints) with the given state in a single transaction. A version 1
+    /// file is migrated to version 2 inside the same transaction, so on any
+    /// failure the previous valid file is left exactly as it was.
+    pub fn save_document(
+        &mut self,
+        notebook: &Notebook,
+        recovery: &Recovery,
+    ) -> Result<(), StorageError> {
+        let migrating = self.version < SCHEMA_VERSION;
         let tx = self.conn.transaction()?;
+        if migrating {
+            tx.execute_batch(RECOVERY_SCHEMA)?;
+        }
+
+        // Children first for the nodes foreign key; the other tables cascade.
+        tx.execute("DELETE FROM checkpoints", [])?;
+        tx.execute("DELETE FROM trash_entries", [])?;
+        tx.execute("DELETE FROM notebook_meta", [])?;
         tx.execute("DELETE FROM nodes", [])?;
-        {
-            let mut insert = tx.prepare(
-                "INSERT INTO nodes (id, parent_id, position, title, body)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-            )?;
-            // Parents come before children, as the foreign key requires.
-            for node in notebook.in_tree_order() {
-                insert.execute(params![
-                    id_to_sql(node.id())?,
-                    node.parent_id().map(id_to_sql).transpose()?,
-                    i64::try_from(node.position())
-                        .map_err(|_| StorageError::InvalidData("position too large".into()))?,
-                    node.title(),
-                    node.body(),
-                ])?;
-            }
+
+        write_nodes(&tx, notebook)?;
+        write_meta(&tx, notebook, recovery)?;
+        write_trash(&tx, recovery)?;
+        write_checkpoints(&tx, recovery)?;
+
+        if migrating {
+            tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
         tx.commit()?;
+        self.version = SCHEMA_VERSION;
         Ok(())
     }
 
-    /// Loads and validates the stored notebook.
-    pub fn load(&self) -> Result<Notebook, StorageError> {
-        let mut query = self
+    /// Loads and validates the stored notebook and recovery state. A
+    /// version 1 file yields empty recovery state and an id counter derived
+    /// from its nodes.
+    pub fn load_document(&self) -> Result<(Notebook, Recovery), StorageError> {
+        let nodes = read_nodes(
+            &self.conn,
+            "SELECT id, parent_id, position, title, body FROM nodes",
+            [],
+        )?;
+        if self.version < SCHEMA_VERSION {
+            return Ok((Notebook::from_nodes(nodes)?, Recovery::default()));
+        }
+
+        let next_id: i64 = self
             .conn
-            .prepare("SELECT id, parent_id, position, title, body FROM nodes")?;
-        let rows = query.query_map([], |row| {
+            .query_row(
+                "SELECT next_node_id FROM notebook_meta WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    StorageError::InvalidData("missing notebook metadata".into())
+                }
+                other => other.into(),
+            })?;
+        let next_id = u64::try_from(next_id)
+            .map_err(|_| StorageError::InvalidData("negative node id counter".into()))?;
+        let mut notebook = Notebook::from_nodes_with_next_id(nodes, next_id)?;
+
+        let recovery = self.load_recovery()?;
+        // Ids that only exist in Trash or checkpoints must never be reused,
+        // even if the stored counter is behind.
+        if let Some(max) = recovery.max_node_id() {
+            notebook.reserve_ids_through(max)?;
+        }
+        Ok((notebook, recovery))
+    }
+
+    fn load_recovery(&self) -> Result<Recovery, StorageError> {
+        let mut trash = Vec::new();
+        let mut entries = self
+            .conn
+            .prepare("SELECT id, deleted_at, root_node_id FROM trash_entries ORDER BY id")?;
+        let entries = entries.query_map([], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
-                row.get::<_, Option<i64>>(1)?,
+                row.get::<_, i64>(1)?,
                 row.get::<_, i64>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
             ))
         })?;
-
-        let mut nodes = Vec::new();
-        for row in rows {
-            let (id, parent_id, position, title, body) = row?;
-            let position = usize::try_from(position)
-                .map_err(|_| StorageError::InvalidData("negative position".into()))?;
-            nodes.push(Node::from_parts(
-                id_from_sql(id)?,
-                parent_id.map(id_from_sql).transpose()?,
-                position,
-                title,
-                body,
-            ));
+        for entry in entries {
+            let (entry_id, deleted_at, root) = entry?;
+            let root = id_from_sql(root)?;
+            let mut nodes = read_nodes(
+                &self.conn,
+                "SELECT node_id, parent_id, position, title, body
+                 FROM trash_nodes WHERE entry_id = ?1 ORDER BY node_id",
+                [entry_id],
+            )?;
+            // The entry's root goes first.
+            let at = nodes
+                .iter()
+                .position(|n| n.id() == root)
+                .ok_or_else(|| StorageError::InvalidData("trash entry has no root".into()))?;
+            nodes.swap(0, at);
+            trash.push(TrashEntry::new(deleted_at, nodes)?);
         }
-        Ok(Notebook::from_nodes(nodes)?)
+
+        let mut checkpoints = Vec::new();
+        let mut rows = self
+            .conn
+            .prepare("SELECT id, created_at, reason FROM checkpoints ORDER BY id")?;
+        let rows = rows.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (checkpoint_id, created_at, reason) = row?;
+            let nodes = read_nodes(
+                &self.conn,
+                "SELECT node_id, parent_id, position, title, body
+                 FROM checkpoint_nodes WHERE checkpoint_id = ?1 ORDER BY node_id",
+                [checkpoint_id],
+            )?;
+            checkpoints.push(Checkpoint::from_stored(created_at, reason, nodes)?);
+        }
+        Ok(Recovery::from_parts(trash, checkpoints))
     }
+
+    /// Saves just a notebook with empty recovery state. Tests only.
+    #[cfg(test)]
+    pub fn save(&mut self, notebook: &Notebook) -> Result<(), StorageError> {
+        self.save_document(notebook, &Recovery::default())
+    }
+
+    /// Loads just the active notebook. Tests only.
+    #[cfg(test)]
+    pub fn load(&self) -> Result<Notebook, StorageError> {
+        Ok(self.load_document()?.0)
+    }
+}
+
+fn write_nodes(tx: &Transaction, notebook: &Notebook) -> Result<(), StorageError> {
+    let mut insert = tx.prepare(
+        "INSERT INTO nodes (id, parent_id, position, title, body)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )?;
+    // Parents come before children, as the foreign key requires.
+    for node in notebook.in_tree_order() {
+        insert_node(&mut insert, &[], node)?;
+    }
+    Ok(())
+}
+
+/// The id counter must stay above every id that exists anywhere.
+fn write_meta(
+    tx: &Transaction,
+    notebook: &Notebook,
+    recovery: &Recovery,
+) -> Result<(), StorageError> {
+    let mut next = notebook.next_id();
+    if let Some(max) = recovery.max_node_id() {
+        let needed = max
+            .checked_add(1)
+            .ok_or_else(|| StorageError::InvalidData("node id out of range".into()))?;
+        next = next.max(needed);
+    }
+    let next = i64::try_from(next)
+        .map_err(|_| StorageError::InvalidData("node id counter is too large".into()))?;
+    tx.execute(
+        "INSERT INTO notebook_meta (id, next_node_id) VALUES (1, ?1)",
+        [next],
+    )?;
+    Ok(())
+}
+
+fn write_trash(tx: &Transaction, recovery: &Recovery) -> Result<(), StorageError> {
+    let mut entry =
+        tx.prepare("INSERT INTO trash_entries (id, deleted_at, root_node_id) VALUES (?1, ?2, ?3)")?;
+    let mut node = tx.prepare(
+        "INSERT INTO trash_nodes (entry_id, node_id, parent_id, position, title, body)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )?;
+    // Row ids follow list order (oldest first), which load reads back.
+    for (i, trashed) in recovery.trash().iter().enumerate() {
+        let entry_id = i64::try_from(i + 1)
+            .map_err(|_| StorageError::InvalidData("too many trash entries".into()))?;
+        entry.execute(params![
+            entry_id,
+            trashed.deleted_at(),
+            id_to_sql(trashed.root().id())?
+        ])?;
+        for n in trashed.nodes() {
+            insert_node(&mut node, &[entry_id.into()], n)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_checkpoints(tx: &Transaction, recovery: &Recovery) -> Result<(), StorageError> {
+    let mut checkpoint =
+        tx.prepare("INSERT INTO checkpoints (id, created_at, reason) VALUES (?1, ?2, ?3)")?;
+    let mut node = tx.prepare(
+        "INSERT INTO checkpoint_nodes
+             (checkpoint_id, node_id, parent_id, position, title, body)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )?;
+    for (i, saved) in recovery.checkpoints().iter().enumerate() {
+        let checkpoint_id = i64::try_from(i + 1)
+            .map_err(|_| StorageError::InvalidData("too many checkpoints".into()))?;
+        checkpoint.execute(params![checkpoint_id, saved.created_at(), saved.reason()])?;
+        for n in saved.nodes() {
+            insert_node(&mut node, &[checkpoint_id.into()], n)?;
+        }
+    }
+    Ok(())
+}
+
+/// Executes a node insert whose leading parameters (`lead`, e.g. an entry
+/// id) are followed by the five node columns.
+fn insert_node(
+    insert: &mut rusqlite::Statement,
+    lead: &[rusqlite::types::Value],
+    node: &Node,
+) -> Result<(), StorageError> {
+    use rusqlite::types::Value;
+    let mut values: Vec<Value> = lead.to_vec();
+    values.push(Value::Integer(id_to_sql(node.id())?));
+    values.push(
+        node.parent_id()
+            .map(id_to_sql)
+            .transpose()?
+            .map_or(Value::Null, Value::Integer),
+    );
+    values.push(Value::Integer(i64::try_from(node.position()).map_err(
+        |_| StorageError::InvalidData("position too large".into()),
+    )?));
+    values.push(Value::Text(node.title().to_string()));
+    values.push(Value::Text(node.body().to_string()));
+    insert.execute(rusqlite::params_from_iter(values))?;
+    Ok(())
+}
+
+/// Reads rows of (id, parent_id, position, title, body) into nodes.
+fn read_nodes<P: rusqlite::Params>(
+    conn: &Connection,
+    sql: &str,
+    params: P,
+) -> Result<Vec<Node>, StorageError> {
+    let mut query = conn.prepare(sql)?;
+    let rows = query.query_map(params, |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, Option<i64>>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+        ))
+    })?;
+
+    let mut nodes = Vec::new();
+    for row in rows {
+        let (id, parent_id, position, title, body) = row?;
+        let position = usize::try_from(position)
+            .map_err(|_| StorageError::InvalidData("negative position".into()))?;
+        nodes.push(Node::from_parts(
+            id_from_sql(id)?,
+            parent_id.map(id_from_sql).transpose()?,
+            position,
+            title,
+            body,
+        ));
+    }
+    Ok(nodes)
 }
 
 fn user_version(conn: &Connection) -> Result<i64, StorageError> {
@@ -223,7 +496,7 @@ mod tests {
         let db = TempDb::new();
         let storage = Storage::create(db.path()).unwrap();
         assert!(db.path().exists());
-        assert_eq!(user_version(&storage.conn).unwrap(), 1);
+        assert_eq!(user_version(&storage.conn).unwrap(), 2);
         assert!(storage.load().unwrap().roots().is_empty());
     }
 
@@ -433,5 +706,322 @@ mod tests {
             Err(StorageError::InvalidData(_))
         ));
         assert_eq!(titles(storage.load().unwrap().roots()), ["kept"]);
+    }
+
+    // ---- schema version 2 and version 1 compatibility ----
+
+    /// Writes a version 1 notebook directly, as an older OmaTree would have.
+    fn write_v1_file(path: &Path) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(NODES_SCHEMA).unwrap();
+        conn.execute_batch(
+            "INSERT INTO nodes VALUES (3, NULL, 0, 'Projects', 'projects body');
+             INSERT INTO nodes VALUES (7, NULL, 1, 'Inbox', 'inbox body');
+             INSERT INTO nodes VALUES (9, 3, 0, 'OmaTree', 'child body');",
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+    }
+
+    fn table_names(path: &Path) -> Vec<String> {
+        let conn = Connection::open(path).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+            .unwrap();
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0)).unwrap();
+        rows.map(Result::unwrap).collect()
+    }
+
+    fn file_version(path: &Path) -> i64 {
+        user_version(&Connection::open(path).unwrap()).unwrap()
+    }
+
+    fn sample_state() -> (Notebook, Recovery) {
+        let mut nb = Notebook::new();
+        let projects = nb.create_root("Projects");
+        let ideas = nb.create_child(projects, "Ideas").unwrap();
+        nb.set_body(ideas, "ideas \u{1F333} body").unwrap();
+        nb.create_root("Inbox");
+        // Trash: a subtree whose original parent (id 50) is long gone.
+        let trashed = TrashEntry::new(
+            1_700_000_000,
+            vec![
+                Node::from_parts(
+                    NodeId::from_raw(60),
+                    Some(NodeId::from_raw(50)),
+                    4,
+                    "Old".into(),
+                    "old body".into(),
+                ),
+                Node::from_parts(
+                    NodeId::from_raw(61),
+                    Some(NodeId::from_raw(60)),
+                    0,
+                    "Old child".into(),
+                    "x".into(),
+                ),
+                Node::from_parts(
+                    NodeId::from_raw(62),
+                    Some(NodeId::from_raw(60)),
+                    1,
+                    "Old child 2".into(),
+                    "y".into(),
+                ),
+            ],
+        )
+        .unwrap();
+        let second = TrashEntry::new(
+            1_700_000_100,
+            vec![Node::from_parts(
+                NodeId::from_raw(70),
+                None,
+                0,
+                "Root once".into(),
+                String::new(),
+            )],
+        )
+        .unwrap();
+        let checkpoints = vec![
+            Checkpoint::of(&Notebook::new(), "Empty \"start\"", 100),
+            Checkpoint::of(&nb, "Before deleting \"Projects\" \u{00e9}", 200),
+        ];
+        (nb, Recovery::from_parts(vec![trashed, second], checkpoints))
+    }
+
+    #[test]
+    fn version_1_loads_with_empty_recovery_state_and_a_derived_id_counter() {
+        let db = TempDb::new();
+        write_v1_file(db.path());
+        let storage = Storage::open(db.path()).unwrap();
+        let (nb, recovery) = storage.load_document().unwrap();
+        assert_eq!(titles(nb.roots()), ["Projects", "Inbox"]);
+        assert_eq!(nb.get(NodeId::from_raw(9)).unwrap().body(), "child body");
+        assert!(recovery.trash().is_empty());
+        assert!(recovery.checkpoints().is_empty());
+        assert_eq!(nb.next_id(), 10);
+    }
+
+    #[test]
+    fn opening_and_loading_version_1_does_not_modify_the_file() {
+        let db = TempDb::new();
+        write_v1_file(db.path());
+        let before = std::fs::read(db.path()).unwrap();
+        {
+            let storage = Storage::open(db.path()).unwrap();
+            storage.load_document().unwrap();
+        }
+        assert_eq!(std::fs::read(db.path()).unwrap(), before);
+        assert_eq!(file_version(db.path()), 1);
+        assert!(!table_names(db.path()).contains(&"trash_entries".to_string()));
+    }
+
+    #[test]
+    fn saving_version_1_migrates_it_to_version_2() {
+        let db = TempDb::new();
+        write_v1_file(db.path());
+        let mut storage = Storage::open(db.path()).unwrap();
+        let (mut nb, recovery) = storage.load_document().unwrap();
+        let fresh = nb.create_root("Added after opening");
+        assert_eq!(fresh, NodeId::from_raw(10));
+        storage.save_document(&nb, &recovery).unwrap();
+        drop(storage);
+
+        assert_eq!(file_version(db.path()), 2);
+        let tables = table_names(db.path());
+        for t in [
+            "nodes",
+            "notebook_meta",
+            "trash_entries",
+            "trash_nodes",
+            "checkpoints",
+            "checkpoint_nodes",
+        ] {
+            assert!(tables.contains(&t.to_string()), "missing table {t}");
+        }
+        let (loaded, _) = Storage::open(db.path()).unwrap().load_document().unwrap();
+        assert_eq!(
+            titles(loaded.roots()),
+            ["Projects", "Inbox", "Added after opening"]
+        );
+        assert_eq!(
+            loaded.get(NodeId::from_raw(9)).unwrap().body(),
+            "child body"
+        );
+        assert_eq!(loaded.next_id(), 11);
+    }
+
+    #[test]
+    fn a_failed_migration_leaves_the_version_1_file_valid_and_untouched() {
+        let db = TempDb::new();
+        write_v1_file(db.path());
+        let before = std::fs::read(db.path()).unwrap();
+
+        let mut storage = Storage::open(db.path()).unwrap();
+        // An id above i64::MAX cannot be stored, so the save fails midway.
+        let too_big = Notebook::from_nodes(vec![Node::from_parts(
+            NodeId::from_raw(u64::MAX - 1),
+            None,
+            0,
+            "big".into(),
+            String::new(),
+        )])
+        .unwrap();
+        assert!(matches!(
+            storage.save_document(&too_big, &Recovery::default()),
+            Err(StorageError::InvalidData(_))
+        ));
+        drop(storage);
+
+        assert_eq!(std::fs::read(db.path()).unwrap(), before);
+        assert_eq!(file_version(db.path()), 1);
+        assert!(!table_names(db.path()).contains(&"notebook_meta".to_string()));
+        let (nb, _) = Storage::open(db.path()).unwrap().load_document().unwrap();
+        assert_eq!(titles(nb.roots()), ["Projects", "Inbox"]);
+    }
+
+    #[test]
+    fn new_notebooks_are_created_as_version_2() {
+        let db = TempDb::new();
+        Storage::create(db.path()).unwrap();
+        assert_eq!(file_version(db.path()), 2);
+        assert!(table_names(db.path()).contains(&"checkpoint_nodes".to_string()));
+    }
+
+    #[test]
+    fn version_2_round_trips_the_active_notebook_trash_and_checkpoints() {
+        let db = TempDb::new();
+        let (nb, recovery) = sample_state();
+        Storage::create(db.path())
+            .unwrap()
+            .save_document(&nb, &recovery)
+            .unwrap();
+
+        let (loaded, loaded_recovery) = Storage::open(db.path()).unwrap().load_document().unwrap();
+        assert_eq!(loaded.snapshot_nodes(), nb.snapshot_nodes());
+        // Trash: ids, titles, bodies, hierarchy, original parent/position, time.
+        assert_eq!(loaded_recovery.trash(), recovery.trash());
+        let entry = &loaded_recovery.trash()[0];
+        assert_eq!(entry.root().id(), NodeId::from_raw(60));
+        assert_eq!(entry.root().parent_id(), Some(NodeId::from_raw(50)));
+        assert_eq!(entry.root().position(), 4);
+        assert_eq!(entry.deleted_at(), 1_700_000_000);
+        assert_eq!(entry.node_count(), 3);
+        // Checkpoints: order, reasons, timestamps, trees.
+        assert_eq!(loaded_recovery.checkpoints(), recovery.checkpoints());
+        assert_eq!(loaded_recovery.checkpoints()[1].created_at(), 200);
+        assert_eq!(
+            loaded_recovery.checkpoints()[1].reason(),
+            "Before deleting \"Projects\" \u{00e9}"
+        );
+    }
+
+    #[test]
+    fn version_2_persists_the_id_counter_beyond_surviving_nodes() {
+        let db = TempDb::new();
+        let mut nb = Notebook::new();
+        nb.create_root("a");
+        nb.create_root("b");
+        let c = nb.create_root("c");
+        nb.delete(c).unwrap(); // highest id is gone from the active tree
+        assert_eq!(nb.next_id(), 3);
+        Storage::create(db.path())
+            .unwrap()
+            .save_document(&nb, &Recovery::default())
+            .unwrap();
+
+        let (mut loaded, _) = Storage::open(db.path()).unwrap().load_document().unwrap();
+        assert_eq!(loaded.next_id(), 3);
+        assert_eq!(loaded.create_root("d"), NodeId::from_raw(3));
+    }
+
+    #[test]
+    fn ids_that_only_exist_in_trash_or_checkpoints_are_never_reused() {
+        let db = TempDb::new();
+        let (nb, recovery) = sample_state(); // trash holds ids up to 70
+        Storage::create(db.path())
+            .unwrap()
+            .save_document(&nb, &recovery)
+            .unwrap();
+        let (mut loaded, _) = Storage::open(db.path()).unwrap().load_document().unwrap();
+        assert!(loaded.create_root("new").get() > 70);
+
+        // Even if the stored counter is lower than the ids in Trash.
+        Connection::open(db.path())
+            .unwrap()
+            .execute("UPDATE notebook_meta SET next_node_id = 1", [])
+            .unwrap();
+        let (mut healed, _) = Storage::open(db.path()).unwrap().load_document().unwrap();
+        assert!(healed.create_root("new").get() > 70);
+    }
+
+    #[test]
+    fn a_failed_version_2_save_changes_nothing() {
+        let db = TempDb::new();
+        let (nb, recovery) = sample_state();
+        let mut storage = Storage::create(db.path()).unwrap();
+        storage.save_document(&nb, &recovery).unwrap();
+        let before = std::fs::read(db.path()).unwrap();
+
+        // New active nodes and Trash would be fine; the checkpoint part
+        // fails (id above i64::MAX) after they were already written.
+        let mut changed = nb.clone();
+        changed.create_root("brand new");
+        let huge = Notebook::from_nodes(vec![Node::from_parts(
+            NodeId::from_raw(u64::MAX - 5),
+            None,
+            0,
+            "huge".into(),
+            String::new(),
+        )])
+        .unwrap();
+        let mut bad = Recovery::default();
+        bad.add_checkpoint(Checkpoint::of(&huge, "bad", 1));
+        assert!(storage.save_document(&changed, &bad).is_err());
+        drop(storage);
+
+        assert_eq!(std::fs::read(db.path()).unwrap(), before);
+        let (loaded, loaded_recovery) = Storage::open(db.path()).unwrap().load_document().unwrap();
+        assert_eq!(loaded.snapshot_nodes(), nb.snapshot_nodes());
+        assert_eq!(loaded_recovery.trash(), recovery.trash());
+        assert_eq!(loaded_recovery.checkpoints(), recovery.checkpoints());
+    }
+
+    #[test]
+    fn schema_versions_above_2_and_empty_files_stay_unsupported() {
+        let db = TempDb::new();
+        Storage::create(db.path()).unwrap();
+        for version in [3, 99] {
+            write_raw(db.path(), &format!("PRAGMA user_version = {version};"));
+            match Storage::open(db.path()) {
+                Err(StorageError::UnsupportedSchemaVersion(v)) => assert_eq!(v, version),
+                other => panic!("unexpected: {:?}", other.err()),
+            }
+        }
+        let empty = TempDb::new();
+        Connection::open(empty.path()).unwrap();
+        assert!(matches!(
+            Storage::open(empty.path()),
+            Err(StorageError::UnsupportedSchemaVersion(0))
+        ));
+    }
+
+    #[test]
+    fn corrupt_recovery_rows_fail_cleanly() {
+        let db = TempDb::new();
+        let (nb, recovery) = sample_state();
+        Storage::create(db.path())
+            .unwrap()
+            .save_document(&nb, &recovery)
+            .unwrap();
+        // A trash node whose parent is not in its entry.
+        write_raw(
+            db.path(),
+            "INSERT INTO trash_nodes VALUES (1, 999, 12345, 0, 'stray', '');",
+        );
+        let storage = Storage::open(db.path()).unwrap();
+        assert!(matches!(
+            storage.load_document(),
+            Err(StorageError::InvalidData(_))
+        ));
     }
 }

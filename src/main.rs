@@ -1,6 +1,7 @@
 pub mod app;
 mod document;
 mod notebook;
+mod recovery;
 mod storage;
 pub mod tree_model;
 
