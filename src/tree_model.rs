@@ -84,6 +84,15 @@ pub mod qobject {
     }
 
     unsafe extern "RustQt" {
+        /// A successful operation really changed the document: a note was
+        /// created, a title or body actually changed, or a delete / Trash
+        /// restore / checkpoint restore happened. Never emitted for
+        /// unchanged text, failures, opening files, selection or viewing
+        /// recovery history. Autosave restarts its timer on this.
+        #[qsignal]
+        #[cxx_name = "documentMutated"]
+        fn document_mutated(self: Pin<&mut NotebookModel>);
+
         #[qsignal]
         #[inherit]
         #[cxx_name = "dataChanged"]
@@ -463,7 +472,10 @@ impl qobject::NotebookModel {
         self.as_mut().sync_state();
         self.as_mut().bump_recovery();
         match result {
-            Ok(_) => QString::default(),
+            Ok(_) => {
+                self.as_mut().document_mutated();
+                QString::default()
+            }
             Err(e) => QString::from(e.message()),
         }
     }
@@ -499,7 +511,10 @@ impl qobject::NotebookModel {
         self.as_mut().sync_state();
         self.as_mut().bump_recovery();
         match result {
-            Ok(()) => QString::default(),
+            Ok(()) => {
+                self.as_mut().document_mutated();
+                QString::default()
+            }
             Err(e) => QString::from(e.message()),
         }
     }
@@ -516,6 +531,7 @@ impl qobject::NotebookModel {
             .create_root(&String::from(title));
         self.as_mut().end_insert_rows();
         self.as_mut().sync_state();
+        self.as_mut().document_mutated();
         self.index_for(id)
     }
 
@@ -539,7 +555,10 @@ impl qobject::NotebookModel {
         self.as_mut().end_insert_rows();
         self.as_mut().sync_state();
         match created {
-            Ok(id) => self.index_for(id),
+            Ok(id) => {
+                self.as_mut().document_mutated();
+                self.index_for(id)
+            }
             Err(_) => QModelIndex::default(),
         }
     }
@@ -548,19 +567,21 @@ impl qobject::NotebookModel {
         let Some(id) = self.node_for(index) else {
             return false;
         };
-        if self
+        let Ok(changed) = self
             .as_mut()
             .rust_mut()
             .document
             .rename(id, &String::from(title))
-            .is_err()
-        {
+        else {
             return false;
-        }
+        };
         let index = self.index_for(id);
         self.as_mut()
             .data_changed(&index, &index, &QList::<i32>::default());
         self.as_mut().sync_state();
+        if changed {
+            self.as_mut().document_mutated();
+        }
         true
     }
 
@@ -577,6 +598,9 @@ impl qobject::NotebookModel {
         self.as_mut().end_remove_rows();
         self.as_mut().sync_state();
         self.as_mut().bump_recovery();
+        if removed {
+            self.as_mut().document_mutated();
+        }
         removed
     }
 
@@ -594,14 +618,19 @@ impl qobject::NotebookModel {
         let Some(id) = self.node_for(index) else {
             return false;
         };
-        let ok = self
+        let Ok(changed) = self
             .as_mut()
             .rust_mut()
             .document
             .set_body(id, &String::from(body))
-            .is_ok();
+        else {
+            return false;
+        };
         self.as_mut().sync_state();
-        ok
+        if changed {
+            self.as_mut().document_mutated();
+        }
+        true
     }
 
     /// Swaps in a fully built document. Replacing the whole notebook is the

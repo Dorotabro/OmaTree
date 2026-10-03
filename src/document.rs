@@ -288,18 +288,20 @@ impl Document {
         Ok(id)
     }
 
-    pub fn rename(&mut self, id: NodeId, title: &str) -> Result<(), NotebookError> {
+    /// Returns whether the title actually changed.
+    pub fn rename(&mut self, id: NodeId, title: &str) -> Result<bool, NotebookError> {
         let unchanged = self.notebook.get(id).is_some_and(|n| n.title() == title);
         self.notebook.rename(id, title)?;
         self.active_dirty |= !unchanged;
-        Ok(())
+        Ok(!unchanged)
     }
 
-    pub fn set_body(&mut self, id: NodeId, body: &str) -> Result<(), NotebookError> {
+    /// Returns whether the body actually changed.
+    pub fn set_body(&mut self, id: NodeId, body: &str) -> Result<bool, NotebookError> {
         let unchanged = self.notebook.get(id).is_some_and(|n| n.body() == body);
         self.notebook.set_body(id, body)?;
         self.active_dirty |= !unchanged;
-        Ok(())
+        Ok(!unchanged)
     }
 
     /// Moves a node and its whole subtree to Trash, after taking a checkpoint
@@ -544,6 +546,20 @@ mod tests {
 
         doc.delete(child).unwrap();
         assert!(doc.is_dirty());
+    }
+
+    #[test]
+    fn rename_and_set_body_report_whether_anything_changed() {
+        let mut doc = Document::untitled();
+        let a = doc.create_root("a");
+        assert!(doc.rename(a, "b").unwrap());
+        assert!(!doc.rename(a, "b").unwrap(), "same title");
+        assert!(doc.set_body(a, "text").unwrap());
+        assert!(!doc.set_body(a, "text").unwrap(), "same body");
+        let gone = doc.create_root("gone");
+        doc.delete(gone).unwrap();
+        assert!(doc.rename(gone, "x").is_err());
+        assert!(doc.set_body(gone, "x").is_err());
     }
 
     #[test]

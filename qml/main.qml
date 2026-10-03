@@ -34,6 +34,13 @@ ApplicationWindow {
             selection.clear();
             selection.clearCurrentIndex();
         }
+        // Every real change restarts the autosave countdown. (Not `dirty`:
+        // it stays true while a user keeps typing.) Untitled notebooks have
+        // no file to save to, so nothing is scheduled for them.
+        function onDocumentMutated() {
+            if (notebook.hasPath())
+                autosaveTimer.restart();
+        }
     }
 
     readonly property string defaultTitle: qsTr("New note")
@@ -60,11 +67,51 @@ ApplicationWindow {
         }
     }
 
+    // An explicit save (Ctrl+S, the Save button of a dialog): a failure is
+    // reported, because the user asked for it.
     function save() {
         const error = notebook.save();
-        if (error !== "")
+        if (error !== "") {
             showError(error);
-        return error === "";
+            return false;
+        }
+        autosaveFailureShown = false;
+        return true;
+    }
+
+    // --- Autosave ----------------------------------------------------------
+    // One timer for the open document. When it expires the normal save runs;
+    // Document::save decides whether that is an active-only or a full save.
+    // Success is silent (the "*" leaves the title). The first failure is
+    // reported once; later failures stay quiet until something succeeds.
+
+    // The first autosave failure of this document has been shown.
+    property bool autosaveFailureShown: false
+
+    Timer {
+        id: autosaveTimer
+
+        interval: 1000
+        repeat: false
+        onTriggered: root.autosave()
+    }
+
+    function autosave() {
+        if (!notebook.hasPath() || !notebook.dirty)
+            return;
+        const error = notebook.save();
+        if (error === "") {
+            autosaveFailureShown = false;
+        } else if (!autosaveFailureShown) {
+            autosaveFailureShown = true;
+            showError(qsTr("Autosave failed: %1 Your changes are still open in OmaTree. Press Ctrl+S to try again.").arg(error));
+        }
+    }
+
+    // After something that paused autosave was cancelled or failed.
+    function resumeAutosave() {
+        if (notebook.hasPath() && notebook.dirty)
+            autosaveTimer.restart();
     }
 
     // --- Document workflow -------------------------------------------------
@@ -83,13 +130,16 @@ ApplicationWindow {
 
     // Ctrl+S: save in place, or Save As if the notebook has no file yet.
     function saveCurrent() {
-        if (notebook.hasPath())
+        if (notebook.hasPath()) {
+            autosaveTimer.stop();
             save();
-        else
+        } else {
             startSaveAs(null);
+        }
     }
 
     function startSaveAs(then) {
+        autosaveTimer.stop();
         afterSaveAs = then;
         saveDialog.open();
     }
@@ -98,39 +148,57 @@ ApplicationWindow {
         const error = notebook.saveAs(path, overwrite);
         const then = afterSaveAs;
         afterSaveAs = null;
-        if (error !== "")
+        if (error !== "") {
             showError(error);
-        else
+        } else {
+            autosaveFailureShown = false;
             runContinuation(then);
+        }
     }
 
-    // Runs `then` straight away if nothing would be lost, otherwise asks the
-    // user first (Save / Discard / Cancel).
+    // Before leaving a file-backed notebook: stop the countdown and save any
+    // pending changes right now, without any message. True if nothing is
+    // left unsaved. A failure is not reported here; the caller falls back to
+    // asking the user.
+    function flushPendingChanges() {
+        if (!notebook.dirty)
+            return true;
+        if (!notebook.hasPath())
+            return false;
+        autosaveTimer.stop();
+        if (notebook.save() !== "")
+            return false;
+        autosaveFailureShown = false;
+        return true;
+    }
+
+    // Runs `then` straight away if nothing would be lost. A file-backed
+    // notebook is saved first (quietly); only if that fails, or for an
+    // untitled notebook, the user is asked (Save / Discard / Cancel).
     function whenSafeToLeave(then) {
-        if (notebook.dirty)
-            confirmUnsaved.ask(then);
-        else
+        if (flushPendingChanges())
             then();
+        else
+            confirmUnsaved.ask(then);
     }
 
     function requestOpen() {
         whenSafeToLeave(() => openDialog.open());
     }
 
-    function requestClose() {
-        whenSafeToLeave(() => {
+    Component.onCompleted: openStartupPath()
+
+    // Closing: a file-backed notebook is flushed and the close simply goes
+    // ahead. Otherwise the close is held back and the user is asked; their
+    // answer closes the window again, which is why `discardOnClose` exists.
+    onClosing: close => {
+        if (discardOnClose || flushPendingChanges())
+            return;
+        close.accepted = false;
+        confirmUnsaved.ask(() => {
             root.discardOnClose = true;
             root.close();
         });
-    }
-
-    Component.onCompleted: openStartupPath()
-
-    onClosing: close => {
-        if (notebook.dirty && !discardOnClose) {
-            close.accepted = false;
-            requestClose();
-        }
     }
 
     function select(index) {
@@ -316,7 +384,10 @@ ApplicationWindow {
             continuation = null;
             root.runContinuation(then);
         }
-        onRejected: continuation = null
+        onRejected: {
+            continuation = null;
+            root.resumeAutosave();
+        }
 
         contentItem: Label {
             id: unsavedText
@@ -343,7 +414,10 @@ ApplicationWindow {
         title: qsTr("Replace file")
         standardButtons: Dialog.Yes | Dialog.No
         onAccepted: root.finishSaveAs(path, true)
-        onRejected: root.afterSaveAs = null
+        onRejected: {
+            root.afterSaveAs = null;
+            root.resumeAutosave();
+        }
 
         contentItem: Label {
             id: overwriteText
@@ -359,9 +433,15 @@ ApplicationWindow {
         nameFilters: [qsTr("OmaTree notebooks (*.omatree)"), qsTr("All files (*)")]
         onAccepted: {
             const error = notebook.openFile(selectedFile);
-            if (error !== "")
+            if (error !== "") {
                 root.showError(error);
+                root.resumeAutosave();
+            } else {
+                autosaveTimer.stop();
+                root.autosaveFailureShown = false;
+            }
         }
+        onRejected: root.resumeAutosave()
     }
 
     FileDialog {
@@ -383,7 +463,10 @@ ApplicationWindow {
                 root.finishSaveAs(path, false);
             }
         }
-        onRejected: root.afterSaveAs = null
+        onRejected: {
+            root.afterSaveAs = null;
+            root.resumeAutosave();
+        }
     }
 
     RecoveryDialog {
