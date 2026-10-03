@@ -1,5 +1,6 @@
 pub mod app;
 mod document;
+pub mod markdown;
 mod notebook;
 mod recovery;
 mod search;

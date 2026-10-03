@@ -16,6 +16,46 @@ Item {
 
     readonly property bool hasNote: selection.currentIndex.valid
 
+    // --- Edit / Preview ----------------------------------------------------
+    // Presentation only. The body is the raw text in the note; Preview shows
+    // that text rendered as Markdown, read-only, and never writes anything
+    // back. The mode is not part of the document: it survives moving between
+    // notes, and starts again as Edit whenever a whole document is replaced.
+
+    property bool previewing: false
+    // The raw body being previewed, re-read from the notebook whenever the
+    // note, the mode or the notebook changes.
+    property string previewSource: ""
+    // How a link is opened once the user has clicked it. Replaceable.
+    property var openExternal: url => Qt.openUrlExternally(url)
+
+    function refreshPreview() {
+        previewSource = hasNote ? notebook.body(selection.currentIndex) : "";
+    }
+
+    // Ctrl+E and the button. Nothing to do without a note.
+    function toggleMode() {
+        if (!hasNote)
+            return;
+        if (previewing) {
+            previewing = false;
+            body.forceActiveFocus();
+        } else {
+            refreshPreview();
+            previewing = true;
+        }
+    }
+
+    function resetMode() {
+        previewing = false;
+    }
+
+    // Only http, https and mailto links, and only after a click.
+    function openLink(link) {
+        if (Markdown.isSafeLink(link))
+            openExternal(link);
+    }
+
     // True while a note is being loaded into the fields. Edits made by the
     // load itself must never be written back to the notebook.
     property bool loading: false
@@ -30,6 +70,9 @@ Item {
         title.text = index.valid ? notebook.data(index, Qt.DisplayRole) : "";
         body.text = index.valid ? notebook.body(index) : "";
         loading = false;
+        // A different note: show its body now, from the top.
+        previewSource = index.valid ? notebook.body(index) : "";
+        previewView.contentItem.contentY = 0;
     }
 
     function commitTitle() {
@@ -46,6 +89,15 @@ Item {
                 title.text = current;
                 renameFailed(error);
             }
+        }
+    }
+
+    Connections {
+        target: pane.notebook
+        // Restores and the like can change the body of the note on show.
+        function onDocumentMutated() {
+            if (pane.previewing)
+                pane.refreshPreview();
         }
     }
 
@@ -92,6 +144,13 @@ Item {
                 Keys.onEnterPressed: body.forceActiveFocus()
             }
             Button {
+                text: pane.previewing ? qsTr("Edit") : qsTr("Preview")
+                flat: true
+                horizontalPadding: 8
+                implicitWidth: implicitContentWidth + leftPadding + rightPadding
+                onClicked: pane.toggleMode()
+            }
+            Button {
                 id: deleteButton
 
                 text: qsTr("Delete")
@@ -107,9 +166,57 @@ Item {
             }
         }
 
+        // The Markdown view of the same text. Read-only, with nothing wired
+        // from it back to the note.
+        ScrollView {
+            id: previewView
+
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: pane.previewing && pane.previewSource.trim() !== ""
+
+            TextEdit {
+                id: preview
+
+                width: previewView.availableWidth
+                readOnly: true
+                selectByMouse: true
+                textFormat: TextEdit.RichText
+                wrapMode: TextEdit.Wrap
+                color: Theme.foreground
+                selectionColor: Theme.selection
+                selectedTextColor: Theme.selectionForeground
+                leftPadding: 12
+                rightPadding: 12
+                topPadding: 8
+                bottomPadding: 12
+                // Re-rendered when the text, the mode or the theme changes.
+                text: pane.previewing ? Markdown.render(pane.previewSource, Theme.accent, Theme.mutedForeground, Theme.surfaceRaised) : ""
+                onLinkActivated: link => pane.openLink(link)
+
+                HoverHandler {
+                    cursorShape: preview.hoveredLink !== "" ? Qt.PointingHandCursor : Qt.IBeamCursor
+                }
+            }
+        }
+
+        Label {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: pane.previewing && pane.previewSource.trim() === ""
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            text: qsTr("Nothing to preview")
+            color: Theme.mutedForeground
+        }
+
+        // The plain-text editor. It stays alive while Preview is shown, so
+        // the cursor, the selection and the scroll position are still there
+        // when you come back.
         ScrollView {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            visible: !pane.previewing
 
             TextArea {
                 id: body

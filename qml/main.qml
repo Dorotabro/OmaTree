@@ -241,6 +241,7 @@ ApplicationWindow {
             // Out of Search first, so the new document inherits nothing from
             // the old one; the model then resets and clears the selection.
             treePane.stopSearch();
+            editorPane.resetMode();
             autosaveTimer.stop();
             notebook.newNotebook();
             autosaveFailureShown = false;
@@ -353,6 +354,10 @@ ApplicationWindow {
     Shortcut {
         sequence: "Alt+Down"
         onActivated: root.moveSelected(1)
+    }
+    Shortcut {
+        sequence: "Ctrl+E"
+        onActivated: editorPane.toggleMode()
     }
     Shortcut {
         sequence: "Ctrl+F"
@@ -535,6 +540,7 @@ ApplicationWindow {
             } else {
                 autosaveTimer.stop();
                 root.autosaveFailureShown = false;
+                editorPane.resetMode();
                 root.warnAboutDuplicateTitles();
             }
         }

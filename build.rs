@@ -10,6 +10,12 @@ fn main() {
         "qml/SearchPane.qml",
     ]))
     .qt_module("Quick")
-    .files(["src/app.rs", "src/tree_model.rs", "src/theme_model.rs"])
+    .files([
+        "src/app.rs",
+        "src/tree_model.rs",
+        "src/theme_model.rs",
+        "src/markdown.rs",
+    ])
+    .cpp_file("cpp/markdown_render.cpp")
     .build();
 }
