@@ -234,6 +234,19 @@ ApplicationWindow {
         whenSafeToLeave(() => openDialog.open());
     }
 
+    // File ▸ New Notebook: the same "may I leave this document?" check as
+    // Open and Close, then a fresh untitled document in place of this one.
+    function requestNewNotebook() {
+        whenSafeToLeave(() => {
+            // Out of Search first, so the new document inherits nothing from
+            // the old one; the model then resets and clears the selection.
+            treePane.stopSearch();
+            autosaveTimer.stop();
+            notebook.newNotebook();
+            autosaveFailureShown = false;
+        });
+    }
+
     Component.onCompleted: {
         Theme.setSystemScheme(Qt.styleHints.colorScheme);
         openStartupPath();
@@ -373,6 +386,7 @@ ApplicationWindow {
             onNewRootRequested: root.createRoot()
             onNewChildRequested: root.createChild()
             onDeleteRequested: confirmDelete.askAboutSelection()
+            onNewNotebookRequested: root.requestNewNotebook()
             onOpenRequested: root.requestOpen()
             onSaveRequested: root.saveCurrent()
             onSaveAsRequested: root.startSaveAs(null)

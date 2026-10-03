@@ -2202,4 +2202,96 @@ mod tests {
         let id = doc.create_default_root().unwrap();
         assert_eq!(doc.notebook().get(id).unwrap().title(), "New note");
     }
+
+    // ---- a fresh document (what New Notebook swaps in) ----
+
+    #[test]
+    fn a_fresh_document_is_empty_untitled_clean_and_has_no_recovery_history() {
+        let doc = Document::untitled();
+        assert!(doc.notebook().roots().is_empty());
+        assert!(!doc.has_path());
+        assert_eq!(doc.display_name(), "Untitled");
+        assert!(!doc.is_dirty());
+        assert_eq!(doc.dirty_domains(), (false, false));
+        assert!(doc.recovery().trash().is_empty());
+        assert!(doc.recovery().checkpoints().is_empty());
+        assert_eq!(doc.notebook().sibling_title_conflicts(), 0);
+    }
+
+    #[test]
+    fn a_fresh_document_allocates_node_ids_from_the_start() {
+        // Nothing carries over from a previous document, including ids.
+        let (mut old, _) = sample();
+        old.create_root("one more").unwrap();
+        assert!(old.notebook().next_id() > 0);
+        let mut fresh = Document::untitled();
+        assert_eq!(fresh.notebook().next_id(), 0);
+        let first = fresh.create_root("First").unwrap();
+        assert_eq!(first, NodeId::from_raw(0));
+    }
+
+    #[test]
+    fn replacing_a_populated_document_with_a_fresh_one_leaves_its_file_alone() {
+        let dir = TempDir::new();
+        let path = file_with_recovery_history(&dir, "old.omatree");
+        let mut doc = Document::open_existing(&path).unwrap();
+        assert!(!doc.recovery().trash().is_empty());
+        // Unsaved edits that Discard would throw away.
+        doc.create_root("never saved").unwrap();
+        assert!(doc.is_dirty());
+        let before = std::fs::read(&path).unwrap();
+
+        doc = Document::untitled();
+        assert!(doc.notebook().roots().is_empty());
+        assert!(doc.recovery().trash().is_empty() && doc.recovery().checkpoints().is_empty());
+        assert!(!doc.has_path() && !doc.is_dirty());
+        drop(doc);
+
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "the old file is untouched"
+        );
+        let reopened = Document::open_existing(&path).unwrap();
+        assert!(
+            !reopened.recovery().trash().is_empty(),
+            "its own history is intact"
+        );
+        assert!(titles(reopened.notebook(), None)
+            .iter()
+            .all(|t| t != "never saved"));
+    }
+
+    #[test]
+    fn the_first_note_in_a_fresh_document_makes_it_dirty_but_it_cannot_be_saved_in_place() {
+        let mut doc = Document::untitled();
+        doc.create_root("First note").unwrap();
+        assert_eq!(doc.dirty_domains(), (true, false));
+        assert!(doc.is_dirty());
+        assert!(
+            matches!(doc.save(), Err(DocumentError::NoPath)),
+            "Ctrl+S means Save As here"
+        );
+        assert!(!doc.has_path());
+    }
+
+    #[test]
+    fn a_fresh_document_can_be_saved_as_and_then_saves_in_place() {
+        let dir = TempDir::new();
+        let target = dir.join("new.omatree");
+        let mut doc = Document::untitled();
+        doc.create_root("Hello").unwrap();
+        doc.save_as(&target, false).unwrap();
+        assert!(!doc.is_dirty() && doc.has_path());
+        let id = doc.notebook().roots()[0].id();
+        doc.set_body(id, "later edit").unwrap();
+        doc.save().unwrap();
+        drop(doc);
+        let reopened = Document::open_existing(&target).unwrap();
+        assert_eq!(reopened.notebook().get(id).unwrap().body(), "later edit");
+        assert!(
+            reopened.recovery().checkpoints().is_empty(),
+            "a new notebook starts with none"
+        );
+    }
 }

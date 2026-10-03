@@ -228,6 +228,14 @@ pub mod qobject {
         #[cxx_name = "openPath"]
         fn open_path(self: Pin<&mut NotebookModel>, path: &QString) -> QString;
 
+        /// Replaces the whole document with a fresh, empty, untitled one
+        /// (one model reset): no path, no notes, no Trash, no checkpoints, a
+        /// fresh id counter. Creates no file. The caller is responsible for
+        /// having dealt with unsaved changes first.
+        #[qinvokable]
+        #[cxx_name = "newNotebook"]
+        fn new_notebook(self: Pin<&mut NotebookModel>);
+
         /// Opens an existing notebook chosen in a file dialog. Never creates
         /// a file. Returns an empty string on success, otherwise a message;
         /// on failure the current notebook is left completely unchanged.
@@ -910,9 +918,16 @@ impl qobject::NotebookModel {
     fn replace_document(mut self: Pin<&mut Self>, document: Document) {
         self.as_mut().begin_reset_model();
         self.as_mut().rust_mut().document = document;
+        // Search results name notes of the old document, so they go with it.
+        self.as_mut().rust_mut().search_results.clear();
         self.as_mut().end_reset_model();
         self.as_mut().sync_state();
         self.as_mut().bump_recovery();
+        self.as_mut().bump_search();
+    }
+
+    fn new_notebook(self: Pin<&mut Self>) {
+        self.replace_document(Document::untitled());
     }
 
     fn open_path(self: Pin<&mut Self>, path: &QString) -> QString {

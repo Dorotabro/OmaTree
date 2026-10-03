@@ -17,6 +17,7 @@ Item {
     signal newRootRequested
     signal newChildRequested
     signal deleteRequested
+    signal newNotebookRequested
     signal openRequested
     signal saveRequested
     signal saveAsRequested
@@ -339,6 +340,10 @@ Item {
                         radius: 4
                     }
 
+                    MenuItem {
+                        text: qsTr("New Notebook")
+                        onTriggered: pane.newNotebookRequested()
+                    }
                     MenuItem {
                         text: qsTr("Open…\tCtrl+O")
                         onTriggered: pane.openRequested()
