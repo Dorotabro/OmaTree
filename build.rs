@@ -6,8 +6,9 @@ fn main() {
         "qml/TreePane.qml",
         "qml/EditorPane.qml",
         "qml/RecoveryDialog.qml",
+        "qml/ThemedDialog.qml",
     ]))
     .qt_module("Quick")
-    .files(["src/app.rs", "src/tree_model.rs"])
+    .files(["src/app.rs", "src/tree_model.rs", "src/theme_model.rs"])
     .build();
 }

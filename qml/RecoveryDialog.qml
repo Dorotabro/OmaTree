@@ -1,10 +1,11 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import org.omatree
 
 // Trash and checkpoints of the open notebook. Entries are addressed by their
 // position in the lists the model exposes (newest first), never by node id.
-Dialog {
+ThemedDialog {
     id: dialog
 
     required property var notebook
@@ -57,11 +58,20 @@ Dialog {
             id: tabs
 
             Layout.fillWidth: true
+            background: Rectangle {
+                color: "transparent"
+                Rectangle {
+                    anchors.bottom: parent.bottom
+                    width: parent.width
+                    height: 1
+                    color: Theme.border
+                }
+            }
 
-            TabButton {
+            RecoveryTab {
                 text: qsTr("Trash (%1)").arg(dialog.trashCount)
             }
-            TabButton {
+            RecoveryTab {
                 text: qsTr("Checkpoints (%1)").arg(dialog.checkpointCount)
             }
         }
@@ -103,7 +113,7 @@ Dialog {
                     anchors.centerIn: parent
                     visible: dialog.trashCount === 0
                     text: qsTr("Trash is empty")
-                    opacity: 0.6
+                    color: Theme.mutedForeground
                 }
             }
 
@@ -137,8 +147,29 @@ Dialog {
                     anchors.centerIn: parent
                     visible: dialog.checkpointCount === 0
                     text: qsTr("No checkpoints yet")
-                    opacity: 0.6
+                    color: Theme.mutedForeground
                 }
+            }
+        }
+    }
+
+    // A tab: muted text, with the accent underline marking the current one.
+    component RecoveryTab: TabButton {
+        id: tab
+
+        contentItem: Label {
+            text: tab.text
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            color: tab.checked ? Theme.foreground : Theme.mutedForeground
+        }
+        background: Rectangle {
+            color: "transparent"
+            Rectangle {
+                anchors.bottom: parent.bottom
+                width: parent.width
+                height: 2
+                color: tab.checked ? Theme.accent : "transparent"
             }
         }
     }
@@ -168,7 +199,7 @@ Dialog {
                 Layout.fillWidth: true
                 text: row.detail
                 elide: Text.ElideRight
-                opacity: 0.6
+                color: Theme.mutedForeground
                 font.pixelSize: 12
             }
         }

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import org.omatree
 
 // Right pane: title and plain-text body of the selected note.
 Item {
@@ -71,15 +72,37 @@ Item {
                 Layout.fillWidth: true
                 font.pixelSize: 20
                 font.bold: true
-                background: null
+                color: Theme.foreground
+                placeholderTextColor: Theme.mutedForeground
+                selectionColor: Theme.selection
+                selectedTextColor: Theme.selectionForeground
+                // No box: just a thin accent line under the title while editing it.
+                background: Rectangle {
+                    color: "transparent"
+                    Rectangle {
+                        anchors.bottom: parent.bottom
+                        width: parent.width
+                        height: 1
+                        color: title.activeFocus ? Theme.accent : "transparent"
+                    }
+                }
                 placeholderText: qsTr("Title")
                 onEditingFinished: pane.commitTitle()
                 Keys.onReturnPressed: body.forceActiveFocus()
                 Keys.onEnterPressed: body.forceActiveFocus()
             }
             Button {
+                id: deleteButton
+
                 text: qsTr("Delete")
                 flat: true
+                // The one place the danger colour is used, and only on the text.
+                contentItem: Label {
+                    text: deleteButton.text
+                    color: Theme.danger
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
                 onClicked: pane.deleteRequested()
             }
         }
@@ -92,6 +115,10 @@ Item {
                 id: body
 
                 wrapMode: TextEdit.Wrap
+                color: Theme.foreground
+                selectionColor: Theme.selection
+                selectedTextColor: Theme.selectionForeground
+                placeholderTextColor: Theme.mutedForeground
                 leftPadding: 12
                 rightPadding: 12
                 topPadding: 8
@@ -108,6 +135,6 @@ Item {
         anchors.centerIn: parent
         visible: !pane.hasNote
         text: qsTr("Select or create a note")
-        opacity: 0.6
+        color: Theme.mutedForeground
     }
 }

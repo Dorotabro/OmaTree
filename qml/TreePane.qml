@@ -1,10 +1,15 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import org.omatree
 
 // Left pane: the note tree plus the two creation buttons.
 Item {
     id: pane
+
+    // The footer decides how narrow the pane can get without overflowing.
+    implicitWidth: footer.implicitWidth + 12
+    clip: true
 
     required property var notebook
     required property ItemSelectionModel selection
@@ -41,7 +46,8 @@ Item {
     property bool dragging: false
     // Fresh index of the row being dragged (a copy, taken when the drag began).
     property var dragIndex: null
-    // Where a drop would go: "" (nowhere), "before", "after", "child", "end".
+    // Where a drop would go: "" (nowhere), "before", "after", "child", "end";
+    // or "invalid" over a row that would refuse it (nothing happens on release).
     property string dropKind: ""
     property var dropParent: null
     property int dropRow: 0
@@ -57,9 +63,12 @@ Item {
         clearDrop();
     }
 
-    function setDrop(kind, parentIndex, row, rect) {
+    // `rowRect` is the whole row under the pointer, outlined when the drop
+    // there would be refused (a cycle, or a name that already exists there).
+    function setDrop(kind, parentIndex, row, rect, rowRect) {
         if (!notebook.canDrop(dragIndex, parentIndex)) {
-            clearDrop();
+            dropKind = "invalid";
+            dropRect = rowRect;
             return;
         }
         dropKind = kind;
@@ -81,7 +90,7 @@ Item {
             const rootIndex = tree.rootIndex;
             const last = tree.itemAtCell(Qt.point(0, tree.rows - 1));
             const bottom = last ? last.mapToItem(tree, 0, last.height).y : 0;
-            setDrop("end", rootIndex, notebook.rowCount(rootIndex), Qt.rect(0, bottom - 1, tree.width, 2));
+            setDrop("end", rootIndex, notebook.rowCount(rootIndex), Qt.rect(0, bottom - 1, tree.width, 2), Qt.rect(0, bottom - 1, tree.width, 2));
             return;
         }
         const row = tree.itemAtCell(Qt.point(cell.x, cell.y));
@@ -92,23 +101,24 @@ Item {
         const index = tree.index(cell.y, 0);
         const top = row.mapToItem(tree, 0, 0).y;
         const fraction = (p.y - top) / row.height;
+        const rowRect = Qt.rect(0, top, tree.width, row.height);
         const parentIndex = notebook.parent(index);
         if (fraction < 0.25) {
-            setDrop("before", parentIndex, index.row, Qt.rect(0, top - 1, tree.width, 2));
+            setDrop("before", parentIndex, index.row, Qt.rect(0, top - 1, tree.width, 2), rowRect);
         } else if (fraction > 0.75) {
             if (tree.isExpanded(cell.y) && notebook.rowCount(index) > 0)
                 // Just under an open parent is where its first child would go.
-                setDrop("after", index, 0, Qt.rect(0, top + row.height - 1, tree.width, 2));
+                setDrop("after", index, 0, Qt.rect(0, top + row.height - 1, tree.width, 2), rowRect);
             else
-                setDrop("after", parentIndex, index.row + 1, Qt.rect(0, top + row.height - 1, tree.width, 2));
+                setDrop("after", parentIndex, index.row + 1, Qt.rect(0, top + row.height - 1, tree.width, 2), rowRect);
         } else {
-            setDrop("child", index, notebook.rowCount(index), Qt.rect(0, top, tree.width, row.height));
+            setDrop("child", index, notebook.rowCount(index), Qt.rect(0, top, tree.width, row.height), rowRect);
         }
     }
 
     function endDrag() {
         const drop = dropKind;
-        if (drop !== "") {
+        if (drop !== "" && drop !== "invalid") {
             // The result is a fresh index for the node; the old one may no
             // longer be valid, so select the node again from it.
             const moved = notebook.dropNode(dragIndex, dropParent, dropRow);
@@ -121,6 +131,11 @@ Item {
         dragIndex = null;
         dropParent = null;
         clearDrop();
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        color: Theme.surface
     }
 
     ColumnLayout {
@@ -152,24 +167,40 @@ Item {
                 y: pane.dropRect.y
                 width: pane.dropRect.width
                 height: pane.dropRect.height
-                color: pane.dropKind === "child" ? "transparent" : pane.palette.highlight
-                border.width: pane.dropKind === "child" ? 2 : 0
-                border.color: pane.palette.highlight
+                // A line for between rows, an outline for "as a child", and a
+                // quiet danger outline where the drop would be refused.
+                color: (pane.dropKind === "child" || pane.dropKind === "invalid") ? "transparent" : Theme.accent
+                border.width: (pane.dropKind === "child" || pane.dropKind === "invalid") ? 2 : 0
+                border.color: pane.dropKind === "invalid" ? Theme.danger : Theme.accent
+            }
+
+            // Keyboard focus: a thin accent frame around the tree.
+            Rectangle {
+                parent: tree
+                anchors.fill: parent
+                z: 90
+                color: "transparent"
+                border.width: 1
+                border.color: Theme.accent
+                visible: tree.activeFocus
             }
 
             delegate: TreeViewDelegate {
                 id: item
 
+                // A compact fixed row, whatever the control style would choose.
+                implicitHeight: 24
+
                 // Selection follows the current index, whether it was set by
                 // a click or by keyboard navigation.
                 background: Rectangle {
-                    color: item.current ? item.palette.highlight : "transparent"
+                    color: item.current ? Theme.selection : (item.hovered ? Theme.surfaceRaised : "transparent")
                 }
                 contentItem: Label {
                     text: item.model.display
                     elide: Text.ElideRight
                     verticalAlignment: Text.AlignVCenter
-                    color: item.current ? item.palette.highlightedText : item.palette.windowText
+                    color: item.current ? Theme.selectionForeground : Theme.foreground
                 }
 
                 DragHandler {
@@ -197,19 +228,29 @@ Item {
             }
         }
 
+        Rectangle {
+            Layout.fillWidth: true
+            implicitHeight: 1
+            color: Theme.border
+        }
+
         RowLayout {
+            id: footer
+
             Layout.fillWidth: true
             Layout.margins: 6
-            spacing: 4
+            spacing: 2
 
             Button {
                 text: qsTr("New note")
                 flat: true
+                horizontalPadding: 8
                 onClicked: pane.newRootRequested()
             }
             Button {
                 text: qsTr("New child")
                 flat: true
+                horizontalPadding: 8
                 enabled: pane.selection.currentIndex.valid
                 onClicked: pane.newChildRequested()
             }
@@ -222,10 +263,19 @@ Item {
 
                 text: qsTr("File")
                 flat: true
+                horizontalPadding: 8
                 onClicked: fileMenu.popup(fileButton, 0, -fileMenu.implicitHeight)
 
                 Menu {
                     id: fileMenu
+
+                    background: Rectangle {
+                        implicitWidth: 200
+                        color: Theme.surfaceRaised
+                        border.width: 1
+                        border.color: Theme.border
+                        radius: 4
+                    }
 
                     MenuItem {
                         text: qsTr("Open…\tCtrl+O")
@@ -258,7 +308,7 @@ Item {
         Label {
             Layout.alignment: Qt.AlignHCenter
             text: qsTr("No notes yet")
-            opacity: 0.6
+            color: Theme.mutedForeground
         }
         Button {
             Layout.alignment: Qt.AlignHCenter

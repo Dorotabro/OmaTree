@@ -12,7 +12,46 @@ ApplicationWindow {
     minimumWidth: 480
     minimumHeight: 320
     visible: true
+    color: Theme.background
+    // The semantic palette, handed to the stock controls so everything drawn
+    // by Qt (buttons, menus, text selection, scroll bars) follows it too.
+    palette {
+        window: Theme.background
+        windowText: Theme.foreground
+        base: Theme.background
+        text: Theme.foreground
+        button: Theme.surfaceRaised
+        buttonText: Theme.foreground
+        highlight: Theme.selection
+        highlightedText: Theme.selectionForeground
+        brightText: Theme.dangerForeground
+        mid: Theme.border
+        midlight: Theme.border
+        dark: Theme.border
+        light: Theme.surfaceRaised
+        shadow: Theme.border
+        placeholderText: Theme.mutedForeground
+        link: Theme.accent
+        toolTipBase: Theme.surfaceRaised
+        toolTipText: Theme.foreground
+    }
     title: qsTr("OmaTree — %1%2").arg(notebook.documentName).arg(notebook.dirty ? " *" : "")
+
+    // Theme inputs. `Theme` owns the palette; this only tells it what the
+    // system's colour scheme is and gives it a slow clock to notice a changed
+    // Omarchy theme. Neither touches the notebook.
+    Connections {
+        target: Qt.styleHints
+        function onColorSchemeChanged() {
+            Theme.setSystemScheme(Qt.styleHints.colorScheme);
+        }
+    }
+    Timer {
+        interval: 500
+        repeat: true
+        running: Theme.watchesOmarchy()
+        onTriggered: Theme.poll()
+    }
 
     // The one and only notebook model, shared by every part of the UI.
     NotebookModel {
@@ -195,7 +234,10 @@ ApplicationWindow {
         whenSafeToLeave(() => openDialog.open());
     }
 
-    Component.onCompleted: openStartupPath()
+    Component.onCompleted: {
+        Theme.setSystemScheme(Qt.styleHints.colorScheme);
+        openStartupPath();
+    }
 
     // Closing: a file-backed notebook is flushed and the close simply goes
     // ahead. Otherwise the close is held back and the user is asked; their
@@ -312,14 +354,14 @@ ApplicationWindow {
                 anchors.horizontalCenter: parent.horizontalCenter
                 width: 1
                 height: parent.height
-                color: SplitHandle.pressed ? root.palette.highlight : root.palette.mid
+                color: SplitHandle.pressed ? Theme.accent : Theme.border
             }
         }
 
         TreePane {
             id: treePane
             SplitView.preferredWidth: 260
-            SplitView.minimumWidth: 160
+            SplitView.minimumWidth: Math.max(160, treePane.implicitWidth)
             notebook: notebook
             selection: selection
             onNewRootRequested: root.createRoot()
@@ -342,7 +384,7 @@ ApplicationWindow {
         }
     }
 
-    Dialog {
+    ThemedDialog {
         id: confirmDelete
 
         function askAboutSelection() {
@@ -370,7 +412,7 @@ ApplicationWindow {
     }
 
     // Shown before anything that would drop unsaved changes (Open, close).
-    Dialog {
+    ThemedDialog {
         id: confirmUnsaved
 
         // Run after the user saves or discards.
@@ -429,7 +471,7 @@ ApplicationWindow {
         }
     }
 
-    Dialog {
+    ThemedDialog {
         id: confirmOverwrite
 
         property string path: ""
@@ -512,7 +554,7 @@ ApplicationWindow {
         onRestored: root.warnAboutDuplicateTitles()
     }
 
-    Dialog {
+    ThemedDialog {
         id: errorDialog
 
         parent: Overlay.overlay
