@@ -54,6 +54,13 @@ pub struct Palette {
     pub border: Rgb,
     pub danger: Rgb,
     pub danger_foreground: Rgb,
+    /// A second structural colour, for hierarchy (for example second-level
+    /// headings and quote rules) without a rainbow.
+    pub accent_secondary: Rgb,
+    /// A "this is fine / done" colour, used very sparingly.
+    pub positive: Rgb,
+    /// A "take care" colour, used very sparingly.
+    pub warning: Rgb,
 }
 
 impl Palette {
@@ -71,6 +78,9 @@ impl Palette {
         border: Rgb::hex(0x46515F),
         danger: Rgb::hex(0xBE6670),
         danger_foreground: Rgb::hex(0xFFFFFF),
+        accent_secondary: Rgb::hex(0x9EA7D8),
+        positive: Rgb::hex(0x8FBFA3),
+        warning: Rgb::hex(0xD8B36A),
     };
 
     /// OmaTree Light.
@@ -86,11 +96,14 @@ impl Palette {
         border: Rgb::hex(0xC8D0D9),
         danger: Rgb::hex(0xB4525C),
         danger_foreground: Rgb::hex(0xFFFFFF),
+        accent_secondary: Rgb::hex(0x696FA8),
+        positive: Rgb::hex(0x5D8F71),
+        warning: Rgb::hex(0xA4772A),
     };
 
     /// Every role, by name, for iteration in tests.
     #[cfg(test)]
-    pub fn roles(&self) -> [(&'static str, Rgb); 11] {
+    pub fn roles(&self) -> [(&'static str, Rgb); 14] {
         [
             ("background", self.background),
             ("surface", self.surface),
@@ -103,6 +116,9 @@ impl Palette {
             ("border", self.border),
             ("danger", self.danger),
             ("dangerForeground", self.danger_foreground),
+            ("accentSecondary", self.accent_secondary),
+            ("positive", self.positive),
+            ("warning", self.warning),
         ]
     }
 }
@@ -196,6 +212,9 @@ pub fn default_omarchy_colors_path() -> Option<PathBuf> {
 /// | border                | `muted`                                        |
 /// | danger                | `red`, `bright_red`                            |
 /// | dangerForeground      | `bright_foreground`, `foreground`              |
+/// | accentSecondary       | `magenta`, `cyan`, `blue`, `accent`            |
+/// | positive              | `green`, `accent`                              |
+/// | warning               | `yellow`, then accentSecondary's source, `accent` |
 ///
 /// A role none of these supply (or whose values are not valid colours) falls
 /// back to the same role of the built-in palette matching the theme's `mode`
@@ -227,6 +246,10 @@ pub fn parse_omarchy(text: &str) -> Result<Palette, OmarchyError> {
     // The first valid colour among `keys`, else the built-in role.
     let pick = |keys: &[&str], builtin: Rgb| keys.iter().find_map(|k| lookup(k)).unwrap_or(builtin);
     let bright_or_foreground = pick(&["bright_foreground"], foreground);
+    // The theme's own second accent, if it has anything to offer for it.
+    let secondary = ["magenta", "cyan", "blue", "accent"]
+        .iter()
+        .find_map(|k| lookup(k));
 
     Ok(Palette {
         background,
@@ -240,6 +263,13 @@ pub fn parse_omarchy(text: &str) -> Result<Palette, OmarchyError> {
         border: pick(&["muted"], base.border),
         danger: pick(&["red", "bright_red"], base.danger),
         danger_foreground: bright_or_foreground,
+        accent_secondary: secondary.unwrap_or(base.accent_secondary),
+        positive: pick(&["green", "accent"], base.positive),
+        // yellow, else the second accent's colour, else accent, else built-in.
+        warning: lookup("yellow")
+            .or(secondary)
+            .or_else(|| lookup("accent"))
+            .unwrap_or(base.warning),
     })
 }
 
@@ -385,7 +415,10 @@ mod tests {
                     "selectionForeground",
                     "border",
                     "danger",
-                    "dangerForeground"
+                    "dangerForeground",
+                    "accentSecondary",
+                    "positive",
+                    "warning"
                 ]
             );
         }
@@ -414,6 +447,131 @@ mod tests {
             assert_ne!(palette.danger, palette.accent);
             assert_ne!(palette.danger, palette.selection);
         }
+    }
+
+    #[test]
+    fn the_new_semantic_roles_have_the_specified_built_in_values() {
+        assert_eq!(Palette::DARK.accent_secondary.to_hex(), "#9ea7d8");
+        assert_eq!(Palette::DARK.positive.to_hex(), "#8fbfa3");
+        assert_eq!(Palette::DARK.warning.to_hex(), "#d8b36a");
+        assert_eq!(Palette::LIGHT.accent_secondary.to_hex(), "#696fa8");
+        assert_eq!(Palette::LIGHT.positive.to_hex(), "#5d8f71");
+        assert_eq!(Palette::LIGHT.warning.to_hex(), "#a4772a");
+        for palette in [Palette::DARK, Palette::LIGHT] {
+            // Distinct from one another and from the primary accent.
+            assert_ne!(palette.accent_secondary, palette.accent);
+            assert_ne!(palette.positive, palette.warning);
+            assert_ne!(palette.warning, palette.danger);
+        }
+    }
+
+    #[test]
+    fn valid_omarchy_colours_map_onto_the_new_roles() {
+        let text = format!(
+            "{TOKYO}\nmagenta = \"#ad8ee6\"\ncyan = \"#449dab\"\ngreen = \"#9ece6a\"\nyellow = \"#e0af68\""
+        );
+        let p = parse_omarchy(&text).unwrap();
+        assert_eq!(p.accent_secondary, rgb("#ad8ee6"), "magenta first");
+        assert_eq!(p.positive, rgb("#9ece6a"), "green");
+        assert_eq!(p.warning, rgb("#e0af68"), "yellow");
+        // A light theme uses the very same mapping.
+        let light =
+            format!("{LATTE}\nmagenta = \"#8839ef\"\ngreen = \"#40a02b\"\nyellow = \"#df8e1d\"");
+        let p = parse_omarchy(&light).unwrap();
+        assert_eq!(p.accent_secondary, rgb("#8839ef"));
+        assert_eq!(p.positive, rgb("#40a02b"));
+        assert_eq!(p.warning, rgb("#df8e1d"));
+    }
+
+    #[test]
+    fn the_new_roles_follow_their_fallback_chains() {
+        let base = "background = \"#101010\"\nforeground = \"#eeeeee\"\nmode = \"dark\"\n";
+        // accentSecondary: magenta, cyan, blue, accent
+        let p = parse_omarchy(&format!("{base}cyan = \"#00aaaa\"\nblue = \"#0000ff\"")).unwrap();
+        assert_eq!(p.accent_secondary, rgb("#00aaaa"), "cyan before blue");
+        let p = parse_omarchy(&format!("{base}blue = \"#0000ff\"")).unwrap();
+        assert_eq!(p.accent_secondary, rgb("#0000ff"));
+        let p = parse_omarchy(&format!("{base}accent = \"#abcdef\"")).unwrap();
+        assert_eq!(p.accent_secondary, rgb("#abcdef"), "accent last");
+        // positive: green, accent
+        assert_eq!(
+            parse_omarchy(&format!("{base}accent = \"#abcdef\""))
+                .unwrap()
+                .positive,
+            rgb("#abcdef")
+        );
+        // warning: yellow, accentSecondary, accent
+        let p = parse_omarchy(&format!(
+            "{base}magenta = \"#ff00ff\"\naccent = \"#abcdef\""
+        ))
+        .unwrap();
+        assert_eq!(p.warning, rgb("#ff00ff"), "no yellow: the second accent");
+        let p = parse_omarchy(&format!("{base}accent = \"#abcdef\"")).unwrap();
+        assert_eq!(p.warning, rgb("#abcdef"), "then accent");
+    }
+
+    #[test]
+    fn missing_new_colours_fall_back_to_the_built_in_roles_and_never_reject_the_theme() {
+        let dark =
+            parse_omarchy("mode = \"dark\"\nbackground = \"#101010\"\nforeground = \"#eeeeee\"")
+                .unwrap();
+        assert_eq!(dark.accent_secondary, Palette::DARK.accent_secondary);
+        assert_eq!(dark.positive, Palette::DARK.positive);
+        assert_eq!(dark.warning, Palette::DARK.warning);
+        let light =
+            parse_omarchy("mode = \"light\"\nbackground = \"#fafafa\"\nforeground = \"#111111\"")
+                .unwrap();
+        assert_eq!(light.positive, Palette::LIGHT.positive);
+        // Invalid values for the new keys are ignored, not fatal.
+        let p = parse_omarchy(&format!(
+            "{TOKYO}\ngreen = \"lime\"\nyellow = 7\nmagenta = \"#12\""
+        ))
+        .unwrap();
+        assert_eq!(p.background, rgb("#1a1b26"));
+        assert_eq!(
+            p.positive,
+            rgb("#7aa2f7"),
+            "invalid green: falls back to accent"
+        );
+        assert_eq!(
+            p.accent_secondary,
+            rgb("#7aa2f7"),
+            "invalid magenta skipped, blue then"
+        );
+    }
+
+    #[test]
+    fn qml_contains_no_literal_ui_colours() {
+        // All colour decisions flow from the semantic Theme. A literal
+        // #rgb / #rrggbb / #aarrggbb string in any QML file is a regression.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("qml");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|e| e != "qml") {
+                continue;
+            }
+            checked += 1;
+            let text = std::fs::read_to_string(&path).unwrap();
+            for (n, line) in text.lines().enumerate() {
+                let code = line.split("//").next().unwrap_or("");
+                let mut rest = code;
+                while let Some(at) = rest.find('#') {
+                    let digits: String = rest[at + 1..]
+                        .chars()
+                        .take_while(|c| c.is_ascii_hexdigit())
+                        .collect();
+                    assert!(
+                        !matches!(digits.len(), 3 | 4 | 6 | 8),
+                        "{}:{} has a literal colour: {line}",
+                        path.display(),
+                        n + 1
+                    );
+                    rest = &rest[at + 1..];
+                }
+            }
+        }
+        assert!(checked >= 6, "looked at {checked} QML files");
     }
 
     #[test]

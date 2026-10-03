@@ -373,12 +373,12 @@ ApplicationWindow {
         anchors.fill: parent
 
         handle: Item {
-            implicitWidth: 7
+            implicitWidth: Ui.medium
             Rectangle {
                 anchors.horizontalCenter: parent.horizontalCenter
                 width: 1
                 height: parent.height
-                color: SplitHandle.pressed ? Theme.accent : Theme.border
+                color: (SplitHandle.pressed || SplitHandle.hovered) ? Theme.accent : Theme.border
             }
         }
 
@@ -427,6 +427,7 @@ ApplicationWindow {
         width: 340
         modal: true
         title: qsTr("Move to Trash")
+        destructive: true
         standardButtons: Dialog.Yes | Dialog.No
         onAccepted: root.deleteSelected()
 
@@ -513,6 +514,7 @@ ApplicationWindow {
         width: 340
         modal: true
         title: qsTr("Replace file")
+        destructive: true
         standardButtons: Dialog.Yes | Dialog.No
         onAccepted: root.finishSaveAs(path, true)
         onRejected: {

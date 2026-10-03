@@ -7,48 +7,50 @@ import org.omatree
 Dialog {
     id: dialog
 
-    padding: 16
+    // Set on a dialog whose affirmative answer destroys something: that
+    // button, and only that one, turns red when it is hovered or focused.
+    property bool destructive: false
+
+    padding: Ui.large
 
     background: Rectangle {
         color: Theme.surfaceRaised
-        border.width: 1
+        border.width: Ui.hairline
         border.color: Theme.border
-        radius: 4
+        radius: Ui.radius
     }
 
-    // A quiet button row: no dark band, compact outlined buttons.
+    // The button row: quiet commands, with the affirmative choice lit.
     footer: DialogButtonBox {
         standardButtons: dialog.standardButtons
         alignment: Qt.AlignRight
-        spacing: 8
-        leftPadding: 16
-        rightPadding: 16
-        bottomPadding: 12
-        topPadding: 4
+        spacing: Ui.tiny
+        leftPadding: Ui.medium
+        rightPadding: Ui.medium
+        bottomPadding: Ui.small
+        topPadding: 0
         background: null
 
-        delegate: Button {
+        delegate: Command {
             id: button
 
-            horizontalPadding: 14
-            background: Rectangle {
-                implicitHeight: 28
-                radius: 3
-                color: button.down ? Theme.border : (button.hovered ? Theme.surface : "transparent")
-                border.width: 1
-                border.color: button.activeFocus ? Theme.accent : Theme.border
-            }
+            readonly property bool affirmative: DialogButtonBox.buttonRole === DialogButtonBox.AcceptRole || DialogButtonBox.buttonRole === DialogButtonBox.YesRole
+
+            active: affirmative
+            danger: DialogButtonBox.buttonRole === DialogButtonBox.DestructiveRole || (dialog.destructive && affirmative)
+            focusPolicy: Qt.StrongFocus
         }
     }
 
     header: Label {
         visible: dialog.title !== ""
         text: dialog.title
-        font.bold: true
+        font.weight: Font.DemiBold
+        font.pixelSize: 15
         color: Theme.foreground
-        leftPadding: 16
-        rightPadding: 16
-        topPadding: 14
+        leftPadding: Ui.large
+        rightPadding: Ui.large
+        topPadding: Ui.large
         bottomPadding: 0
     }
 }

@@ -8,7 +8,7 @@ Item {
     id: pane
 
     // The footer decides how narrow the pane can get without overflowing.
-    implicitWidth: footer.implicitWidth + 12
+    implicitWidth: footer.implicitWidth + Ui.medium * 2
     clip: true
 
     required property var notebook
@@ -223,14 +223,14 @@ Item {
                 border.color: pane.dropKind === "invalid" ? Theme.danger : Theme.accent
             }
 
-            // Keyboard focus: a thin accent frame around the tree.
+            // Keyboard focus: a thin accent edge along the top of the tree,
+            // and the selected row's bar turning accent (see the delegate).
             Rectangle {
                 parent: tree
-                anchors.fill: parent
                 z: 90
-                color: "transparent"
-                border.width: 1
-                border.color: Theme.accent
+                width: tree.width
+                height: Ui.hairline
+                color: Theme.accent
                 visible: tree.activeFocus
             }
 
@@ -238,18 +238,53 @@ Item {
                 id: item
 
                 // A compact fixed row, whatever the control style would choose.
-                implicitHeight: 24
+                implicitHeight: Ui.rowHeight
+                leftMargin: Ui.medium
+                rightMargin: Ui.medium
 
-                // Selection follows the current index, whether it was set by
-                // a click or by keyboard navigation.
+                // The current note: a quiet tinted row with a thin bar on its
+                // left edge, which is accent while the tree has the keyboard
+                // and a hairline colour otherwise. Hover is weaker still.
                 background: Rectangle {
-                    color: item.current ? Theme.selection : (item.hovered ? Theme.surfaceRaised : "transparent")
+                    color: item.current ? Qt.alpha(Theme.selection, 0.55) : (item.hovered ? Qt.alpha(Theme.surfaceRaised, 0.8) : "transparent")
+
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: Ui.hoverDuration
+                        }
+                    }
+
+                    Rectangle {
+                        width: Ui.bar
+                        height: parent.height
+                        color: item.treeView.activeFocus ? Theme.accent : Theme.border
+                        visible: item.current
+                    }
                 }
+
+                // A small disclosure marker. Its box is a full row tall so it
+                // is easy to hit; the template toggles the row when it is clicked.
+                indicator: Item {
+                    x: item.leftMargin + item.depth * item.indentation
+                    y: (item.height - height) / 2
+                    implicitWidth: Ui.indent + Ui.small
+                    implicitHeight: Ui.rowHeight
+                    visible: item.isTreeNode && item.hasChildren
+
+                    Label {
+                        anchors.centerIn: parent
+                        text: item.expanded ? "▾" : "▸"
+                        font.pixelSize: 14
+                        color: item.current ? Theme.accent : Theme.mutedForeground
+                    }
+                }
+
                 contentItem: Label {
                     text: item.model.display
                     elide: Text.ElideRight
                     verticalAlignment: Text.AlignVCenter
-                    color: item.current ? Theme.selectionForeground : Theme.foreground
+                    color: item.current ? Theme.foreground : Theme.foreground
+                    font.weight: item.current ? Font.DemiBold : Font.Normal
                 }
 
                 DragHandler {
@@ -279,85 +314,82 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: 1
+            implicitHeight: Ui.hairline
             color: Theme.border
         }
 
+        // The command strip: quiet fixed-width commands instead of buttons.
         RowLayout {
             id: footer
 
             Layout.fillWidth: true
-            Layout.margins: 6
-            spacing: 2
+            Layout.preferredHeight: Ui.controlHeight
+            Layout.leftMargin: Ui.small
+            Layout.rightMargin: Ui.small
+            spacing: 0
 
-            Button {
-                text: qsTr("New note")
-                flat: true
-                horizontalPadding: 8
-                // Just wide enough for the label; the style's default is wider.
-                implicitWidth: implicitContentWidth + leftPadding + rightPadding
+            Command {
+                text: qsTr("+ note")
+                hint: qsTr("New note   Ctrl+N")
                 onClicked: pane.newRootRequested()
             }
-            Button {
-                text: qsTr("New child")
-                flat: true
-                horizontalPadding: 8
-                // Just wide enough for the label; the style's default is wider.
-                implicitWidth: implicitContentWidth + leftPadding + rightPadding
+            Command {
+                text: qsTr("+ child")
+                hint: qsTr("New child note   Ctrl+Shift+N")
                 enabled: pane.selection.currentIndex.valid
                 onClicked: pane.newChildRequested()
             }
             Item {
                 Layout.fillWidth: true
             }
-            Button {
-                text: qsTr("Search")
-                flat: true
-                horizontalPadding: 8
-                // Just wide enough for the label; the style's default is wider.
-                implicitWidth: implicitContentWidth + leftPadding + rightPadding
+            Command {
+                text: qsTr("search")
+                hint: qsTr("Search notes   Ctrl+F")
                 onClicked: pane.startSearch()
             }
             // The only document controls on screen: one small menu.
-            Button {
+            Command {
                 id: fileButton
 
-                text: qsTr("File")
-                flat: true
-                horizontalPadding: 8
-                // Just wide enough for the label; the style's default is wider.
-                implicitWidth: implicitContentWidth + leftPadding + rightPadding
-                onClicked: fileMenu.popup(fileButton, 0, -fileMenu.implicitHeight)
+                text: qsTr("file")
+                onClicked: fileMenu.popup(fileButton, 0, -fileMenu.implicitHeight - Ui.small)
 
                 Menu {
                     id: fileMenu
 
+                    padding: Ui.small
                     background: Rectangle {
-                        implicitWidth: 200
+                        implicitWidth: 230
                         color: Theme.surfaceRaised
-                        border.width: 1
+                        border.width: Ui.hairline
                         border.color: Theme.border
-                        radius: 4
+                        radius: Ui.radius
                     }
 
-                    MenuItem {
+                    CommandMenuItem {
                         text: qsTr("New Notebook")
                         onTriggered: pane.newNotebookRequested()
                     }
-                    MenuItem {
+                    CommandMenuItem {
                         text: qsTr("Open…\tCtrl+O")
                         onTriggered: pane.openRequested()
                     }
-                    MenuItem {
+                    CommandMenuItem {
                         text: qsTr("Save\tCtrl+S")
                         onTriggered: pane.saveRequested()
                     }
-                    MenuItem {
+                    CommandMenuItem {
                         text: qsTr("Save As…\tCtrl+Shift+S")
                         onTriggered: pane.saveAsRequested()
                     }
-                    MenuSeparator {}
-                    MenuItem {
+                    MenuSeparator {
+                        padding: Ui.small
+                        contentItem: Rectangle {
+                            implicitHeight: Ui.hairline
+                            color: Theme.border
+                        }
+                    }
+                    CommandMenuItem {
                         text: qsTr("Recovery…")
                         onTriggered: pane.recoveryRequested()
                     }
@@ -366,20 +398,62 @@ Item {
         }
     }
 
+    // A menu row: the label, and a muted fixed-width shortcut hint after a
+    // tab in its text. The highlighted row gets a tint and an accent edge.
+    component CommandMenuItem: MenuItem {
+        id: row
+
+        readonly property var parts: text.split("\t")
+
+        implicitHeight: Ui.controlHeight - Ui.small
+        leftPadding: Ui.medium
+        rightPadding: Ui.medium
+
+        contentItem: RowLayout {
+            spacing: Ui.large
+
+            Label {
+                Layout.fillWidth: true
+                text: row.parts[0]
+                color: Theme.foreground
+                elide: Text.ElideRight
+                verticalAlignment: Text.AlignVCenter
+            }
+            Label {
+                visible: row.parts.length > 1
+                text: row.parts.length > 1 ? row.parts[1] : ""
+                color: Theme.mutedForeground
+                font.family: Ui.monoFamily
+                font.pixelSize: Ui.commandPixelSize
+                verticalAlignment: Text.AlignVCenter
+            }
+        }
+        background: Rectangle {
+            color: row.highlighted ? Qt.alpha(Theme.selection, 0.55) : "transparent"
+
+            Rectangle {
+                width: Ui.bar
+                height: parent.height
+                color: Theme.accent
+                visible: row.highlighted
+            }
+        }
+    }
+
     // Shown instead of an empty-looking tree.
     ColumnLayout {
         anchors.centerIn: parent
         visible: tree.rows === 0 && !pane.searching
-        spacing: 12
+        spacing: Ui.small
 
         Label {
             Layout.alignment: Qt.AlignHCenter
             text: qsTr("No notes yet")
             color: Theme.mutedForeground
         }
-        Button {
+        Command {
             Layout.alignment: Qt.AlignHCenter
-            text: qsTr("Create the first note")
+            text: qsTr("+ create the first note")
             onClicked: pane.newRootRequested()
         }
     }

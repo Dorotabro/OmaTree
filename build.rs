@@ -1,13 +1,15 @@
-use cxx_qt_build::{CxxQtBuilder, QmlModule};
+use cxx_qt_build::{CxxQtBuilder, QmlFile, QmlModule};
 
 fn main() {
     CxxQtBuilder::new_qml_module(QmlModule::new("org.omatree").qml_files([
-        "qml/main.qml",
-        "qml/TreePane.qml",
-        "qml/EditorPane.qml",
-        "qml/RecoveryDialog.qml",
-        "qml/ThemedDialog.qml",
-        "qml/SearchPane.qml",
+        QmlFile::from("qml/Ui.qml").singleton(true),
+        QmlFile::from("qml/main.qml"),
+        QmlFile::from("qml/TreePane.qml"),
+        QmlFile::from("qml/EditorPane.qml"),
+        QmlFile::from("qml/RecoveryDialog.qml"),
+        QmlFile::from("qml/ThemedDialog.qml"),
+        QmlFile::from("qml/SearchPane.qml"),
+        QmlFile::from("qml/Command.qml"),
     ]))
     .qt_module("Quick")
     .files([

@@ -161,14 +161,19 @@ ThemedDialog {
             text: tab.text
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
-            color: tab.checked ? Theme.foreground : Theme.mutedForeground
+            // The same look as the Edit / Preview switch.
+            font.family: Ui.monoFamily
+            font.pixelSize: Ui.commandPixelSize
+            font.letterSpacing: 0.6
+            font.capitalization: Font.AllUppercase
+            color: tab.checked ? Theme.foreground : (tab.hovered ? Theme.accent : Theme.mutedForeground)
         }
         background: Rectangle {
             color: "transparent"
             Rectangle {
                 anchors.bottom: parent.bottom
                 width: parent.width
-                height: 2
+                height: Ui.bar
                 color: tab.checked ? Theme.accent : "transparent"
             }
         }
@@ -203,9 +208,8 @@ ThemedDialog {
                 font.pixelSize: 12
             }
         }
-        Button {
-            text: qsTr("Restore")
-            flat: true
+        Command {
+            text: qsTr("restore")
             onClicked: row.restoreClicked()
         }
     }

@@ -2,7 +2,7 @@
 //! look at, and which links may be opened. Presentation only: the note body
 //! stays exactly the raw text it always was.
 
-use cxx_qt_lib::QString;
+use cxx_qt_lib::{QString, QStringList};
 
 /// Whether activating this link may open it in the platform's normal
 /// external handler. Only http, https and mailto links are allowed; anything
@@ -43,14 +43,12 @@ pub mod qobject {
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
 
+        include!("cxx-qt-lib/qstringlist.h");
+        type QStringList = cxx_qt_lib::QStringList;
+
         include!("omatree/cpp/markdown_render.h");
         /// Markdown in, safe rich text out. See `cpp/markdown_render.h`.
-        fn omatree_render_markdown(
-            markdown: &QString,
-            link_color: &QString,
-            muted_color: &QString,
-            code_background: &QString,
-        ) -> QString;
+        fn omatree_render_markdown(markdown: &QString, colors: &QStringList) -> QString;
     }
 
     extern "RustQt" {
@@ -63,15 +61,9 @@ pub mod qobject {
     unsafe extern "RustQt" {
         /// Renders Markdown for the read-only preview. The result has no
         /// images or other resources, so showing it can never load anything.
-        /// The colours are `#rrggbb` theme colours.
+        /// `colors` are theme colours as "role=#rrggbb" entries.
         #[qinvokable]
-        fn render(
-            self: &Markdown,
-            markdown: &QString,
-            link_color: &QString,
-            muted_color: &QString,
-            code_background: &QString,
-        ) -> QString;
+        fn render(self: &Markdown, markdown: &QString, colors: &QStringList) -> QString;
 
         /// Whether a link from the preview may be opened externally.
         #[qinvokable]
@@ -84,14 +76,8 @@ pub mod qobject {
 pub struct MarkdownRust;
 
 impl qobject::Markdown {
-    fn render(
-        &self,
-        markdown: &QString,
-        link_color: &QString,
-        muted_color: &QString,
-        code_background: &QString,
-    ) -> QString {
-        qobject::omatree_render_markdown(markdown, link_color, muted_color, code_background)
+    fn render(&self, markdown: &QString, colors: &QStringList) -> QString {
+        qobject::omatree_render_markdown(markdown, colors)
     }
 
     fn is_safe_link(&self, link: &QString) -> bool {

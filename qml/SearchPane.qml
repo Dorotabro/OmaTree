@@ -81,49 +81,70 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        TextField {
-            id: field
-
+        // The query line, like a command prompt: a "/" and an underline.
+        RowLayout {
             Layout.fillWidth: true
-            Layout.margins: 8
-            placeholderText: qsTr("Search notes")
-            color: Theme.foreground
-            placeholderTextColor: Theme.mutedForeground
-            selectionColor: Theme.selection
-            selectedTextColor: Theme.selectionForeground
-            background: Rectangle {
-                color: Theme.background
-                radius: 3
-                border.width: 1
-                border.color: field.activeFocus ? Theme.accent : Theme.border
-            }
+            Layout.leftMargin: Ui.medium
+            Layout.rightMargin: Ui.medium
+            Layout.topMargin: Ui.small
+            spacing: Ui.small
 
-            onTextChanged: {
-                if (text.trim() === "") {
-                    // Nothing to search for: clear at once, no waiting.
-                    debounce.stop();
-                    pane.search(true);
-                } else {
-                    list.currentIndex = 0;
-                    debounce.restart();
-                }
+            Label {
+                text: "/"
+                color: field.activeFocus ? Theme.accent : Theme.mutedForeground
+                font.family: Ui.monoFamily
+                font.pixelSize: 15
             }
-            Keys.onDownPressed: list.incrementCurrentIndex()
-            Keys.onUpPressed: list.decrementCurrentIndex()
-            Keys.onReturnPressed: pane.activateCurrent()
-            Keys.onEnterPressed: pane.activateCurrent()
-            Keys.onEscapePressed: pane.closeRequested()
+            TextField {
+                id: field
+
+                Layout.fillWidth: true
+                leftPadding: 0
+                placeholderText: qsTr("search notes")
+                color: Theme.foreground
+                placeholderTextColor: Theme.mutedForeground
+                selectionColor: Theme.selection
+                selectedTextColor: Theme.selectionForeground
+                background: Rectangle {
+                    color: "transparent"
+
+                    Rectangle {
+                        anchors.bottom: parent.bottom
+                        width: parent.width
+                        height: Ui.hairline
+                        color: field.activeFocus ? Theme.accent : Theme.border
+                    }
+                }
+
+                onTextChanged: {
+                    if (text.trim() === "") {
+                        // Nothing to search for: clear at once, no waiting.
+                        debounce.stop();
+                        pane.search(true);
+                    } else {
+                        list.currentIndex = 0;
+                        debounce.restart();
+                    }
+                }
+                Keys.onDownPressed: list.incrementCurrentIndex()
+                Keys.onUpPressed: list.decrementCurrentIndex()
+                Keys.onReturnPressed: pane.activateCurrent()
+                Keys.onEnterPressed: pane.activateCurrent()
+                Keys.onEscapePressed: pane.closeRequested()
+            }
         }
 
         Label {
             Layout.fillWidth: true
-            Layout.leftMargin: 10
-            Layout.rightMargin: 10
-            Layout.bottomMargin: 4
+            Layout.leftMargin: Ui.medium + Ui.small + 9
+            Layout.rightMargin: Ui.medium
+            Layout.topMargin: Ui.small
+            Layout.bottomMargin: Ui.small
             color: Theme.mutedForeground
-            font.pixelSize: 12
+            font.family: Ui.monoFamily
+            font.pixelSize: Ui.commandPixelSize
             elide: Text.ElideRight
-            text: !pane.hasQuery ? qsTr("Type to search notes") : (pane.count === 0 ? qsTr("No matching notes") : (pane.count === 1 ? qsTr("1 match") : qsTr("%1 matches").arg(pane.count)))
+            text: !pane.hasQuery ? qsTr("type to search notes") : (pane.count === 0 ? qsTr("no matching notes") : (pane.count === 1 ? qsTr("1 match") : qsTr("%1 matches").arg(pane.count)))
         }
 
         ListView {
@@ -145,8 +166,16 @@ Item {
                 readonly property bool current: ListView.isCurrentItem
 
                 width: ListView.view.width
-                implicitHeight: texts.implicitHeight + 12
-                color: current ? Theme.selection : (hover.hovered ? Theme.surfaceRaised : "transparent")
+                implicitHeight: texts.implicitHeight + Ui.medium * 2
+                color: current ? Qt.alpha(Theme.selection, 0.55) : (hover.hovered ? Qt.alpha(Theme.surfaceRaised, 0.8) : "transparent")
+
+                // The same accent bar as the selected row of the tree.
+                Rectangle {
+                    width: Ui.bar
+                    height: parent.height
+                    color: Theme.accent
+                    visible: row.current
+                }
 
                 HoverHandler {
                     id: hover
@@ -161,14 +190,15 @@ Item {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    anchors.leftMargin: 10
-                    anchors.rightMargin: 10
-                    spacing: 1
+                    anchors.leftMargin: Ui.medium + Ui.small
+                    anchors.rightMargin: Ui.medium
+                    spacing: Ui.tiny
 
                     Label {
                         Layout.fillWidth: true
                         elide: Text.ElideRight
-                        color: row.current ? Theme.selectionForeground : Theme.foreground
+                        color: Theme.foreground
+                        font.weight: row.current ? Font.DemiBold : Font.Normal
                         text: {
                             pane.revision;
                             return pane.notebook.searchTitle(row.index);
@@ -180,7 +210,7 @@ Item {
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                         font.pixelSize: 12
-                        color: row.current ? Theme.selectionForeground : Theme.mutedForeground
+                        color: Theme.mutedForeground
                         text: {
                             pane.revision;
                             return pane.notebook.searchPath(row.index);
@@ -191,7 +221,7 @@ Item {
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                         font.pixelSize: 12
-                        color: row.current ? Theme.selectionForeground : Theme.mutedForeground
+                        color: Theme.mutedForeground
                         text: {
                             pane.revision;
                             return pane.notebook.searchSnippet(row.index);

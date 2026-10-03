@@ -33,6 +33,16 @@ Item {
         previewSource = hasNote ? notebook.body(selection.currentIndex) : "";
     }
 
+    // The Edit / Preview switch: choose a mode explicitly. Nothing to do
+    // without a note, or when it is already the current mode.
+    function setPreviewing(on) {
+        if (hasNote && on !== previewing)
+            toggleMode();
+    }
+
+    // The theme colours the Markdown renderer draws with, as "role=#rrggbb".
+    readonly property var previewColors: ["background=" + Theme.background, "accent=" + Theme.accent, "accentSecondary=" + Theme.accentSecondary, "foreground=" + Theme.foreground, "muted=" + Theme.mutedForeground, "raised=" + Theme.surfaceRaised, "border=" + Theme.border, "warning=" + Theme.warning, "positive=" + Theme.positive]
+
     // Ctrl+E and the button. Nothing to do without a note.
     function toggleMode() {
         if (!hasNote)
@@ -113,28 +123,33 @@ Item {
         visible: pane.hasNote
         spacing: 0
 
+        // The header: the title is the page, and the rest recedes.
         RowLayout {
             Layout.fillWidth: true
-            Layout.margins: 12
-            Layout.bottomMargin: 0
+            Layout.leftMargin: Ui.editorPadding
+            Layout.rightMargin: Ui.medium
+            Layout.topMargin: Ui.small
+            spacing: Ui.tiny
 
             TextField {
                 id: title
 
                 Layout.fillWidth: true
-                font.pixelSize: 20
-                font.bold: true
+                leftPadding: 0
+                font.pixelSize: 22
+                font.weight: Font.DemiBold
                 color: Theme.foreground
                 placeholderTextColor: Theme.mutedForeground
                 selectionColor: Theme.selection
                 selectedTextColor: Theme.selectionForeground
-                // No box: just a thin accent line under the title while editing it.
+                // No box: it reads as plain page text until you edit it, when
+                // a thin accent line appears under it.
                 background: Rectangle {
                     color: "transparent"
                     Rectangle {
                         anchors.bottom: parent.bottom
                         width: parent.width
-                        height: 1
+                        height: Ui.hairline
                         color: title.activeFocus ? Theme.accent : "transparent"
                     }
                 }
@@ -143,27 +158,38 @@ Item {
                 Keys.onReturnPressed: body.forceActiveFocus()
                 Keys.onEnterPressed: body.forceActiveFocus()
             }
-            Button {
-                text: pane.previewing ? qsTr("Edit") : qsTr("Preview")
-                flat: true
-                horizontalPadding: 8
-                implicitWidth: implicitContentWidth + leftPadding + rightPadding
-                onClicked: pane.toggleMode()
+            // The two modes of the body, as a pair of commands: the current
+            // one is lit and underlined.
+            Command {
+                text: qsTr("edit")
+                hint: qsTr("Edit the note   Ctrl+E")
+                active: !pane.previewing
+                onClicked: pane.setPreviewing(false)
             }
-            Button {
+            Command {
+                text: qsTr("preview")
+                hint: qsTr("Preview as Markdown   Ctrl+E")
+                active: pane.previewing
+                onClicked: pane.setPreviewing(true)
+            }
+            // Always available, never loud: it only turns red under the mouse
+            // or the keyboard focus.
+            Command {
                 id: deleteButton
 
-                text: qsTr("Delete")
-                flat: true
-                // The one place the danger colour is used, and only on the text.
-                contentItem: Label {
-                    text: deleteButton.text
-                    color: Theme.danger
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
+                text: qsTr("delete")
+                hint: qsTr("Move this note to Trash   Delete")
+                danger: true
                 onClicked: pane.deleteRequested()
             }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.leftMargin: Ui.editorPadding
+            Layout.rightMargin: Ui.medium
+            implicitHeight: Ui.hairline
+            color: Qt.alpha(Theme.border, 0.7)
         }
 
         // The Markdown view of the same text. Read-only, with nothing wired
@@ -186,12 +212,12 @@ Item {
                 color: Theme.foreground
                 selectionColor: Theme.selection
                 selectedTextColor: Theme.selectionForeground
-                leftPadding: 12
-                rightPadding: 12
-                topPadding: 8
-                bottomPadding: 12
+                leftPadding: Ui.editorPadding
+                rightPadding: Ui.editorPadding
+                topPadding: Ui.large
+                bottomPadding: Ui.large
                 // Re-rendered when the text, the mode or the theme changes.
-                text: pane.previewing ? Markdown.render(pane.previewSource, Theme.accent, Theme.mutedForeground, Theme.surfaceRaised) : ""
+                text: pane.previewing ? Markdown.render(pane.previewSource, pane.previewColors) : ""
                 onLinkActivated: link => pane.openLink(link)
 
                 HoverHandler {
@@ -226,9 +252,9 @@ Item {
                 selectionColor: Theme.selection
                 selectedTextColor: Theme.selectionForeground
                 placeholderTextColor: Theme.mutedForeground
-                leftPadding: 12
-                rightPadding: 12
-                topPadding: 8
+                leftPadding: Ui.editorPadding
+                rightPadding: Ui.editorPadding
+                topPadding: Ui.large
                 background: null
                 onTextChanged: {
                     if (!pane.loading && pane.hasNote)

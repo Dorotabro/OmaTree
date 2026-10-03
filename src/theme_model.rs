@@ -47,6 +47,9 @@ pub mod qobject {
             READ,
             NOTIFY
         )]
+        #[qproperty(QString, accent_secondary, cxx_name = "accentSecondary", READ, NOTIFY)]
+        #[qproperty(QString, positive, READ, NOTIFY)]
+        #[qproperty(QString, warning, READ, NOTIFY)]
         type Theme = super::ThemeRust;
     }
 
@@ -90,6 +93,9 @@ pub struct ThemeRust {
     border: QString,
     danger: QString,
     danger_foreground: QString,
+    accent_secondary: QString,
+    positive: QString,
+    warning: QString,
 }
 
 impl Default for ThemeRust {
@@ -114,6 +120,9 @@ impl Default for ThemeRust {
             border: hex(palette.border),
             danger: hex(palette.danger),
             danger_foreground: hex(palette.danger_foreground),
+            accent_secondary: hex(palette.accent_secondary),
+            positive: hex(palette.positive),
+            warning: hex(palette.warning),
         }
     }
 }
@@ -150,6 +159,9 @@ impl qobject::Theme {
         sync_role!(self, palette, border, border_changed);
         sync_role!(self, palette, danger, danger_changed);
         sync_role!(self, palette, danger_foreground, danger_foreground_changed);
+        sync_role!(self, palette, accent_secondary, accent_secondary_changed);
+        sync_role!(self, palette, positive, positive_changed);
+        sync_role!(self, palette, warning, warning_changed);
     }
 
     fn set_system_scheme(mut self: Pin<&mut Self>, scheme: i32) {
