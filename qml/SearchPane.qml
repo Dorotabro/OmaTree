@@ -167,7 +167,7 @@ Item {
 
                 width: ListView.view.width
                 implicitHeight: texts.implicitHeight + Ui.medium * 2
-                color: current ? Qt.alpha(Theme.selection, 0.55) : (hover.hovered ? Qt.alpha(Theme.surfaceRaised, 0.8) : "transparent")
+                color: current ? Qt.alpha(Theme.selection, 0.55) : (hover.over ? Qt.alpha(Theme.surfaceRaised, 0.8) : "transparent")
 
                 // The same accent bar as the selected row of the tree.
                 Rectangle {
@@ -177,7 +177,7 @@ Item {
                     visible: row.current
                 }
 
-                HoverHandler {
+                PointerHover {
                     id: hover
                 }
                 TapHandler {

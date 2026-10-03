@@ -22,6 +22,7 @@ Item {
     signal saveRequested
     signal saveAsRequested
     signal recoveryRequested
+    signal shortcutsRequested
 
     // --- Expansion ---------------------------------------------------------
     // The TreeView owns what is open on screen. The model (that is, the
@@ -184,13 +185,31 @@ Item {
 
     function openContextMenu(position) {
         const cell = tree.cellAtPosition(position.x, position.y, true);
-        contextRow = cell.y;
-        contextBranch = contextRow >= 0 && notebook.rowCount(tree.index(contextRow, 0)) > 0;
-        if (contextRow >= 0) {
-            selection.setCurrentIndex(tree.index(contextRow, 0), ItemSelectionModel.ClearAndSelect);
+        showContextMenu(cell.y, position.x, position.y);
+    }
+
+    // Shift+F10 and the Menu key: the menu for the current note, just below
+    // its row, or for the tree alone if no note is current.
+    function openContextMenuFromKeyboard() {
+        const row = currentRow();
+        if (row < 0) {
+            showContextMenu(-1, Ui.large, Ui.large);
+            return;
+        }
+        tree.positionViewAtRow(row, TableView.Contain);
+        const item = tree.itemAtCell(Qt.point(0, row));
+        const y = item ? item.mapToItem(tree, 0, item.height).y : Ui.large;
+        showContextMenu(row, Ui.large * 3, y);
+    }
+
+    function showContextMenu(row, x, y) {
+        contextRow = row;
+        contextBranch = row >= 0 && notebook.rowCount(tree.index(row, 0)) > 0;
+        if (row >= 0) {
+            selection.setCurrentIndex(tree.index(row, 0), ItemSelectionModel.ClearAndSelect);
             tree.forceActiveFocus();
         }
-        contextMenu.popup(tree, position.x, position.y);
+        contextMenu.popup(tree, x, y);
     }
 
     // --- Drag and drop -----------------------------------------------------
@@ -334,6 +353,17 @@ Item {
                 } else if (ctrlOnly && event.key === Qt.Key_Left) {
                     pane.collapseSubtree(pane.currentRow());
                     event.accepted = true;
+                } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                    // The view would move between its own cells (there is
+                    // only one column); Tab must leave it instead.
+                    const forward = event.key === Qt.Key_Tab && !(event.modifiers & Qt.ShiftModifier);
+                    const next = tree.nextItemInFocusChain(forward);
+                    if (next && next !== tree)
+                        next.forceActiveFocus(forward ? Qt.TabFocusReason : Qt.BacktabFocusReason);
+                    event.accepted = true;
+                } else if (event.key === Qt.Key_Menu || (event.key === Qt.Key_F10 && event.modifiers === Qt.ShiftModifier)) {
+                    pane.openContextMenuFromKeyboard();
+                    event.accepted = true;
                 }
             }
 
@@ -393,7 +423,7 @@ Item {
                 // left edge, which is accent while the tree has the keyboard
                 // and a hairline colour otherwise. Hover is weaker still.
                 background: Rectangle {
-                    color: item.current ? Qt.alpha(Theme.selection, 0.55) : (item.hovered ? Qt.alpha(Theme.surfaceRaised, 0.8) : "transparent")
+                    color: item.current ? Qt.alpha(Theme.selection, 0.55) : (rowHover.over ? Qt.alpha(Theme.surfaceRaised, 0.8) : "transparent")
 
                     Behavior on color {
                         ColorAnimation {
@@ -501,6 +531,11 @@ Item {
                     verticalAlignment: Text.AlignVCenter
                     color: item.current ? Theme.foreground : Theme.foreground
                     font.weight: item.current ? Font.DemiBold : Font.Normal
+                }
+
+                // The row's own hover, which cannot go stale behind a popup.
+                PointerHover {
+                    id: rowHover
                 }
 
                 DragHandler {
@@ -621,6 +656,11 @@ Item {
                         text: qsTr("Recovery…")
                         onTriggered: pane.recoveryRequested()
                     }
+                    CommandMenuSeparator {}
+                    CommandMenuItem {
+                        text: qsTr("Keyboard Shortcuts\tF1")
+                        onTriggered: pane.shortcutsRequested()
+                    }
                 }
             }
         }
@@ -675,6 +715,9 @@ Item {
     // A popup of commands: flat, raised a little, with a hairline border.
     component CommandMenu: Menu {
         padding: Ui.small
+        // See PointerHover.
+        onAboutToShow: Ui.popupSerial++
+        onClosed: Ui.popupSerial++
         background: Rectangle {
             implicitWidth: 230
             color: Theme.surfaceRaised

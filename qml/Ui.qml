@@ -34,4 +34,8 @@ QtObject {
     // name, at a small size.
     readonly property string monoFamily: "monospace"
     readonly property int commandPixelSize: 12
+
+    // Bookkeeping for hover, not a size: changes whenever a menu or dialog
+    // opens or closes. See PointerHover.
+    property int popupSerial: 0
 }

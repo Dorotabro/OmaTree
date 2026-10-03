@@ -82,6 +82,15 @@ ApplicationWindow {
         }
     }
 
+    // Every dialog opening or closing changes what hover can be trusted
+    // (see PointerHover); menus do the same for themselves.
+    Connections {
+        target: Overlay.overlay
+        function onVisibleChanged() {
+            Ui.popupSerial++;
+        }
+    }
+
     // Set once the user has chosen to throw away unsaved changes on close.
     property bool discardOnClose: false
 
@@ -327,6 +336,17 @@ ApplicationWindow {
         treePane.focusTree();
     }
 
+    // F1, and File ▸ Keyboard Shortcuts. A reference only: it touches nothing
+    // in the notebook.
+    function showShortcuts() {
+        if (!shortcutsDialog.opened)
+            shortcutsDialog.open();
+    }
+
+    Shortcut {
+        sequence: "F1"
+        onActivated: root.showShortcuts()
+    }
     Shortcut {
         sequence: "Ctrl+N"
         onActivated: root.createRoot()
@@ -396,6 +416,7 @@ ApplicationWindow {
             onSaveRequested: root.saveCurrent()
             onSaveAsRequested: root.startSaveAs(null)
             onRecoveryRequested: recoveryDialog.open()
+            onShortcutsRequested: root.showShortcuts()
         }
 
         EditorPane {
@@ -572,6 +593,10 @@ ApplicationWindow {
             root.afterSaveAs = null;
             root.resumeAutosave();
         }
+    }
+
+    KeyboardShortcuts {
+        id: shortcutsDialog
     }
 
     RecoveryDialog {

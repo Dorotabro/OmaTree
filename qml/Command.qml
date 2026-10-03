@@ -22,10 +22,26 @@ AbstractButton {
     rightPadding: Ui.medium
     implicitHeight: Ui.controlHeight
     implicitWidth: contentItem.implicitWidth + leftPadding + rightPadding
-    hoverEnabled: true
+    // Hover is tracked by `pointer` (see PointerHover), not by the button.
+    hoverEnabled: false
+    readonly property bool pointerOver: pointer.over
+
+    PointerHover {
+        id: pointer
+    }
     // Reachable with Tab, but a click must not take focus from the tree or
     // the editor.
     focusPolicy: Qt.TabFocus
+
+    // Enter and Return press the focused command, like Space does.
+    Keys.onReturnPressed: event => {
+        control.click();
+        event.accepted = true;
+    }
+    Keys.onEnterPressed: event => {
+        control.click();
+        event.accepted = true;
+    }
 
     // The resting colour of the label. A destructive command is never
     // neutral: it is the danger colour even at rest.
@@ -58,7 +74,7 @@ AbstractButton {
             font.pixelSize: Ui.commandPixelSize
             font.letterSpacing: 0.6
             font.capitalization: Font.AllUppercase
-            color: !control.enabled ? Qt.alpha(Theme.mutedForeground, 0.5) : control.down ? Theme.accentSecondary : (control.hovered || control.visualFocus) ? (control.danger ? Theme.danger : Theme.accent) : control.active ? Theme.foreground : control.tone
+            color: !control.enabled ? Qt.alpha(Theme.mutedForeground, 0.5) : control.down ? Theme.accentSecondary : (control.pointerOver || control.visualFocus) ? (control.danger ? Theme.danger : Theme.accent) : control.active ? Theme.foreground : control.tone
 
             Behavior on color {
                 ColorAnimation {
@@ -81,7 +97,7 @@ AbstractButton {
         }
     }
 
-    ToolTip.visible: hovered && hint !== ""
+    ToolTip.visible: pointerOver && hint !== ""
     ToolTip.text: hint
     ToolTip.delay: 700
 }
