@@ -44,6 +44,7 @@ pub mod qobject {
         #[qproperty(QString, document_name, cxx_name = "documentName", READ, NOTIFY)]
         #[qproperty(i32, recovery_revision, cxx_name = "recoveryRevision", READ, NOTIFY)]
         #[qproperty(i32, search_revision, cxx_name = "searchRevision", READ, NOTIFY)]
+        #[qproperty(i32, structure_revision, cxx_name = "structureRevision", READ, NOTIFY)]
         type NotebookModel = super::NotebookModelRust;
     }
 
@@ -349,6 +350,55 @@ pub mod qobject {
         #[cxx_name = "activateSearchResult"]
         fn activate_search_result(self: &NotebookModel, index: i32) -> QModelIndex;
 
+        // Tree view state. Which notes are open is remembered here (in the
+        // document, so it is saved with the notebook), while the live open
+        // and closed rows belong to the QML TreeView. Nothing here is
+        // content: none of it marks the document dirty, takes a checkpoint
+        // or emits `documentMutated`.
+
+        /// Whether the note is recorded as open: asked of every row after a
+        /// notebook is loaded or replaced, to open the same branches again.
+        #[qinvokable]
+        #[cxx_name = "shouldExpand"]
+        fn should_expand(self: &NotebookModel, index: &QModelIndex) -> bool;
+
+        /// Records one note as open or closed.
+        #[qinvokable]
+        #[cxx_name = "setExpanded"]
+        fn set_expanded(self: Pin<&mut NotebookModel>, index: &QModelIndex, expanded: bool);
+
+        /// Records a note and everything below it as open or closed.
+        #[qinvokable]
+        #[cxx_name = "setSubtreeExpanded"]
+        fn set_subtree_expanded(self: Pin<&mut NotebookModel>, index: &QModelIndex, expanded: bool);
+
+        /// Records every note as open or closed.
+        #[qinvokable]
+        #[cxx_name = "setAllExpanded"]
+        fn set_all_expanded(self: Pin<&mut NotebookModel>, expanded: bool);
+
+        /// Records all ancestors of a note as open (it was revealed).
+        #[qinvokable]
+        #[cxx_name = "expandAncestors"]
+        fn expand_ancestors(self: Pin<&mut NotebookModel>, index: &QModelIndex);
+
+        // Tree guides: what the view needs to draw the branch lines. Bind
+        // to `structureRevision`, which changes whenever the shape of the
+        // tree does.
+
+        /// Whether the note is the last of its siblings.
+        #[qinvokable]
+        #[cxx_name = "isLastSibling"]
+        fn is_last_sibling(self: &NotebookModel, index: &QModelIndex) -> bool;
+
+        /// Bit k is set when the line in indentation column k continues
+        /// past this row, because the ancestor drawn there has more
+        /// siblings below. Columns are counted from the first level under
+        /// the top level; the note's own elbow is not included.
+        #[qinvokable]
+        #[cxx_name = "guideColumns"]
+        fn guide_columns(self: &NotebookModel, index: &QModelIndex) -> i32;
+
         /// Saves to the notebook's file. Returns an empty string on success,
         /// otherwise a message for the user; dirty stays set on failure.
         #[qinvokable]
@@ -375,6 +425,8 @@ pub struct NotebookModelRust {
     /// search. Holds node ids, which stay inside Rust.
     search_results: Vec<SearchResult>,
     search_revision: i32,
+    /// Changes whenever rows are added, removed, moved or replaced.
+    structure_revision: i32,
 }
 
 impl Default for NotebookModelRust {
@@ -388,6 +440,7 @@ impl Default for NotebookModelRust {
             recovery_revision: 0,
             search_results: Vec::new(),
             search_revision: 0,
+            structure_revision: 0,
         }
     }
 }
@@ -438,6 +491,64 @@ fn rename_error_message(error: NotebookError, title: &str) -> String {
         NotebookError::EmptyTitle => "A note needs a name.".to_string(),
         _ => "That note could not be renamed.".to_string(),
     }
+}
+
+/// What the tree view needs to draw the branch lines of one row.
+#[derive(Debug, PartialEq, Eq)]
+struct Guide {
+    /// Levels below the top level (0 for a top-level note).
+    depth: usize,
+    /// The last of its siblings: its elbow ends there instead of continuing.
+    is_last: bool,
+    /// For each indentation column before the note's own: whether the line
+    /// there continues past this row. Column k belongs to the ancestor at
+    /// depth k + 1; top-level notes draw no line of their own.
+    continues: Vec<bool>,
+}
+
+fn is_last_sibling(nb: &Notebook, id: NodeId) -> bool {
+    nb.get(id).is_some_and(|node| {
+        let siblings = child_count(nb, node.parent_id());
+        node.position() + 1 >= siblings
+    })
+}
+
+fn guide_for(nb: &Notebook, id: NodeId) -> Option<Guide> {
+    let node = nb.get(id)?;
+    // The ancestors below the top level, nearest first.
+    let mut ancestors = Vec::new();
+    let mut parent = node.parent_id();
+    while let Some(p) = parent {
+        let up = nb.get(p)?;
+        if up.parent_id().is_some() {
+            ancestors.push(p);
+        }
+        parent = up.parent_id();
+    }
+    let depth = ancestors.len() + usize::from(node.parent_id().is_some());
+    // Outermost first: that is column order.
+    let continues = ancestors
+        .iter()
+        .rev()
+        .map(|a| !is_last_sibling(nb, *a))
+        .collect();
+    Some(Guide {
+        depth,
+        is_last: is_last_sibling(nb, id),
+        continues,
+    })
+}
+
+/// The continuing columns as bits (column 0 is bit 0). Columns beyond what
+/// an `i32` holds are left out; nothing is ever drawn that deep.
+fn guide_mask(guide: &Guide) -> i32 {
+    guide
+        .continues
+        .iter()
+        .take(30)
+        .enumerate()
+        .filter(|(_, on)| **on)
+        .fold(0, |mask, (k, _)| mask | (1 << k))
 }
 
 fn count_to_i32(len: usize) -> i32 {
@@ -543,6 +654,54 @@ impl qobject::NotebookModel {
             self.as_mut().rust_mut().document_name = name;
             self.as_mut().document_name_changed();
         }
+    }
+
+    /// Tells QML the shape of the tree changed (guide lines may need to).
+    fn bump_structure(mut self: Pin<&mut Self>) {
+        let next = self.rust().structure_revision.wrapping_add(1);
+        self.as_mut().rust_mut().structure_revision = next;
+        self.as_mut().structure_revision_changed();
+    }
+
+    fn should_expand(&self, index: &QModelIndex) -> bool {
+        self.node_for(index)
+            .is_some_and(|id| self.rust().document.is_expanded(id))
+    }
+
+    fn set_expanded(mut self: Pin<&mut Self>, index: &QModelIndex, expanded: bool) {
+        if let Some(id) = self.node_for(index) {
+            self.as_mut().rust_mut().document.set_expanded(id, expanded);
+        }
+    }
+
+    fn set_subtree_expanded(mut self: Pin<&mut Self>, index: &QModelIndex, expanded: bool) {
+        if let Some(id) = self.node_for(index) {
+            self.as_mut()
+                .rust_mut()
+                .document
+                .set_subtree_expanded(id, expanded);
+        }
+    }
+
+    fn set_all_expanded(mut self: Pin<&mut Self>, expanded: bool) {
+        self.as_mut().rust_mut().document.set_all_expanded(expanded);
+    }
+
+    fn expand_ancestors(mut self: Pin<&mut Self>, index: &QModelIndex) {
+        if let Some(id) = self.node_for(index) {
+            self.as_mut().rust_mut().document.expand_ancestors(id);
+        }
+    }
+
+    fn is_last_sibling(&self, index: &QModelIndex) -> bool {
+        self.node_for(index)
+            .is_some_and(|id| is_last_sibling(self.rust().document.notebook(), id))
+    }
+
+    fn guide_columns(&self, index: &QModelIndex) -> i32 {
+        self.node_for(index)
+            .and_then(|id| guide_for(self.rust().document.notebook(), id))
+            .map_or(0, |guide| guide_mask(&guide))
     }
 
     /// Tells QML the search results changed.
@@ -651,6 +810,7 @@ impl qobject::NotebookModel {
         self.as_mut().end_insert_rows();
         self.as_mut().sync_state();
         self.as_mut().bump_recovery();
+        self.as_mut().bump_structure();
         match result {
             Ok(_) => {
                 self.as_mut().document_mutated();
@@ -690,6 +850,7 @@ impl qobject::NotebookModel {
         self.as_mut().end_reset_model();
         self.as_mut().sync_state();
         self.as_mut().bump_recovery();
+        self.as_mut().bump_structure();
         match result {
             Ok(()) => {
                 self.as_mut().document_mutated();
@@ -793,6 +954,7 @@ impl qobject::NotebookModel {
         self.as_mut().end_move_rows();
         self.as_mut().sync_state();
         self.as_mut().bump_recovery();
+        self.as_mut().bump_structure();
         if matches!(result, Ok(true)) {
             self.as_mut().document_mutated();
         }
@@ -807,6 +969,7 @@ impl qobject::NotebookModel {
         let created = self.as_mut().rust_mut().document.create_default_root();
         self.as_mut().end_insert_rows();
         self.as_mut().sync_state();
+        self.as_mut().bump_structure();
         match created {
             Ok(id) => {
                 self.as_mut().document_mutated();
@@ -831,6 +994,7 @@ impl qobject::NotebookModel {
             .create_default_child(parent_id);
         self.as_mut().end_insert_rows();
         self.as_mut().sync_state();
+        self.as_mut().bump_structure();
         match created {
             Ok(id) => {
                 self.as_mut().document_mutated();
@@ -878,6 +1042,7 @@ impl qobject::NotebookModel {
         self.as_mut().end_remove_rows();
         self.as_mut().sync_state();
         self.as_mut().bump_recovery();
+        self.as_mut().bump_structure();
         if removed {
             self.as_mut().document_mutated();
         }
@@ -923,6 +1088,7 @@ impl qobject::NotebookModel {
         self.as_mut().end_reset_model();
         self.as_mut().sync_state();
         self.as_mut().bump_recovery();
+        self.as_mut().bump_structure();
         self.as_mut().bump_search();
     }
 
@@ -1116,5 +1282,116 @@ mod tests {
         for gone in [projects, omatree, ideas] {
             assert_eq!(resolve(&nb, 0, 0, gone.get() as usize), None);
         }
+    }
+
+    // ---- guide metadata ----
+
+    fn guide(nb: &Notebook, id: NodeId) -> Guide {
+        guide_for(nb, id).unwrap()
+    }
+
+    #[test]
+    fn a_single_root_has_no_guide() {
+        let mut nb = Notebook::new();
+        let only = nb.create_root("Only").unwrap();
+        assert_eq!(
+            guide(&nb, only),
+            Guide {
+                depth: 0,
+                is_last: true,
+                continues: vec![]
+            }
+        );
+        assert_eq!(guide_mask(&guide(&nb, only)), 0);
+    }
+
+    #[test]
+    fn several_roots_know_which_is_last_but_draw_no_lines() {
+        let (nb, [projects, inbox, ..]) = sample();
+        assert!(!guide(&nb, projects).is_last);
+        assert!(guide(&nb, inbox).is_last);
+        assert_eq!(guide(&nb, projects).depth, 0);
+        assert!(guide(&nb, projects).continues.is_empty());
+    }
+
+    #[test]
+    fn first_middle_and_last_siblings() {
+        let mut nb = Notebook::new();
+        let root = nb.create_root("Root").unwrap();
+        let a = nb.create_child(root, "a").unwrap();
+        let b = nb.create_child(root, "b").unwrap();
+        let c = nb.create_child(root, "c").unwrap();
+        for id in [a, b] {
+            let g = guide(&nb, id);
+            assert!(!g.is_last, "a note with siblings below");
+            assert_eq!(g.depth, 1);
+            assert!(g.continues.is_empty(), "the elbow is the only line");
+        }
+        assert!(guide(&nb, c).is_last);
+        assert_eq!(nb.get(a).unwrap().position(), 0, "first of several");
+        assert!(!is_last_sibling(&nb, b), "middle");
+    }
+
+    #[test]
+    fn a_nested_note_continues_the_line_of_an_ancestor_with_siblings_below() {
+        // Projects
+        // ├── OmaTree
+        // │   └── Ideas      <- column 0 continues: OmaTree has Threatwright below
+        // └── Threatwright
+        let (nb, [_, _, omatree, threat, ideas]) = sample();
+        let g = guide(&nb, ideas);
+        assert_eq!(g.depth, 2);
+        assert!(g.is_last);
+        assert_eq!(g.continues, [true]);
+        assert_eq!(guide_mask(&g), 0b1);
+        assert!(!guide(&nb, omatree).is_last);
+        assert!(guide(&nb, threat).is_last);
+    }
+
+    #[test]
+    fn a_nested_note_under_a_final_branch_draws_no_continuing_line() {
+        let (mut nb, [_, _, _, threat, _]) = sample();
+        let deep = nb.create_child(threat, "Deep").unwrap();
+        let g = guide(&nb, deep);
+        assert_eq!(g.continues, [false], "Threatwright is the last child");
+        assert_eq!(guide_mask(&g), 0);
+        assert!(g.is_last);
+    }
+
+    #[test]
+    fn deep_trees_report_every_column() {
+        // Four levels below the top, alternating whether the ancestor is last.
+        let mut nb = Notebook::new();
+        let r = nb.create_root("r").unwrap();
+        let a1 = nb.create_child(r, "a1").unwrap();
+        nb.create_child(r, "a2").unwrap();
+        let b1 = nb.create_child(a1, "b1").unwrap();
+        let c1 = nb.create_child(b1, "c1").unwrap();
+        nb.create_child(b1, "c2").unwrap();
+        let d1 = nb.create_child(c1, "d1").unwrap();
+        let e1 = nb.create_child(d1, "e1").unwrap();
+        let g = guide(&nb, e1);
+        assert_eq!(g.depth, 5);
+        // a1 has a2 below; b1 is its only child; c1 has c2 below; d1 is alone.
+        assert_eq!(g.continues, [true, false, true, false]);
+        assert_eq!(guide_mask(&g), 0b0101);
+        assert!(g.is_last);
+    }
+
+    #[test]
+    fn moving_a_note_updates_its_guide() {
+        let (mut nb, [projects, inbox, omatree, threat, ideas]) = sample();
+        assert!(!guide(&nb, omatree).is_last);
+        nb.move_node(threat, Some(inbox), 0).unwrap();
+        assert!(guide(&nb, omatree).is_last, "nothing below it any more");
+        assert_eq!(guide(&nb, ideas).continues, [false]);
+        assert_eq!(guide(&nb, threat).depth, 1);
+        assert!(!guide(&nb, projects).is_last);
+    }
+
+    #[test]
+    fn a_missing_note_has_no_guide() {
+        let (nb, _) = sample();
+        assert!(guide_for(&nb, NodeId::from_raw(999)).is_none());
     }
 }

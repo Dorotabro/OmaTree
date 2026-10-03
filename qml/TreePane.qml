@@ -23,9 +23,109 @@ Item {
     signal saveAsRequested
     signal recoveryRequested
 
-    // Expands ancestors of `index` and scrolls it into view.
+    // --- Expansion ---------------------------------------------------------
+    // The TreeView owns what is open on screen. The model (that is, the
+    // document) remembers which notes are open, so it can be saved with the
+    // notebook and restored. This is view state only: it never marks the
+    // notebook changed. `syncing` is set while this file itself opens or
+    // closes rows, so the TreeView's own expanded/collapsed signals are not
+    // mistaken for the user doing it.
+
+    property bool syncing: false
+
+    // Opens the rows the document says are open (after a notebook was
+    // loaded or replaced, or rows were inserted or moved). A row opened here
+    // brings its own children into the list, which the same pass then meets.
+    function restoreExpansion() {
+        syncing = true;
+        // (Not `tree.rows`: after a reset it only catches up once the view
+        // has laid itself out, while `index()` already follows the model.)
+        for (let row = 0;; ++row) {
+            const index = tree.index(row, 0);
+            if (!index.valid)
+                break;
+            if (!tree.isExpanded(row) && notebook.rowCount(index) > 0 && notebook.shouldExpand(index))
+                tree.expand(row);
+        }
+        syncing = false;
+    }
+
+    // After rows were closed, the current note may have been hidden inside
+    // them; the nearest visible ancestor becomes current instead.
+    function keepSelectionVisible() {
+        let index = selection.currentIndex;
+        if (!index.valid || tree.rowAtIndex(index) >= 0)
+            return;
+        while (index.valid && tree.rowAtIndex(index) < 0)
+            index = notebook.parent(index);
+        if (index.valid)
+            selection.setCurrentIndex(index, ItemSelectionModel.ClearAndSelect);
+    }
+
+    // The recursive operations use TreeView's own: nothing here walks the
+    // tree. The document is told the same thing, for it to remember.
+    function expandSubtree(row) {
+        if (row < 0)
+            return;
+        syncing = true;
+        tree.expandRecursively(row);
+        syncing = false;
+        notebook.setSubtreeExpanded(tree.index(row, 0), true);
+    }
+
+    function collapseSubtree(row) {
+        if (row < 0)
+            return;
+        const index = tree.index(row, 0);
+        syncing = true;
+        tree.collapseRecursively(row);
+        syncing = false;
+        notebook.setSubtreeExpanded(index, false);
+        keepSelectionVisible();
+    }
+
+    function expandAll() {
+        syncing = true;
+        tree.expandRecursively();
+        syncing = false;
+        notebook.setAllExpanded(true);
+    }
+
+    function collapseAll() {
+        syncing = true;
+        tree.collapseRecursively();
+        syncing = false;
+        notebook.setAllExpanded(false);
+        keepSelectionVisible();
+    }
+
+    // Ctrl+Right / Ctrl+Left: the current note's whole subtree.
+    function currentRow() {
+        return selection.currentIndex.valid ? tree.rowAtIndex(selection.currentIndex) : -1;
+    }
+
+    Connections {
+        target: pane.notebook
+        // A different notebook, or rows that came back or moved: open again
+        // whatever the document remembers as open.
+        function onModelReset() {
+            Qt.callLater(pane.restoreExpansion);
+        }
+        function onRowsInserted() {
+            Qt.callLater(pane.restoreExpansion);
+        }
+        function onRowsMoved() {
+            Qt.callLater(pane.restoreExpansion);
+        }
+    }
+
+    // Expands ancestors of `index` and scrolls it into view. They stay open
+    // (and are remembered as open) afterwards.
     function reveal(index) {
+        notebook.expandAncestors(index);
+        syncing = true;
         tree.expandToIndex(index);
+        syncing = false;
         Qt.callLater(() => {
             const row = tree.rowAtIndex(index);
             if (row >= 0)
@@ -71,6 +171,26 @@ Item {
         stopSearch();
         selection.setCurrentIndex(found, ItemSelectionModel.ClearAndSelect);
         reveal(found);
+    }
+
+    // --- Context menu ------------------------------------------------------
+    // Right-clicking a note makes it the current one, so every action in the
+    // menu is about that note. Over empty space only the tree-wide actions
+    // are available.
+
+    property int contextRow: -1
+    // Whether the note under the pointer has anything below it.
+    property bool contextBranch: false
+
+    function openContextMenu(position) {
+        const cell = tree.cellAtPosition(position.x, position.y, true);
+        contextRow = cell.y;
+        contextBranch = contextRow >= 0 && notebook.rowCount(tree.index(contextRow, 0)) > 0;
+        if (contextRow >= 0) {
+            selection.setCurrentIndex(tree.index(contextRow, 0), ItemSelectionModel.ClearAndSelect);
+            tree.forceActiveFocus();
+        }
+        contextMenu.popup(tree, position.x, position.y);
     }
 
     // --- Drag and drop -----------------------------------------------------
@@ -206,6 +326,33 @@ Item {
             ScrollBar.vertical: ScrollBar {}
 
             Keys.onDeletePressed: pane.deleteRequested()
+            Keys.onPressed: event => {
+                const ctrlOnly = (event.modifiers & Qt.ControlModifier) && !(event.modifiers & (Qt.ShiftModifier | Qt.AltModifier));
+                if (ctrlOnly && event.key === Qt.Key_Right) {
+                    pane.expandSubtree(pane.currentRow());
+                    event.accepted = true;
+                } else if (ctrlOnly && event.key === Qt.Key_Left) {
+                    pane.collapseSubtree(pane.currentRow());
+                    event.accepted = true;
+                }
+            }
+
+            // What the user did to a row, by plain click or key: remembered
+            // by the document. (Ctrl+click and Ctrl+arrows are recursive and
+            // are handled by the row and the keys above.)
+            onExpanded: (row, depth) => {
+                if (!pane.syncing)
+                    pane.notebook.setExpanded(tree.index(row, 0), true);
+            }
+            onCollapsed: (row, recursively) => {
+                if (!pane.syncing)
+                    pane.notebook.setExpanded(tree.index(row, 0), false);
+            }
+
+            TapHandler {
+                acceptedButtons: Qt.RightButton
+                onTapped: eventPoint => pane.openContextMenu(eventPoint.position)
+            }
 
             // Where the dragged row would land.
             Rectangle {
@@ -262,20 +409,89 @@ Item {
                     }
                 }
 
+                // One narrow column per level: the disclosure marker of a
+                // note sits in its own column, and the guide lines below run
+                // through the middle of the columns to its left.
+                indentation: Ui.indent
+
+                // What the guides need to know about this row, asked of the
+                // model again whenever the shape of the tree changes.
+                readonly property bool lastSibling: {
+                    item.treeView.model.structureRevision;
+                    return item.treeView.model.isLastSibling(item.treeView.index(item.row, item.column));
+                }
+                readonly property int guideColumns: {
+                    item.treeView.model.structureRevision;
+                    return item.treeView.model.guideColumns(item.treeView.index(item.row, item.column));
+                }
+
+                // Branch guides: continuing lines of the ancestors that have
+                // more siblings below, then this note's own elbow, which
+                // stops at its middle if it is the last sibling. Plain
+                // geometry in the border colour, a little stronger (towards
+                // the accent) on the current row.
+                Item {
+                    id: guides
+
+                    readonly property color line: item.current ? Qt.tint(Theme.border, Qt.alpha(Theme.accent, 0.5)) : Theme.border
+                    // The middle of the column that belongs to `level`.
+                    function columnX(level) {
+                        return item.leftMargin + level * Ui.indent + Math.floor(Ui.indent / 2);
+                    }
+
+                    anchors.fill: parent
+                    visible: item.isTreeNode && item.depth > 0
+
+                    Repeater {
+                        model: Math.max(0, item.depth - 1)
+
+                        Rectangle {
+                            required property int index
+
+                            visible: ((item.guideColumns >> index) & 1) === 1
+                            x: guides.columnX(index)
+                            width: Ui.hairline
+                            height: item.height
+                            color: guides.line
+                        }
+                    }
+                    // The elbow: down from the row's top (to the bottom too,
+                    // unless this is the last sibling) and across to the note.
+                    Rectangle {
+                        x: guides.columnX(item.depth - 1)
+                        width: Ui.hairline
+                        height: item.lastSibling ? Math.ceil(item.height / 2) : item.height
+                        color: guides.line
+                    }
+                    Rectangle {
+                        x: guides.columnX(item.depth - 1)
+                        y: Math.floor(item.height / 2)
+                        // Short of a disclosure marker; all the way to the
+                        // text for a note with nothing below it.
+                        width: item.hasChildren ? Math.floor(Ui.indent / 2) - 1 : Ui.indent + Ui.small
+                        height: Ui.hairline
+                        color: guides.line
+                    }
+                }
+
                 // A small disclosure marker. Its box is a full row tall so it
                 // is easy to hit; the template toggles the row when it is clicked.
+                // It is the only mark that says whether a note has anything
+                // below it; a note without children has none.
                 indicator: Item {
-                    x: item.leftMargin + item.depth * item.indentation
+                    x: item.leftMargin + item.depth * Ui.indent
                     y: (item.height - height) / 2
-                    implicitWidth: Ui.indent + Ui.small
+                    implicitWidth: Ui.indent
                     implicitHeight: Ui.rowHeight
                     visible: item.isTreeNode && item.hasChildren
 
                     Label {
                         anchors.centerIn: parent
                         text: item.expanded ? "▾" : "▸"
-                        font.pixelSize: 14
-                        color: item.current ? Theme.accent : Theme.mutedForeground
+                        font.pixelSize: 21
+                        // Closed branches hide something, so they are the
+                        // brighter marker; open ones recede into the guides.
+                        color: item.current ? Theme.accent : (item.expanded ? Theme.mutedForeground : Theme.foreground)
                     }
                 }
 
@@ -300,6 +516,29 @@ Item {
                     onCentroidChanged: {
                         if (active)
                             pane.updateDrag(centroid.scenePosition);
+                    }
+                }
+
+                // Ctrl+click on the disclosure marker: the whole subtree, by
+                // TreeView's own recursive operations. Only sees clicks made
+                // with Ctrl held, whatever the template itself did with them.
+                TapHandler {
+                    property bool wasExpanded: false
+
+                    acceptedModifiers: Qt.ControlModifier
+                    gesturePolicy: TapHandler.ReleaseWithinBounds
+                    onPressedChanged: {
+                        if (pressed)
+                            wasExpanded = item.expanded;
+                    }
+                    onTapped: eventPoint => {
+                        const left = item.leftMargin + item.depth * Ui.indent;
+                        if (!item.hasChildren || eventPoint.position.x < left || eventPoint.position.x >= left + Ui.indent)
+                            return;
+                        if (wasExpanded)
+                            pane.collapseSubtree(item.row);
+                        else
+                            pane.expandSubtree(item.row);
                     }
                 }
 
@@ -329,12 +568,14 @@ Item {
             spacing: 0
 
             Command {
-                text: qsTr("+ note")
+                glyph: "+"
+                text: qsTr("note")
                 hint: qsTr("New note   Ctrl+N")
                 onClicked: pane.newRootRequested()
             }
             Command {
-                text: qsTr("+ child")
+                glyph: "+"
+                text: qsTr("child")
                 hint: qsTr("New child note   Ctrl+Shift+N")
                 enabled: pane.selection.currentIndex.valid
                 onClicked: pane.newChildRequested()
@@ -343,6 +584,7 @@ Item {
                 Layout.fillWidth: true
             }
             Command {
+                tone: Qt.alpha(Theme.accent, 0.85)
                 text: qsTr("search")
                 hint: qsTr("Search notes   Ctrl+F")
                 onClicked: pane.startSearch()
@@ -352,19 +594,11 @@ Item {
                 id: fileButton
 
                 text: qsTr("file")
+                tone: Qt.alpha(Theme.accentSecondary, 0.85)
                 onClicked: fileMenu.popup(fileButton, 0, -fileMenu.implicitHeight - Ui.small)
 
-                Menu {
+                CommandMenu {
                     id: fileMenu
-
-                    padding: Ui.small
-                    background: Rectangle {
-                        implicitWidth: 230
-                        color: Theme.surfaceRaised
-                        border.width: Ui.hairline
-                        border.color: Theme.border
-                        radius: Ui.radius
-                    }
 
                     CommandMenuItem {
                         text: qsTr("New Notebook")
@@ -382,13 +616,7 @@ Item {
                         text: qsTr("Save As…\tCtrl+Shift+S")
                         onTriggered: pane.saveAsRequested()
                     }
-                    MenuSeparator {
-                        padding: Ui.small
-                        contentItem: Rectangle {
-                            implicitHeight: Ui.hairline
-                            color: Theme.border
-                        }
-                    }
+                    CommandMenuSeparator {}
                     CommandMenuItem {
                         text: qsTr("Recovery…")
                         onTriggered: pane.recoveryRequested()
@@ -398,11 +626,79 @@ Item {
         }
     }
 
+    // The tree's context menu, in the same command-menu language as File.
+    CommandMenu {
+        id: contextMenu
+
+        readonly property bool onNote: pane.contextRow >= 0
+        readonly property bool branch: pane.contextBranch
+
+        CommandMenuItem {
+            text: qsTr("New note\tCtrl+N")
+            onTriggered: pane.newRootRequested()
+        }
+        CommandMenuItem {
+            text: qsTr("New child\tCtrl+Shift+N")
+            enabled: contextMenu.onNote
+            onTriggered: pane.newChildRequested()
+        }
+        CommandMenuSeparator {}
+        CommandMenuItem {
+            text: qsTr("Expand subtree\tCtrl+Right")
+            enabled: contextMenu.branch
+            onTriggered: pane.expandSubtree(pane.contextRow)
+        }
+        CommandMenuItem {
+            text: qsTr("Collapse subtree\tCtrl+Left")
+            enabled: contextMenu.branch
+            onTriggered: pane.collapseSubtree(pane.contextRow)
+        }
+        CommandMenuItem {
+            text: qsTr("Expand all")
+            enabled: tree.rows > 0
+            onTriggered: pane.expandAll()
+        }
+        CommandMenuItem {
+            text: qsTr("Collapse all")
+            enabled: tree.rows > 0
+            onTriggered: pane.collapseAll()
+        }
+        CommandMenuSeparator {}
+        CommandMenuItem {
+            text: qsTr("Move to Trash\tDelete")
+            danger: true
+            enabled: contextMenu.onNote
+            onTriggered: pane.deleteRequested()
+        }
+    }
+
+    // A popup of commands: flat, raised a little, with a hairline border.
+    component CommandMenu: Menu {
+        padding: Ui.small
+        background: Rectangle {
+            implicitWidth: 230
+            color: Theme.surfaceRaised
+            border.width: Ui.hairline
+            border.color: Theme.border
+            radius: Ui.radius
+        }
+    }
+
+    component CommandMenuSeparator: MenuSeparator {
+        padding: Ui.small
+        contentItem: Rectangle {
+            implicitHeight: Ui.hairline
+            color: Theme.border
+        }
+    }
+
     // A menu row: the label, and a muted fixed-width shortcut hint after a
-    // tab in its text. The highlighted row gets a tint and an accent edge.
+    // tab in its text. The highlighted row gets a tint and an accent edge
+    // (red for a destructive command, which is red at rest as well).
     component CommandMenuItem: MenuItem {
         id: row
 
+        property bool danger: false
         readonly property var parts: text.split("\t")
 
         implicitHeight: Ui.controlHeight - Ui.small
@@ -411,11 +707,12 @@ Item {
 
         contentItem: RowLayout {
             spacing: Ui.large
+            opacity: row.enabled ? 1 : 0.4
 
             Label {
                 Layout.fillWidth: true
                 text: row.parts[0]
-                color: Theme.foreground
+                color: row.danger ? Theme.danger : Theme.foreground
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
             }
@@ -429,12 +726,12 @@ Item {
             }
         }
         background: Rectangle {
-            color: row.highlighted ? Qt.alpha(Theme.selection, 0.55) : "transparent"
+            color: row.highlighted ? Qt.alpha(row.danger ? Theme.danger : Theme.selection, 0.55) : "transparent"
 
             Rectangle {
                 width: Ui.bar
                 height: parent.height
-                color: Theme.accent
+                color: row.danger ? Theme.danger : Theme.accent
                 visible: row.highlighted
             }
         }
@@ -453,7 +750,8 @@ Item {
         }
         Command {
             Layout.alignment: Qt.AlignHCenter
-            text: qsTr("+ create the first note")
+            glyph: "+"
+            text: qsTr("create the first note")
             onClicked: pane.newRootRequested()
         }
     }

@@ -21,27 +21,49 @@ AbstractButton {
     leftPadding: Ui.medium
     rightPadding: Ui.medium
     implicitHeight: Ui.controlHeight
-    implicitWidth: label.implicitWidth + leftPadding + rightPadding
+    implicitWidth: contentItem.implicitWidth + leftPadding + rightPadding
     hoverEnabled: true
     // Reachable with Tab, but a click must not take focus from the tree or
     // the editor.
     focusPolicy: Qt.TabFocus
 
-    contentItem: Label {
-        id: label
+    // The resting colour of the label. A destructive command is never
+    // neutral: it is the danger colour even at rest.
+    property color tone: danger ? Qt.alpha(Theme.danger, 0.8) : rest
+    // An optional leading mark ("+") with a colour of its own, so a command
+    // can carry a little meaning without any icon.
+    property string glyph: ""
+    property color glyphColor: Theme.positive
 
-        text: control.text
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
-        font.family: Ui.monoFamily
-        font.pixelSize: Ui.commandPixelSize
-        font.letterSpacing: 0.6
-        font.capitalization: Font.AllUppercase
-        color: !control.enabled ? Qt.alpha(Theme.mutedForeground, 0.5) : control.down ? Theme.accentSecondary : (control.hovered || control.visualFocus) ? (control.danger ? Theme.danger : Theme.accent) : control.active ? Theme.foreground : control.rest
+    contentItem: Row {
+        spacing: Ui.small
 
-        Behavior on color {
-            ColorAnimation {
-                duration: Ui.hoverDuration
+        Label {
+            id: mark
+
+            visible: control.glyph !== ""
+            text: control.glyph
+            anchors.verticalCenter: parent.verticalCenter
+            font.family: Ui.monoFamily
+            font.pixelSize: Ui.commandPixelSize
+            font.weight: Font.Bold
+            color: !control.enabled ? Qt.alpha(control.glyphColor, 0.4) : control.glyphColor
+        }
+        Label {
+            id: label
+
+            text: control.text
+            anchors.verticalCenter: parent.verticalCenter
+            font.family: Ui.monoFamily
+            font.pixelSize: Ui.commandPixelSize
+            font.letterSpacing: 0.6
+            font.capitalization: Font.AllUppercase
+            color: !control.enabled ? Qt.alpha(Theme.mutedForeground, 0.5) : control.down ? Theme.accentSecondary : (control.hovered || control.visualFocus) ? (control.danger ? Theme.danger : Theme.accent) : control.active ? Theme.foreground : control.tone
+
+            Behavior on color {
+                ColorAnimation {
+                    duration: Ui.hoverDuration
+                }
             }
         }
     }
@@ -52,9 +74,9 @@ AbstractButton {
             anchors.bottom: parent.bottom
             anchors.bottomMargin: Ui.small
             anchors.horizontalCenter: parent.horizontalCenter
-            width: label.implicitWidth
+            width: control.contentItem.implicitWidth
             height: control.active ? Ui.bar : Ui.hairline
-            color: Theme.accent
+            color: control.danger ? Theme.danger : Theme.accent
             visible: control.active || control.visualFocus
         }
     }

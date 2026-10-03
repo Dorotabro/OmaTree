@@ -1,9 +1,11 @@
 //! SQLite persistence for notebooks. One notebook is one database file.
 //!
 //! Schema version 1 stores only the active nodes. Version 2 adds the id
-//! counter, Trash and recovery checkpoints. Version 1 files stay readable and
-//! are migrated to version 2 only by a successful save.
+//! counter, Trash and recovery checkpoints. Version 3 adds the set of
+//! expanded nodes, which is view state rather than content. Older files stay
+//! readable and are migrated to version 3 only by a successful save.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::path::Path;
 
@@ -12,7 +14,9 @@ use rusqlite::{params, Connection, OpenFlags, Transaction};
 use crate::notebook::{Node, NodeId, Notebook, NotebookError};
 use crate::recovery::{Checkpoint, Recovery, TrashEntry};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
+/// The first version that has the recovery tables.
+const RECOVERY_VERSION: i64 = 2;
 const OLDEST_READABLE_VERSION: i64 = 1;
 
 /// The active notebook, as in version 1.
@@ -65,6 +69,14 @@ const RECOVERY_SCHEMA: &str = "
     );
 ";
 
+/// What version 3 adds: which notes are open in the tree. Only a note that
+/// exists can be listed, so a deleted note takes its row with it.
+const VIEW_SCHEMA: &str = "
+    CREATE TABLE expanded_nodes (
+        node_id INTEGER PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE
+    );
+";
+
 #[derive(Debug)]
 pub enum StorageError {
     Sqlite(rusqlite::Error),
@@ -100,12 +112,12 @@ impl From<NotebookError> for StorageError {
 
 pub struct Storage {
     conn: Connection,
-    /// Schema version of the file as it is on disk right now (1 or 2).
+    /// Schema version of the file as it is on disk right now (1, 2 or 3).
     version: i64,
 }
 
 impl Storage {
-    /// Creates a version 2 notebook in a new (or empty) database file.
+    /// Creates a version 3 notebook in a new (or empty) database file.
     /// Refuses to touch a database that already contains anything.
     pub fn create(path: &Path) -> Result<Self, StorageError> {
         let mut conn = Connection::open(path)?;
@@ -126,6 +138,7 @@ impl Storage {
         let tx = conn.transaction()?;
         tx.execute_batch(NODES_SCHEMA)?;
         tx.execute_batch(RECOVERY_SCHEMA)?;
+        tx.execute_batch(VIEW_SCHEMA)?;
         tx.execute(
             "INSERT INTO notebook_meta (id, next_node_id) VALUES (1, 0)",
             [],
@@ -138,8 +151,8 @@ impl Storage {
         })
     }
 
-    /// Opens an existing notebook (schema version 1 or 2); never creates a
-    /// file and never modifies one. A version 1 file is only upgraded by a
+    /// Opens an existing notebook (schema version 1 to 3); never creates a
+    /// file and never modifies one. An older file is only upgraded by a
     /// later successful `save_document`.
     pub fn open(path: &Path) -> Result<Self, StorageError> {
         let conn = Connection::open_with_flags(
@@ -155,22 +168,29 @@ impl Storage {
         Ok(Storage { conn, version })
     }
 
-    /// Replaces everything stored (active notebook, id counter, Trash and
-    /// checkpoints) with the given state in a single transaction. A version 1
-    /// file is migrated to version 2 inside the same transaction, so on any
-    /// failure the previous valid file is left exactly as it was.
-    pub fn save_document(
+    /// Replaces everything stored (active notebook, id counter, Trash,
+    /// checkpoints and the expanded nodes) with the given state in a single
+    /// transaction. An older file is migrated to version 3 inside the same
+    /// transaction, so on any failure the previous valid file is left exactly
+    /// as it was. Expanded ids of nodes that do not exist are left out.
+    pub fn save_document_with_view(
         &mut self,
         notebook: &Notebook,
         recovery: &Recovery,
+        expanded: &BTreeSet<NodeId>,
     ) -> Result<(), StorageError> {
         let migrating = self.version < SCHEMA_VERSION;
+        let from = self.version;
         let tx = self.conn.transaction()?;
-        if migrating {
+        if from < RECOVERY_VERSION {
             tx.execute_batch(RECOVERY_SCHEMA)?;
+        }
+        if from < SCHEMA_VERSION {
+            tx.execute_batch(VIEW_SCHEMA)?;
         }
 
         // Children first for the nodes foreign key; the other tables cascade.
+        tx.execute("DELETE FROM expanded_nodes", [])?;
         tx.execute("DELETE FROM checkpoints", [])?;
         tx.execute("DELETE FROM trash_entries", [])?;
         tx.execute("DELETE FROM notebook_meta", [])?;
@@ -180,6 +200,7 @@ impl Storage {
         write_meta(&tx, full_next_id(notebook, recovery)?)?;
         write_trash(&tx, recovery)?;
         write_checkpoints(&tx, recovery)?;
+        write_expanded(&tx, notebook, expanded)?;
 
         if migrating {
             tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -189,21 +210,38 @@ impl Storage {
         Ok(())
     }
 
+    /// Like `save_document_with_view`, with nothing expanded. Tests only.
+    #[cfg(test)]
+    pub fn save_document(
+        &mut self,
+        notebook: &Notebook,
+        recovery: &Recovery,
+    ) -> Result<(), StorageError> {
+        self.save_document_with_view(notebook, recovery, &BTreeSet::new())
+    }
+
     /// Whether the file is already at the current schema version, i.e. it
-    /// has the recovery tables and supports `save_active`.
+    /// has the recovery and view tables and supports `save_active_with_view`.
     pub fn is_current_schema(&self) -> bool {
         self.version >= SCHEMA_VERSION
     }
 
-    /// Persists only the active state: the `nodes` table and the next node
-    /// id, in one transaction. Trash and checkpoint tables are not touched
-    /// at all. Only for a file that is already at the current schema; a
-    /// version 1 file needs the migrating `save_document` instead.
-    pub fn save_active(&mut self, notebook: &Notebook) -> Result<(), StorageError> {
+    /// Persists only the active state: the `nodes` table, the next node id
+    /// and the expanded nodes, in one transaction. Trash and checkpoint
+    /// tables are not touched at all. Only for a file that is already at the
+    /// current schema; an older file needs the migrating save instead.
+    pub fn save_active_with_view(
+        &mut self,
+        notebook: &Notebook,
+        expanded: &BTreeSet<NodeId>,
+    ) -> Result<(), StorageError> {
         if !self.is_current_schema() {
             return Err(StorageError::UnsupportedSchemaVersion(self.version));
         }
         let tx = self.conn.transaction()?;
+        // Deleting the nodes also deletes their expanded rows (cascade); the
+        // current set is written back below.
+        tx.execute("DELETE FROM expanded_nodes", [])?;
         tx.execute("DELETE FROM nodes", [])?;
         write_nodes(&tx, notebook)?;
         // The stored counter only ever goes up, so ids that live only in
@@ -216,8 +254,33 @@ impl Storage {
                  next_node_id = max(next_node_id, excluded.next_node_id)",
             [next],
         )?;
+        write_expanded(&tx, notebook, expanded)?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Like `save_active_with_view`, with nothing expanded. Tests only.
+    #[cfg(test)]
+    pub fn save_active(&mut self, notebook: &Notebook) -> Result<(), StorageError> {
+        self.save_active_with_view(notebook, &BTreeSet::new())
+    }
+
+    /// The stored expanded nodes that exist in `notebook`. A file older than
+    /// version 3 has none. Ids of missing nodes are ignored, not an error.
+    pub fn load_expanded(&self, notebook: &Notebook) -> Result<BTreeSet<NodeId>, StorageError> {
+        if self.version < SCHEMA_VERSION {
+            return Ok(BTreeSet::new());
+        }
+        let mut query = self.conn.prepare("SELECT node_id FROM expanded_nodes")?;
+        let rows = query.query_map([], |row| row.get::<_, i64>(0))?;
+        let mut expanded = BTreeSet::new();
+        for row in rows {
+            let id = id_from_sql(row?)?;
+            if notebook.get(id).is_some() {
+                expanded.insert(id);
+            }
+        }
+        Ok(expanded)
     }
 
     /// Loads and validates the stored notebook and recovery state. A
@@ -229,7 +292,7 @@ impl Storage {
             "SELECT id, parent_id, position, title, body FROM nodes",
             [],
         )?;
-        if self.version < SCHEMA_VERSION {
+        if self.version < RECOVERY_VERSION {
             return Ok((Notebook::from_nodes(nodes)?, Recovery::default()));
         }
 
@@ -348,6 +411,19 @@ fn full_next_id(notebook: &Notebook, recovery: &Recovery) -> Result<u64, Storage
         next = next.max(needed);
     }
     Ok(next)
+}
+
+/// Writes the expanded nodes that exist in the notebook; others are dropped.
+fn write_expanded(
+    tx: &Transaction,
+    notebook: &Notebook,
+    expanded: &BTreeSet<NodeId>,
+) -> Result<(), StorageError> {
+    let mut insert = tx.prepare("INSERT INTO expanded_nodes (node_id) VALUES (?1)")?;
+    for id in expanded.iter().filter(|id| notebook.get(**id).is_some()) {
+        insert.execute([id_to_sql(*id)?])?;
+    }
+    Ok(())
 }
 
 fn write_meta(tx: &Transaction, next_id: u64) -> Result<(), StorageError> {
@@ -589,7 +665,7 @@ mod tests {
         let db = TempDb::new();
         let storage = Storage::create(db.path()).unwrap();
         assert!(db.path().exists());
-        assert_eq!(user_version(&storage.conn).unwrap(), 2);
+        assert_eq!(user_version(&storage.conn).unwrap(), 3);
         assert!(storage.load().unwrap().roots().is_empty());
     }
 
@@ -909,7 +985,7 @@ mod tests {
     }
 
     #[test]
-    fn saving_version_1_migrates_it_to_version_2() {
+    fn saving_version_1_migrates_it_to_version_3() {
         let db = TempDb::new();
         write_v1_file(db.path());
         let mut storage = Storage::open(db.path()).unwrap();
@@ -919,7 +995,7 @@ mod tests {
         storage.save_document(&nb, &recovery).unwrap();
         drop(storage);
 
-        assert_eq!(file_version(db.path()), 2);
+        assert_eq!(file_version(db.path()), 3);
         let tables = table_names(db.path());
         for t in [
             "nodes",
@@ -973,11 +1049,13 @@ mod tests {
     }
 
     #[test]
-    fn new_notebooks_are_created_as_version_2() {
+    fn new_notebooks_are_created_as_version_3() {
         let db = TempDb::new();
         Storage::create(db.path()).unwrap();
-        assert_eq!(file_version(db.path()), 2);
-        assert!(table_names(db.path()).contains(&"checkpoint_nodes".to_string()));
+        assert_eq!(file_version(db.path()), 3);
+        let tables = table_names(db.path());
+        assert!(tables.contains(&"checkpoint_nodes".to_string()));
+        assert!(tables.contains(&"expanded_nodes".to_string()));
     }
 
     #[test]
@@ -1080,10 +1158,10 @@ mod tests {
     }
 
     #[test]
-    fn schema_versions_above_2_and_empty_files_stay_unsupported() {
+    fn schema_versions_above_3_and_empty_files_stay_unsupported() {
         let db = TempDb::new();
         Storage::create(db.path()).unwrap();
-        for version in [3, 99] {
+        for version in [4, 99] {
             write_raw(db.path(), &format!("PRAGMA user_version = {version};"));
             match Storage::open(db.path()) {
                 Err(StorageError::UnsupportedSchemaVersion(v)) => assert_eq!(v, version),

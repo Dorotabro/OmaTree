@@ -1,6 +1,7 @@
 //! The open notebook: its tree, the file it came from, and whether it has
 //! unsaved changes. Pure Rust; the Qt model wraps this.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -112,6 +113,14 @@ pub struct Document {
     /// Trash or checkpoints differ from what was last written. Implies a
     /// full save; ordinary edits never set this.
     recovery_dirty: bool,
+    /// Which notes are open in the tree. View state, not content: changing
+    /// it never makes the document dirty. May briefly name nodes that are
+    /// gone (deleted, or replaced by a checkpoint); those are left out of
+    /// every save and dropped once a save succeeds.
+    expanded: BTreeSet<NodeId>,
+    /// `expanded` differs from what was last written. Only an explicit save
+    /// acts on this by itself; it never counts as unsaved content.
+    view_dirty: bool,
 }
 
 impl Document {
@@ -124,6 +133,8 @@ impl Document {
             path: None,
             active_dirty: false,
             recovery_dirty: false,
+            expanded: BTreeSet::new(),
+            view_dirty: false,
         }
     }
 
@@ -140,6 +151,8 @@ impl Document {
                 path: Some(path.to_path_buf()),
                 active_dirty: false,
                 recovery_dirty: false,
+                expanded: BTreeSet::new(),
+                view_dirty: false,
             }),
             Err(e) => Err(DocumentError::Io(e)),
         }
@@ -150,6 +163,7 @@ impl Document {
         std::fs::metadata(path).map_err(DocumentError::Io)?;
         let storage = Storage::open(path)?;
         let (notebook, recovery) = storage.load_document()?;
+        let expanded = storage.load_expanded(&notebook)?;
         Ok(Document {
             notebook,
             recovery,
@@ -157,31 +171,43 @@ impl Document {
             path: Some(path.to_path_buf()),
             active_dirty: false,
             recovery_dirty: false,
+            expanded,
+            view_dirty: false,
         })
     }
 
     /// Saves to the document's file, writing as little as is safe:
     ///
-    /// - nothing dirty: no database write at all;
-    /// - only the active notebook dirty (ordinary edits): just the active
-    ///   nodes and id counter, leaving Trash and checkpoints untouched;
-    /// - recovery state dirty, or the file still at schema version 1: the
-    ///   full atomic save (which also migrates a version 1 file).
+    /// - nothing dirty and no pending view state: no database write at all;
+    /// - only the active notebook and/or the view state changed: just the
+    ///   active nodes, id counter and expanded nodes, leaving Trash and
+    ///   checkpoints untouched;
+    /// - recovery state dirty, or the file older than the current schema:
+    ///   the full atomic save (which also migrates an older file).
     ///
-    /// Dirty flags are cleared only after the write succeeded.
+    /// Pending view state is written by any save that happens, and an
+    /// explicit save writes it even when the content is clean. Dirty flags
+    /// are cleared only after the write succeeded.
     pub fn save(&mut self) -> Result<(), DocumentError> {
-        let storage = self.storage.as_mut().ok_or(DocumentError::NoPath)?;
-        if !self.active_dirty && !self.recovery_dirty {
+        if self.storage.is_none() {
+            return Err(DocumentError::NoPath);
+        }
+        if !self.active_dirty && !self.recovery_dirty && !self.view_dirty {
             return Ok(());
         }
+        let expanded = self.valid_expanded();
+        let storage = self.storage.as_mut().ok_or(DocumentError::NoPath)?;
         if self.recovery_dirty || !storage.is_current_schema() {
-            storage.save_document(&self.notebook, &self.recovery)?;
+            storage.save_document_with_view(&self.notebook, &self.recovery, &expanded)?;
             self.active_dirty = false;
             self.recovery_dirty = false;
         } else {
-            storage.save_active(&self.notebook)?;
+            storage.save_active_with_view(&self.notebook, &expanded)?;
             self.active_dirty = false;
         }
+        self.view_dirty = false;
+        // What was written is the whole truth now; stale ids are gone.
+        self.expanded = expanded;
         Ok(())
     }
 
@@ -213,7 +239,8 @@ impl Document {
         } else {
             Storage::create(path)?
         };
-        if let Err(e) = target.save_document(&self.notebook, &self.recovery) {
+        let expanded = self.valid_expanded();
+        if let Err(e) = target.save_document_with_view(&self.notebook, &self.recovery, &expanded) {
             drop(target);
             if !existed {
                 let _ = std::fs::remove_file(path);
@@ -225,6 +252,8 @@ impl Document {
         self.path = Some(path.to_path_buf());
         self.active_dirty = false;
         self.recovery_dirty = false;
+        self.view_dirty = false;
+        self.expanded = expanded;
         Ok(())
     }
 
@@ -259,6 +288,80 @@ impl Document {
     #[cfg(test)]
     fn dirty_domains(&self) -> (bool, bool) {
         (self.active_dirty, self.recovery_dirty)
+    }
+
+    // View state: which notes are open in the tree. None of this is content.
+    // It does not dirty the document, take checkpoints or touch Trash; it is
+    // simply written along with the next save.
+
+    /// Whether the note is recorded as open in the tree.
+    pub fn is_expanded(&self, id: NodeId) -> bool {
+        self.expanded.contains(&id)
+    }
+
+    /// Records one note as open or closed. Notes that do not exist are
+    /// ignored. Returns whether anything changed.
+    pub fn set_expanded(&mut self, id: NodeId, expanded: bool) -> bool {
+        let changed = if expanded {
+            self.notebook.get(id).is_some() && self.expanded.insert(id)
+        } else {
+            self.expanded.remove(&id)
+        };
+        self.view_dirty |= changed;
+        changed
+    }
+
+    /// Records a note and every note below it as open (those with children)
+    /// or closed.
+    pub fn set_subtree_expanded(&mut self, id: NodeId, expanded: bool) {
+        let Ok(subtree) = self.notebook.subtree(id) else {
+            return;
+        };
+        for node in &subtree {
+            let open = expanded
+                && self
+                    .notebook
+                    .children(node.id())
+                    .is_ok_and(|c| !c.is_empty());
+            self.set_expanded(node.id(), open);
+        }
+    }
+
+    /// Records every note as open (those with children) or closed.
+    pub fn set_all_expanded(&mut self, expanded: bool) {
+        let roots: Vec<NodeId> = self.notebook.roots().iter().map(|n| n.id()).collect();
+        for root in roots {
+            self.set_subtree_expanded(root, expanded);
+        }
+        if !expanded {
+            // Anything else recorded (stale ids) goes too.
+            self.view_dirty |= !self.expanded.is_empty();
+            self.expanded.clear();
+        }
+    }
+
+    /// Records every ancestor of the note as open, so it is visible.
+    pub fn expand_ancestors(&mut self, id: NodeId) {
+        let mut parent = self.notebook.get(id).and_then(|n| n.parent_id());
+        while let Some(p) = parent {
+            self.set_expanded(p, true);
+            parent = self.notebook.get(p).and_then(|n| n.parent_id());
+        }
+    }
+
+    /// The recorded notes that exist now; what a save writes.
+    fn valid_expanded(&self) -> BTreeSet<NodeId> {
+        self.expanded
+            .iter()
+            .copied()
+            .filter(|id| self.notebook.get(*id).is_some())
+            .collect()
+    }
+
+    /// The expanded notes still pending to be saved. Tests only.
+    #[cfg(test)]
+    fn view_dirty(&self) -> bool {
+        self.view_dirty
     }
 
     pub fn has_path(&self) -> bool {
@@ -1711,7 +1814,7 @@ mod tests {
         assert_eq!(doc.dirty_domains(), (false, false));
         drop(doc);
 
-        assert_eq!(file_user_version(&path), 2);
+        assert_eq!(file_user_version(&path), 3);
         for table in RECOVERY_TABLES {
             assert!(table_exists(&path, table), "{table}");
         }
@@ -1732,14 +1835,14 @@ mod tests {
         // Populate recovery state with a structural save, which migrates.
         doc.delete(NodeId::from_raw(7)).unwrap();
         doc.save().unwrap();
-        assert_eq!(file_user_version(&path), 2);
+        assert_eq!(file_user_version(&path), 3);
         let before = recovery_dumps(&path);
         assert!(before.iter().any(|rows| !rows.is_empty()));
         install_write_guards(&path, &RECOVERY_TABLES);
 
         doc.set_body(NodeId::from_raw(3), "later edit").unwrap();
         doc.save()
-            .expect("active-only now that the file is version 2");
+            .expect("active-only now that the file is version 3");
         drop(doc);
         assert_eq!(recovery_dumps(&path), before);
     }
@@ -2293,5 +2396,392 @@ mod tests {
             reopened.recovery().checkpoints().is_empty(),
             "a new notebook starts with none"
         );
+    }
+
+    // ---- expanded nodes: view state, schema version 3 ----
+
+    /// A saved, clean notebook at `name` with the `sample()` tree.
+    fn saved_sample(dir: &TempDir, name: &str) -> (PathBuf, [NodeId; 5]) {
+        let (mut doc, ids) = sample();
+        let path = dir.join(name);
+        doc.save_as(&path, false).unwrap();
+        (path, ids)
+    }
+
+    fn expanded_rows(path: &Path) -> Vec<String> {
+        let conn = rusqlite::Connection::open(path).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT node_id FROM expanded_nodes ORDER BY node_id")
+            .unwrap();
+        let rows = stmt.query_map([], |r| r.get::<_, i64>(0)).unwrap();
+        rows.map(|r| r.unwrap().to_string()).collect()
+    }
+
+    /// A version 2 notebook as the previous release wrote it.
+    fn write_v2_from(path: &Path, doc: &Document) {
+        Storage::create(path)
+            .unwrap()
+            .save_document_with_view(doc.notebook(), doc.recovery(), &BTreeSet::new())
+            .unwrap();
+        let conn = rusqlite::Connection::open(path).unwrap();
+        conn.execute_batch("DROP TABLE expanded_nodes; PRAGMA user_version = 2;")
+            .unwrap();
+    }
+
+    fn file_bytes(path: &Path) -> Vec<u8> {
+        std::fs::read(path).unwrap()
+    }
+
+    #[test]
+    fn expansion_changes_only_the_named_note() {
+        let (mut doc, [projects, inbox, omatree, threat, ideas]) = sample();
+        assert!(doc.set_expanded(projects, true));
+        assert!(doc.is_expanded(projects));
+        for other in [inbox, omatree, threat, ideas] {
+            assert!(!doc.is_expanded(other));
+        }
+        assert!(!doc.set_expanded(projects, true), "no change, no news");
+        assert!(doc.set_expanded(projects, false));
+        assert!(!doc.is_expanded(projects));
+    }
+
+    #[test]
+    fn recursive_expansion_covers_every_branch_below_and_nothing_else() {
+        let (mut doc, [projects, inbox, omatree, threat, ideas]) = sample();
+        doc.set_subtree_expanded(projects, true);
+        assert!(doc.is_expanded(projects) && doc.is_expanded(omatree));
+        assert!(!doc.is_expanded(threat), "a leaf has nothing to open");
+        assert!(!doc.is_expanded(ideas));
+        assert!(!doc.is_expanded(inbox), "outside the subtree");
+        doc.set_subtree_expanded(projects, false);
+        assert!(!doc.is_expanded(projects) && !doc.is_expanded(omatree));
+    }
+
+    #[test]
+    fn recursive_expansion_of_a_leaf_is_harmless() {
+        let (mut doc, [_, inbox, ..]) = sample();
+        doc.set_subtree_expanded(inbox, true);
+        doc.set_subtree_expanded(inbox, false);
+        assert!(!doc.view_dirty());
+    }
+
+    #[test]
+    fn expand_all_and_collapse_all() {
+        let (mut doc, [projects, inbox, omatree, threat, _]) = sample();
+        doc.set_all_expanded(true);
+        assert!(doc.is_expanded(projects) && doc.is_expanded(omatree));
+        assert!(!doc.is_expanded(inbox) && !doc.is_expanded(threat));
+        doc.set_all_expanded(false);
+        assert!(!doc.is_expanded(projects) && !doc.is_expanded(omatree));
+    }
+
+    #[test]
+    fn revealing_a_note_opens_its_ancestors() {
+        let (mut doc, [projects, _, omatree, threat, ideas]) = sample();
+        doc.expand_ancestors(ideas);
+        assert!(doc.is_expanded(omatree) && doc.is_expanded(projects));
+        assert!(!doc.is_expanded(ideas) && !doc.is_expanded(threat));
+    }
+
+    #[test]
+    fn unknown_notes_cannot_be_recorded_as_expanded() {
+        let (mut doc, _) = sample();
+        assert!(!doc.set_expanded(NodeId::from_raw(999), true));
+        assert!(!doc.view_dirty());
+    }
+
+    #[test]
+    fn expansion_is_not_content() {
+        let (mut doc, [projects, _, omatree, ..]) = clean_sample();
+        let checkpoints = doc.recovery().checkpoints().len();
+        doc.set_expanded(projects, true);
+        doc.set_subtree_expanded(omatree, true);
+        doc.set_all_expanded(true);
+        doc.set_all_expanded(false);
+        assert!(!doc.is_dirty(), "no star");
+        assert_eq!(doc.dirty_domains(), (false, false));
+        assert_eq!(doc.recovery().checkpoints().len(), checkpoints);
+        assert!(doc.recovery().trash().is_empty());
+    }
+
+    #[test]
+    fn expanded_notes_are_saved_and_collapsed_ones_are_not() {
+        let dir = TempDir::new();
+        let (path, [projects, _, omatree, ..]) = saved_sample(&dir, "a.omatree");
+        let mut doc = Document::open_existing(&path).unwrap();
+        doc.set_expanded(projects, true);
+        doc.set_expanded(omatree, true);
+        doc.save().unwrap();
+        assert_eq!(
+            expanded_rows(&path),
+            [projects.get().to_string(), omatree.get().to_string()]
+        );
+        doc.set_expanded(omatree, false);
+        doc.save().unwrap();
+        assert_eq!(expanded_rows(&path), [projects.get().to_string()]);
+    }
+
+    #[test]
+    fn reopening_restores_the_saved_expansion() {
+        let dir = TempDir::new();
+        let (path, [projects, inbox, omatree, ..]) = saved_sample(&dir, "a.omatree");
+        let mut doc = Document::open_existing(&path).unwrap();
+        doc.set_expanded(projects, true);
+        doc.set_expanded(omatree, true);
+        doc.save().unwrap();
+        drop(doc);
+        let reopened = Document::open_existing(&path).unwrap();
+        assert!(reopened.is_expanded(projects) && reopened.is_expanded(omatree));
+        assert!(!reopened.is_expanded(inbox));
+        assert!(!reopened.view_dirty(), "just loaded");
+    }
+
+    #[test]
+    fn a_plain_save_with_only_expansion_changed_writes_it() {
+        let dir = TempDir::new();
+        let (path, [projects, ..]) = saved_sample(&dir, "a.omatree");
+        let mut doc = Document::open_existing(&path).unwrap();
+        assert!(!doc.is_dirty());
+        doc.set_expanded(projects, true);
+        assert!(!doc.is_dirty());
+        doc.save().unwrap();
+        assert_eq!(expanded_rows(&path), [projects.get().to_string()]);
+        assert!(!doc.view_dirty());
+    }
+
+    #[test]
+    fn a_clean_save_with_no_view_change_still_writes_nothing() {
+        let dir = TempDir::new();
+        let (path, _) = saved_sample(&dir, "a.omatree");
+        let mut doc = Document::open_existing(&path).unwrap();
+        install_write_guards(&path, &["nodes", "expanded_nodes", "notebook_meta"]);
+        doc.save().expect("nothing to write, so nothing is touched");
+    }
+
+    #[test]
+    fn a_content_save_carries_pending_expansion_along() {
+        let dir = TempDir::new();
+        let (path, [projects, _, omatree, ..]) = saved_sample(&dir, "a.omatree");
+        let mut doc = Document::open_existing(&path).unwrap();
+        doc.set_expanded(projects, true);
+        doc.set_body(omatree, "changed").unwrap();
+        install_write_guards(&path, &RECOVERY_TABLES);
+        doc.save().unwrap();
+        remove_write_guards(&path);
+        assert_eq!(expanded_rows(&path), [projects.get().to_string()]);
+        assert!(!doc.view_dirty() && !doc.is_dirty());
+    }
+
+    #[test]
+    fn a_failed_save_keeps_the_view_state_pending() {
+        let dir = TempDir::new();
+        let (path, [projects, ..]) = saved_sample(&dir, "a.omatree");
+        let mut doc = Document::open_existing(&path).unwrap();
+        doc.set_expanded(projects, true);
+        install_write_guards(&path, &["expanded_nodes"]);
+        assert!(doc.save().is_err());
+        assert!(doc.view_dirty());
+        remove_write_guards(&path);
+        assert!(expanded_rows(&path).is_empty(), "the old state is intact");
+        doc.save().unwrap();
+        assert_eq!(expanded_rows(&path), [projects.get().to_string()]);
+    }
+
+    #[test]
+    fn save_as_carries_the_expansion() {
+        let dir = TempDir::new();
+        let (mut doc, [projects, _, omatree, ..]) = sample();
+        doc.set_expanded(projects, true);
+        doc.set_expanded(omatree, true);
+        let copy = dir.join("copy.omatree");
+        doc.save_as(&copy, false).unwrap();
+        assert!(!doc.view_dirty());
+        let reopened = Document::open_existing(&copy).unwrap();
+        assert!(reopened.is_expanded(projects) && reopened.is_expanded(omatree));
+    }
+
+    #[test]
+    fn a_failed_save_as_leaves_the_view_state_pending() {
+        let dir = TempDir::new();
+        let (mut doc, [projects, ..]) = sample();
+        doc.set_expanded(projects, true);
+        let bad = dir.join("missing-dir").join("x.omatree");
+        assert!(doc.save_as(&bad, false).is_err());
+        assert!(doc.view_dirty());
+        assert!(doc.is_expanded(projects));
+    }
+
+    #[test]
+    fn each_document_has_its_own_expansion() {
+        let dir = TempDir::new();
+        let (a, [projects, ..]) = saved_sample(&dir, "a.omatree");
+        let (b, _) = saved_sample(&dir, "b.omatree");
+        let mut first = Document::open_existing(&a).unwrap();
+        first.set_expanded(projects, true);
+        first.save().unwrap();
+        let second = Document::open_existing(&b).unwrap();
+        assert!(!second.is_expanded(projects), "nothing leaks across files");
+        assert!(Document::untitled().expanded.is_empty());
+    }
+
+    #[test]
+    fn a_version_2_notebook_opens_collapsed_and_is_not_written() {
+        let dir = TempDir::new();
+        let (doc, [projects, ..]) = sample();
+        let path = dir.join("v2.omatree");
+        write_v2_from(&path, &doc);
+        let before = file_bytes(&path);
+        let opened = Document::open_existing(&path).unwrap();
+        assert!(!opened.is_expanded(projects));
+        assert!(opened.expanded.is_empty());
+        drop(opened);
+        assert_eq!(file_bytes(&path), before, "opening never rewrites a file");
+        assert_eq!(file_user_version(&path), 2);
+    }
+
+    #[test]
+    fn the_first_save_migrates_version_2_to_3() {
+        let dir = TempDir::new();
+        let (doc, [projects, ..]) = sample();
+        let path = dir.join("v2.omatree");
+        write_v2_from(&path, &doc);
+        let mut opened = Document::open_existing(&path).unwrap();
+        opened.save().unwrap();
+        assert_eq!(
+            file_user_version(&path),
+            2,
+            "nothing changed, nothing saved"
+        );
+        opened.set_expanded(projects, true);
+        opened.save().unwrap();
+        assert_eq!(file_user_version(&path), 3);
+        assert_eq!(expanded_rows(&path), [projects.get().to_string()]);
+        let again = Document::open_existing(&path).unwrap();
+        assert_eq!(again.notebook().roots().len(), 2);
+        assert!(again.is_expanded(projects));
+    }
+
+    #[test]
+    fn a_content_save_also_migrates_version_2() {
+        let dir = TempDir::new();
+        let (doc, [_, inbox, ..]) = sample();
+        let path = dir.join("v2.omatree");
+        write_v2_from(&path, &doc);
+        let mut opened = Document::open_existing(&path).unwrap();
+        opened.set_body(inbox, "x").unwrap();
+        opened.save().unwrap();
+        assert_eq!(file_user_version(&path), 3);
+    }
+
+    #[test]
+    fn a_failed_migration_leaves_the_version_2_file_untouched() {
+        let dir = TempDir::new();
+        let (doc, [projects, ..]) = sample();
+        let path = dir.join("v2.omatree");
+        write_v2_from(&path, &doc);
+        let before = file_bytes(&path);
+        let mut opened = Document::open_existing(&path).unwrap();
+        opened.set_expanded(projects, true);
+        install_write_guards(&path, &["notebook_meta"]);
+        let guarded = file_bytes(&path);
+        assert!(opened.save().is_err());
+        assert_eq!(file_user_version(&path), 2);
+        assert!(!table_exists(&path, "expanded_nodes"), "rolled back");
+        assert_eq!(file_bytes(&path), guarded);
+        remove_write_guards(&path);
+        assert_ne!(before.len(), 0);
+        assert!(opened.view_dirty());
+    }
+
+    #[test]
+    fn stored_ids_of_missing_notes_are_ignored() {
+        let dir = TempDir::new();
+        let (path, [projects, ..]) = saved_sample(&dir, "a.omatree");
+        // A foreign-key-free connection can leave a stray row behind.
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.pragma_update(None, "foreign_keys", false).unwrap();
+        conn.execute("INSERT INTO expanded_nodes VALUES (999)", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO expanded_nodes VALUES (?1)",
+            [projects.get() as i64],
+        )
+        .unwrap();
+        drop(conn);
+        let doc = Document::open_existing(&path).unwrap();
+        assert!(doc.is_expanded(projects));
+        assert!(!doc.is_expanded(NodeId::from_raw(999)));
+        assert_eq!(doc.expanded.len(), 1);
+    }
+
+    #[test]
+    fn stale_ids_are_dropped_when_saving() {
+        let dir = TempDir::new();
+        let (path, [projects, _, omatree, ..]) = saved_sample(&dir, "a.omatree");
+        let mut doc = Document::open_existing(&path).unwrap();
+        doc.set_expanded(projects, true);
+        doc.set_expanded(omatree, true);
+        doc.delete(omatree).unwrap();
+        assert!(
+            doc.is_expanded(omatree),
+            "kept for now, in case of a restore"
+        );
+        doc.save().unwrap();
+        assert_eq!(expanded_rows(&path), [projects.get().to_string()]);
+        assert!(!doc.is_expanded(omatree), "reconciled by the save");
+    }
+
+    #[test]
+    fn a_moved_note_keeps_its_expansion() {
+        let (mut doc, [projects, inbox, omatree, ..]) = sample();
+        doc.set_expanded(omatree, true);
+        doc.move_node(omatree, Some(inbox), 0).unwrap();
+        assert_eq!(
+            doc.notebook().get(omatree).unwrap().parent_id(),
+            Some(inbox)
+        );
+        assert!(doc.is_expanded(omatree));
+        let dir = TempDir::new();
+        let path = dir.join("m.omatree");
+        doc.save_as(&path, false).unwrap();
+        assert_eq!(expanded_rows(&path), [omatree.get().to_string()]);
+        assert!(!doc.is_expanded(projects));
+    }
+
+    #[test]
+    fn a_restored_note_regains_its_expansion_until_the_next_save() {
+        let (mut doc, [_, _, omatree, _, ideas]) = sample();
+        doc.set_expanded(omatree, true);
+        doc.delete(omatree).unwrap();
+        doc.restore_trash(0).unwrap();
+        assert!(doc.notebook().get(ideas).is_some());
+        assert!(doc.is_expanded(omatree));
+    }
+
+    #[test]
+    fn a_note_deleted_and_saved_is_forgotten() {
+        let dir = TempDir::new();
+        let (path, [_, _, omatree, ..]) = saved_sample(&dir, "a.omatree");
+        let mut doc = Document::open_existing(&path).unwrap();
+        doc.set_expanded(omatree, true);
+        doc.delete(omatree).unwrap();
+        doc.save().unwrap();
+        doc.restore_trash(0).unwrap();
+        assert!(!doc.is_expanded(omatree));
+    }
+
+    #[test]
+    fn restoring_a_checkpoint_keeps_expansion_only_for_notes_that_remain() {
+        let (mut doc, [projects, _, omatree, ..]) = sample();
+        doc.create_checkpoint("before");
+        let extra = doc.create_root("Extra").unwrap();
+        doc.create_child(extra, "Kid").unwrap();
+        doc.set_expanded(extra, true);
+        doc.set_expanded(projects, true);
+        doc.restore_checkpoint(0).unwrap();
+        assert!(doc.is_expanded(projects));
+        assert!(doc.notebook().get(extra).is_none());
+        assert_eq!(doc.valid_expanded().len(), 1);
+        assert!(!doc.is_expanded(omatree));
     }
 }
