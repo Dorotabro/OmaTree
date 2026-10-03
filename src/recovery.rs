@@ -208,6 +208,8 @@ pub enum RecoveryError {
     NoSuchEntry,
     /// Restoring would collide with an active node id.
     IdCollision,
+    /// A sibling at the destination already has the same title.
+    TitleConflict,
     /// The stored data cannot form a valid notebook.
     Invalid,
 }
@@ -216,6 +218,7 @@ impl From<NotebookError> for RecoveryError {
     fn from(e: NotebookError) -> Self {
         match e {
             NotebookError::IdCollision(_) => RecoveryError::IdCollision,
+            NotebookError::TitleConflict => RecoveryError::TitleConflict,
             _ => RecoveryError::Invalid,
         }
     }
@@ -234,6 +237,10 @@ impl RecoveryError {
             RecoveryError::NoSuchEntry => "That item is no longer available.",
             RecoveryError::IdCollision => {
                 "Some of these notes already exist in the notebook, so they were not restored."
+            }
+            RecoveryError::TitleConflict => {
+                "A note with the same name already exists where this would be restored. \
+                 Rename or move it first."
             }
             RecoveryError::Invalid => "That item could not be restored.",
         }
@@ -322,7 +329,7 @@ mod tests {
         assert_eq!(recovery.max_node_id(), None);
         recovery.push_trash(TrashEntry::new(0, vec![node(40, None, 0, "t")]).unwrap());
         let mut nb = Notebook::new();
-        nb.create_root("x");
+        nb.create_root("x").unwrap();
         recovery.add_checkpoint(Checkpoint::of(&nb, "c", 0));
         assert_eq!(recovery.max_node_id(), Some(40));
     }

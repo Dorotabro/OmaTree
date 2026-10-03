@@ -10,6 +10,8 @@ Item {
     required property ItemSelectionModel selection
 
     signal deleteRequested
+    // A rename was refused (for example, a sibling already has that name).
+    signal renameFailed(string message)
 
     readonly property bool hasNote: selection.currentIndex.valid
 
@@ -35,10 +37,15 @@ Item {
         const index = selection.currentIndex;
         const current = notebook.data(index, Qt.DisplayRole);
         const wanted = title.text.trim();
-        if (wanted === "" || wanted === current)
+        if (wanted === "" || wanted === current) {
             title.text = current;
-        else
-            notebook.rename(index, wanted);
+        } else {
+            const error = notebook.rename(index, wanted);
+            if (error !== "") {
+                title.text = current;
+                renameFailed(error);
+            }
+        }
     }
 
     Connections {

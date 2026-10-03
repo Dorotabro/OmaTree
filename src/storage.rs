@@ -602,8 +602,8 @@ mod tests {
     #[test]
     fn round_trips_multiple_roots() {
         let mut nb = Notebook::new();
-        nb.create_root("A");
-        nb.create_root("B");
+        nb.create_root("A").unwrap();
+        nb.create_root("B").unwrap();
         let loaded = round_trip(&nb);
         assert_eq!(titles(loaded.roots()), ["A", "B"]);
     }
@@ -611,7 +611,7 @@ mod tests {
     #[test]
     fn round_trips_nested_children() {
         let mut nb = Notebook::new();
-        let root = nb.create_root("Projects");
+        let root = nb.create_root("Projects").unwrap();
         let child = nb.create_child(root, "OmaTree").unwrap();
         let grandchild = nb.create_child(child, "Ideas").unwrap();
         let loaded = round_trip(&nb);
@@ -624,15 +624,15 @@ mod tests {
     #[test]
     fn preserves_root_and_child_ordering() {
         let mut nb = Notebook::new();
-        let first = nb.create_root("first");
-        let second = nb.create_root("second");
-        nb.create_root("third");
+        let first = nb.create_root("first").unwrap();
+        let second = nb.create_root("second").unwrap();
+        nb.create_root("third").unwrap();
         for t in ["x", "y", "z"] {
             nb.create_child(second, t).unwrap();
         }
         nb.create_child(first, "only").unwrap();
         // Deleting a middle sibling must not disturb the saved order.
-        let gone = nb.create_root("gone");
+        let gone = nb.create_root("gone").unwrap();
         nb.delete(gone).unwrap();
 
         let loaded = round_trip(&nb);
@@ -643,7 +643,7 @@ mod tests {
     #[test]
     fn preserves_titles_and_bodies() {
         let mut nb = Notebook::new();
-        let id = nb.create_root("Tïtle \u{1F333}");
+        let id = nb.create_root("Tïtle \u{1F333}").unwrap();
         nb.set_body(id, "line one\n\nline três 'quoted' \"too\"\n")
             .unwrap();
         let loaded = round_trip(&nb);
@@ -655,9 +655,9 @@ mod tests {
     #[test]
     fn preserves_node_ids() {
         let mut nb = Notebook::new();
-        let a = nb.create_root("a");
+        let a = nb.create_root("a").unwrap();
         let b = nb.create_child(a, "b").unwrap();
-        let c = nb.create_root("c");
+        let c = nb.create_root("c").unwrap();
         // Ids with gaps must survive unchanged.
         nb.delete(b).unwrap();
         let d = nb.create_child(a, "d").unwrap();
@@ -672,10 +672,10 @@ mod tests {
     #[test]
     fn new_node_after_reload_does_not_reuse_ids() {
         let mut nb = Notebook::new();
-        let a = nb.create_root("a");
-        let b = nb.create_root("b");
+        let a = nb.create_root("a").unwrap();
+        let b = nb.create_root("b").unwrap();
         let mut loaded = round_trip(&nb);
-        let c = loaded.create_root("c");
+        let c = loaded.create_root("c").unwrap();
         assert!(c > a && c > b);
         assert_eq!(loaded.get(a).unwrap().title(), "a");
     }
@@ -684,7 +684,7 @@ mod tests {
     fn reopens_existing_valid_database() {
         let db = TempDb::new();
         let mut nb = Notebook::new();
-        let root = nb.create_root("root");
+        let root = nb.create_root("root").unwrap();
         {
             let mut storage = Storage::create(db.path()).unwrap();
             storage.save(&nb).unwrap();
@@ -782,7 +782,7 @@ mod tests {
         let db = TempDb::new();
         let mut storage = Storage::create(db.path()).unwrap();
         let mut good = Notebook::new();
-        good.create_root("kept");
+        good.create_root("kept").unwrap();
         storage.save(&good).unwrap();
 
         // An id above i64::MAX cannot be stored; the save must roll back.
@@ -831,10 +831,10 @@ mod tests {
 
     fn sample_state() -> (Notebook, Recovery) {
         let mut nb = Notebook::new();
-        let projects = nb.create_root("Projects");
+        let projects = nb.create_root("Projects").unwrap();
         let ideas = nb.create_child(projects, "Ideas").unwrap();
         nb.set_body(ideas, "ideas \u{1F333} body").unwrap();
-        nb.create_root("Inbox");
+        nb.create_root("Inbox").unwrap();
         // Trash: a subtree whose original parent (id 50) is long gone.
         let trashed = TrashEntry::new(
             1_700_000_000,
@@ -914,7 +914,7 @@ mod tests {
         write_v1_file(db.path());
         let mut storage = Storage::open(db.path()).unwrap();
         let (mut nb, recovery) = storage.load_document().unwrap();
-        let fresh = nb.create_root("Added after opening");
+        let fresh = nb.create_root("Added after opening").unwrap();
         assert_eq!(fresh, NodeId::from_raw(10));
         storage.save_document(&nb, &recovery).unwrap();
         drop(storage);
@@ -1012,9 +1012,9 @@ mod tests {
     fn version_2_persists_the_id_counter_beyond_surviving_nodes() {
         let db = TempDb::new();
         let mut nb = Notebook::new();
-        nb.create_root("a");
-        nb.create_root("b");
-        let c = nb.create_root("c");
+        nb.create_root("a").unwrap();
+        nb.create_root("b").unwrap();
+        let c = nb.create_root("c").unwrap();
         nb.delete(c).unwrap(); // highest id is gone from the active tree
         assert_eq!(nb.next_id(), 3);
         Storage::create(db.path())
@@ -1024,7 +1024,7 @@ mod tests {
 
         let (mut loaded, _) = Storage::open(db.path()).unwrap().load_document().unwrap();
         assert_eq!(loaded.next_id(), 3);
-        assert_eq!(loaded.create_root("d"), NodeId::from_raw(3));
+        assert_eq!(loaded.create_root("d").unwrap(), NodeId::from_raw(3));
     }
 
     #[test]
@@ -1036,7 +1036,7 @@ mod tests {
             .save_document(&nb, &recovery)
             .unwrap();
         let (mut loaded, _) = Storage::open(db.path()).unwrap().load_document().unwrap();
-        assert!(loaded.create_root("new").get() > 70);
+        assert!(loaded.create_root("new").unwrap().get() > 70);
 
         // Even if the stored counter is lower than the ids in Trash.
         Connection::open(db.path())
@@ -1044,7 +1044,7 @@ mod tests {
             .execute("UPDATE notebook_meta SET next_node_id = 1", [])
             .unwrap();
         let (mut healed, _) = Storage::open(db.path()).unwrap().load_document().unwrap();
-        assert!(healed.create_root("new").get() > 70);
+        assert!(healed.create_root("new").unwrap().get() > 70);
     }
 
     #[test]
@@ -1058,7 +1058,7 @@ mod tests {
         // New active nodes and Trash would be fine; the checkpoint part
         // fails (id above i64::MAX) after they were already written.
         let mut changed = nb.clone();
-        changed.create_root("brand new");
+        changed.create_root("brand new").unwrap();
         let huge = Notebook::from_nodes(vec![Node::from_parts(
             NodeId::from_raw(u64::MAX - 5),
             None,
@@ -1146,8 +1146,8 @@ mod tests {
         let ids: Vec<NodeId> = nb.roots().iter().map(|n| n.id()).collect();
         nb.rename(ids[0], "Renamed").unwrap();
         nb.set_body(ids[1], "new body").unwrap();
-        let fresh = nb.create_root("Fresh");
-        let doomed = nb.create_root("Doomed");
+        let fresh = nb.create_root("Fresh").unwrap();
+        let doomed = nb.create_root("Doomed").unwrap();
         nb.delete(doomed).unwrap(); // the highest id is gone, the counter is not
         let counter = nb.next_id();
         assert!(counter > doomed.get());
@@ -1160,7 +1160,7 @@ mod tests {
         assert_eq!(loaded.snapshot_nodes(), nb.snapshot_nodes());
         assert_eq!(loaded.get(fresh).unwrap().title(), "Fresh");
         assert_eq!(loaded.next_id(), counter);
-        assert!(loaded.create_root("next").get() >= counter);
+        assert!(loaded.create_root("next").unwrap().get() >= counter);
         let stored: i64 = Connection::open(db.path())
             .unwrap()
             .query_row("SELECT next_node_id FROM notebook_meta", [], |r| r.get(0))
@@ -1179,7 +1179,7 @@ mod tests {
         let (mut loaded, loaded_recovery) =
             Storage::open(db.path()).unwrap().load_document().unwrap();
         assert!(loaded.next_id() >= 71);
-        assert!(loaded.create_root("x").get() > 70);
+        assert!(loaded.create_root("x").unwrap().get() > 70);
         assert_eq!(loaded_recovery.trash(), recovery.trash());
     }
 
@@ -1192,7 +1192,7 @@ mod tests {
         assert!(before.iter().all(|rows| !rows.is_empty()));
         install_write_guards(db.path(), &RECOVERY_TABLES);
 
-        nb.create_root("one more");
+        nb.create_root("one more").unwrap();
         let mut storage = Storage::open(db.path()).unwrap();
         storage
             .save_active(&nb)
@@ -1233,7 +1233,7 @@ mod tests {
         let before = std::fs::read(db.path()).unwrap();
 
         let mut changed = nb.clone();
-        changed.create_root("never saved");
+        changed.create_root("never saved").unwrap();
         let mut storage = Storage::open(db.path()).unwrap();
         assert!(storage.save_active(&changed).is_err());
         drop(storage);

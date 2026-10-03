@@ -43,8 +43,6 @@ ApplicationWindow {
         }
     }
 
-    readonly property string defaultTitle: qsTr("New note")
-
     // Set once the user has chosen to throw away unsaved changes on close.
     property bool discardOnClose: false
 
@@ -64,7 +62,18 @@ ApplicationWindow {
             const error = notebook.openPath(args[0]);
             if (error !== "")
                 showError(error);
+            else
+                warnAboutDuplicateTitles();
         }
+    }
+
+    // Notebooks written before sibling names had to be unique may contain
+    // duplicates. Nothing is changed for the user; they are told once, right
+    // after a notebook is opened or an old checkpoint or Trash entry is
+    // restored, and not again while they edit.
+    function warnAboutDuplicateTitles() {
+        if (notebook.titleConflictCount() > 0)
+            showError(qsTr("This notebook contains duplicate note names under the same parent.\nNothing was changed. Rename the duplicates to resolve them.\nOmaTree will prevent new duplicates."));
     }
 
     // An explicit save (Ctrl+S, the Save button of a dialog): a failure is
@@ -223,7 +232,7 @@ ApplicationWindow {
     }
 
     function createRoot() {
-        const index = notebook.createRoot(defaultTitle);
+        const index = notebook.createDefaultRoot();
         select(index);
         editorPane.focusTitle();
     }
@@ -231,7 +240,7 @@ ApplicationWindow {
     function createChild() {
         if (!selection.currentIndex.valid)
             return;
-        const index = notebook.createChild(selection.currentIndex, defaultTitle);
+        const index = notebook.createDefaultChild(selection.currentIndex);
         if (!index.valid)
             return;
         select(index);
@@ -329,6 +338,7 @@ ApplicationWindow {
             notebook: notebook
             selection: selection
             onDeleteRequested: confirmDelete.askAboutSelection()
+            onRenameFailed: message => root.showError(message)
         }
     }
 
@@ -463,6 +473,7 @@ ApplicationWindow {
             } else {
                 autosaveTimer.stop();
                 root.autosaveFailureShown = false;
+                root.warnAboutDuplicateTitles();
             }
         }
         onRejected: root.resumeAutosave()
@@ -498,6 +509,7 @@ ApplicationWindow {
 
         notebook: notebook
         onFailed: message => root.showError(message)
+        onRestored: root.warnAboutDuplicateTitles()
     }
 
     Dialog {

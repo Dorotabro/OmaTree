@@ -5,7 +5,7 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::notebook::{MovePlan, NodeId, Notebook, NotebookError};
+use crate::notebook::{MovePlan, NodeId, Notebook, NotebookError, DEFAULT_TITLE};
 use crate::recovery::{unix_now, Checkpoint, Recovery, RecoveryError, TrashEntry};
 use crate::storage::{Storage, StorageError};
 
@@ -277,9 +277,25 @@ impl Document {
     // actually changed something. Ordinary edits dirty only the active
     // state; structural operations (below) dirty the recovery state too.
 
-    pub fn create_root(&mut self, title: &str) -> NodeId {
+    pub fn create_root(&mut self, title: &str) -> Result<NodeId, NotebookError> {
+        let id = self.notebook.create_root(title)?;
         self.active_dirty = true;
-        self.notebook.create_root(title)
+        Ok(id)
+    }
+
+    /// A new top-level note named "New note", "New note 2", ... whichever is
+    /// the first free among the top-level notes.
+    pub fn create_default_root(&mut self) -> Result<NodeId, NotebookError> {
+        let title = self.notebook.unique_default_title(None, DEFAULT_TITLE);
+        self.create_root(&title)
+    }
+
+    /// Like `create_default_root`, under `parent`.
+    pub fn create_default_child(&mut self, parent: NodeId) -> Result<NodeId, NotebookError> {
+        let title = self
+            .notebook
+            .unique_default_title(Some(parent), DEFAULT_TITLE);
+        self.create_child(parent, &title)
     }
 
     pub fn create_child(&mut self, parent: NodeId, title: &str) -> Result<NodeId, NotebookError> {
@@ -288,9 +304,13 @@ impl Document {
         Ok(id)
     }
 
-    /// Returns whether the title actually changed.
+    /// Returns whether the title actually changed. An empty title, or one
+    /// equivalent to another sibling's, is refused and nothing changes.
     pub fn rename(&mut self, id: NodeId, title: &str) -> Result<bool, NotebookError> {
-        let unchanged = self.notebook.get(id).is_some_and(|n| n.title() == title);
+        let unchanged = self
+            .notebook
+            .get(id)
+            .is_some_and(|n| n.title() == title.trim());
         self.notebook.rename(id, title)?;
         self.active_dirty |= !unchanged;
         Ok(!unchanged)
@@ -507,7 +527,7 @@ mod tests {
     fn saving_untitled_fails_without_creating_a_file() {
         let before = cwd_entries();
         let mut doc = Document::untitled();
-        doc.create_root("a");
+        doc.create_root("a").unwrap();
         assert!(matches!(doc.save(), Err(DocumentError::NoPath)));
         assert!(doc.is_dirty());
         assert_eq!(before, cwd_entries());
@@ -532,8 +552,8 @@ mod tests {
     fn save_and_reopen_preserves_the_notebook() {
         let file = TempFile::new();
         let mut doc = Document::open(file.path()).unwrap();
-        let projects = doc.create_root("Projects");
-        let inbox = doc.create_root("Inbox");
+        let projects = doc.create_root("Projects").unwrap();
+        let inbox = doc.create_root("Inbox").unwrap();
         let omatree = doc.create_child(projects, "OmaTree").unwrap();
         let ideas = doc.create_child(omatree, "Ideas").unwrap();
         doc.create_child(projects, "Second").unwrap();
@@ -551,7 +571,7 @@ mod tests {
         assert_eq!(nb.get(ideas).unwrap().body(), "line 1\nline 2");
         assert_eq!(nb.get(inbox).unwrap().body(), "inbox body");
         // New ids continue after the loaded ones.
-        let fresh = doc.create_root("new");
+        let fresh = doc.create_root("new").unwrap();
         assert!(fresh > inbox && fresh > ideas);
     }
 
@@ -561,7 +581,7 @@ mod tests {
         let mut doc = Document::open(file.path()).unwrap();
         assert!(!doc.is_dirty());
 
-        let a = doc.create_root("a");
+        let a = doc.create_root("a").unwrap();
         assert!(doc.is_dirty());
         doc.save().unwrap();
         assert!(!doc.is_dirty());
@@ -585,12 +605,12 @@ mod tests {
     #[test]
     fn rename_and_set_body_report_whether_anything_changed() {
         let mut doc = Document::untitled();
-        let a = doc.create_root("a");
+        let a = doc.create_root("a").unwrap();
         assert!(doc.rename(a, "b").unwrap());
         assert!(!doc.rename(a, "b").unwrap(), "same title");
         assert!(doc.set_body(a, "text").unwrap());
         assert!(!doc.set_body(a, "text").unwrap(), "same body");
-        let gone = doc.create_root("gone");
+        let gone = doc.create_root("gone").unwrap();
         doc.delete(gone).unwrap();
         assert!(doc.rename(gone, "x").is_err());
         assert!(doc.set_body(gone, "x").is_err());
@@ -600,12 +620,12 @@ mod tests {
     fn failed_or_noop_mutations_do_not_mark_dirty() {
         let file = TempFile::new();
         let mut doc = Document::open(file.path()).unwrap();
-        let a = doc.create_root("a");
+        let a = doc.create_root("a").unwrap();
         doc.set_body(a, "same").unwrap();
         doc.save().unwrap();
 
         let missing = {
-            let gone = doc.create_root("gone");
+            let gone = doc.create_root("gone").unwrap();
             doc.delete(gone).unwrap();
             doc.save().unwrap();
             gone
@@ -629,7 +649,7 @@ mod tests {
         let file = TempFile::new();
         {
             let mut doc = Document::open(file.path()).unwrap();
-            doc.create_root("kept");
+            doc.create_root("kept").unwrap();
             doc.save().unwrap();
         }
         std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o444)).unwrap();
@@ -643,7 +663,7 @@ mod tests {
         }
 
         let mut doc = Document::open(file.path()).unwrap();
-        doc.create_root("unsaved");
+        doc.create_root("unsaved").unwrap();
         assert!(doc.save().is_err());
         assert!(doc.is_dirty());
         drop(doc);
@@ -747,7 +767,7 @@ mod tests {
         let dir = TempDir::new();
         let target = dir.join("first.omatree");
         let mut doc = Document::untitled();
-        let a = doc.create_root("Projects");
+        let a = doc.create_root("Projects").unwrap();
         let child = doc.create_child(a, "Child").unwrap();
         doc.set_body(child, "child body").unwrap();
         assert!(doc.is_dirty());
@@ -769,7 +789,7 @@ mod tests {
         let dir = TempDir::new();
         let original = dir.join("orig.omatree");
         let mut doc = Document::open(&original).unwrap();
-        doc.create_root("unsaved");
+        doc.create_root("unsaved").unwrap();
 
         // The target's directory does not exist, so creation fails.
         let bad = dir.join("no-such-dir").join("x.omatree");
@@ -785,7 +805,7 @@ mod tests {
 
         // Untitled stays untitled after a failed Save As.
         let mut untitled = Document::untitled();
-        untitled.create_root("x");
+        untitled.create_root("x").unwrap();
         assert!(untitled.save_as(&bad, false).is_err());
         assert!(!untitled.has_path());
         assert!(untitled.is_dirty());
@@ -797,11 +817,11 @@ mod tests {
         let first = dir.join("first.omatree");
         let second = dir.join("second.omatree");
         let mut doc = Document::open(&first).unwrap();
-        doc.create_root("one");
+        doc.create_root("one").unwrap();
         doc.save().unwrap();
         let before = std::fs::read(&first).unwrap();
 
-        doc.create_root("two");
+        doc.create_root("two").unwrap();
         doc.save_as(&second, false).unwrap();
         assert!(doc.is_current_path(&second));
         assert_eq!(std::fs::read(&first).unwrap(), before);
@@ -809,7 +829,7 @@ mod tests {
         assert_eq!(stored_titles(&second), ["one", "two"]);
 
         // Later saves go to the new file only.
-        doc.create_root("three");
+        doc.create_root("three").unwrap();
         doc.save().unwrap();
         assert_eq!(stored_titles(&first), ["one"]);
         assert_eq!(stored_titles(&second), ["one", "two", "three"]);
@@ -820,7 +840,7 @@ mod tests {
         let dir = TempDir::new();
         let path = dir.join("same.omatree");
         let mut doc = Document::open(&path).unwrap();
-        doc.create_root("kept");
+        doc.create_root("kept").unwrap();
         assert!(!doc.save_as_needs_confirmation(&path));
         // No overwrite flag needed, and a different spelling of the same file works too.
         let respelled = dir.join(".").join("same.omatree");
@@ -836,13 +856,13 @@ mod tests {
         let target = dir.join("target.omatree");
         {
             let mut other = Document::open(&target).unwrap();
-            other.create_root("old content");
+            other.create_root("old content").unwrap();
             other.save().unwrap();
         }
         let before = std::fs::read(&target).unwrap();
 
         let mut doc = Document::untitled();
-        doc.create_root("new content");
+        doc.create_root("new content").unwrap();
         assert!(doc.save_as_needs_confirmation(&target));
         assert!(matches!(
             doc.save_as(&target, false),
@@ -866,7 +886,7 @@ mod tests {
         let target = dir.join("locked.omatree");
         {
             let mut other = Document::open(&target).unwrap();
-            other.create_root("precious");
+            other.create_root("precious").unwrap();
             other.save().unwrap();
         }
         std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o444)).unwrap();
@@ -880,7 +900,7 @@ mod tests {
         let before = std::fs::read(&target).unwrap();
 
         let mut doc = Document::untitled();
-        doc.create_root("replacement");
+        doc.create_root("replacement").unwrap();
         assert!(doc.save_as(&target, true).is_err());
         assert!(doc.is_dirty() && !doc.has_path());
         assert_eq!(std::fs::read(&target).unwrap(), before);
@@ -906,7 +926,7 @@ mod tests {
         let future_bytes = std::fs::read(&future).unwrap();
 
         let mut doc = Document::untitled();
-        doc.create_root("mine");
+        doc.create_root("mine").unwrap();
         for (target, expected) in [
             (&text, junk.clone()),
             (&empty, Vec::new()),
@@ -971,8 +991,8 @@ mod tests {
     /// Inbox
     fn sample() -> (Document, [NodeId; 5]) {
         let mut doc = Document::untitled();
-        let projects = doc.create_root("Projects");
-        let inbox = doc.create_root("Inbox");
+        let projects = doc.create_root("Projects").unwrap();
+        let inbox = doc.create_root("Inbox").unwrap();
         let omatree = doc.create_child(projects, "OmaTree").unwrap();
         let threat = doc.create_child(projects, "Threatwright").unwrap();
         let ideas = doc.create_child(omatree, "Ideas").unwrap();
@@ -1061,7 +1081,7 @@ mod tests {
     #[test]
     fn restore_uses_the_original_parent_and_position() {
         let mut doc = Document::untitled();
-        let parent = doc.create_root("P");
+        let parent = doc.create_root("P").unwrap();
         let a = doc.create_child(parent, "a").unwrap();
         let b = doc.create_child(parent, "b").unwrap();
         let c = doc.create_child(parent, "c").unwrap();
@@ -1084,12 +1104,12 @@ mod tests {
     #[test]
     fn restore_falls_back_to_the_end_of_the_roots_if_the_parent_is_gone() {
         let mut doc = Document::untitled();
-        let parent = doc.create_root("P");
-        doc.create_root("other");
+        let parent = doc.create_root("P").unwrap();
+        doc.create_root("other").unwrap();
         let child = doc.create_child(parent, "child").unwrap();
         doc.delete(child).unwrap();
         doc.delete(parent).unwrap(); // its subtree no longer contains `child`
-        doc.create_root("later");
+        doc.create_root("later").unwrap();
         // Newest Trash entry is P; restore the older one (the child).
         let index = doc
             .recovery()
@@ -1106,7 +1126,7 @@ mod tests {
     #[test]
     fn restore_clamps_an_unavailable_sibling_position() {
         let mut doc = Document::untitled();
-        let parent = doc.create_root("P");
+        let parent = doc.create_root("P").unwrap();
         let a = doc.create_child(parent, "a").unwrap();
         let b = doc.create_child(parent, "b").unwrap();
         let c = doc.create_child(parent, "c").unwrap();
@@ -1129,9 +1149,9 @@ mod tests {
     #[test]
     fn a_deleted_root_returns_to_its_original_place_among_the_roots() {
         let mut doc = Document::untitled();
-        doc.create_root("first");
-        let middle = doc.create_root("middle");
-        doc.create_root("last");
+        doc.create_root("first").unwrap();
+        let middle = doc.create_root("middle").unwrap();
+        doc.create_root("last").unwrap();
         doc.delete(middle).unwrap();
         assert_eq!(doc.plan_trash_restore(0).unwrap(), (None, 1));
         doc.restore_trash(0).unwrap();
@@ -1179,14 +1199,14 @@ mod tests {
         let dir = TempDir::new();
         let path = dir.join("ids.omatree");
         let mut doc = Document::open(&path).unwrap();
-        let a = doc.create_root("a");
-        let b = doc.create_root("b");
+        let a = doc.create_root("a").unwrap();
+        let b = doc.create_root("b").unwrap();
         doc.delete(b).unwrap(); // the highest id now lives only in Trash
         doc.save().unwrap();
         drop(doc);
 
         let mut doc = Document::open_existing(&path).unwrap();
-        let c = doc.create_root("c");
+        let c = doc.create_root("c").unwrap();
         assert!(c > b && c > a, "{c:?} must be above {b:?}");
         doc.save().unwrap();
         drop(doc);
@@ -1266,7 +1286,7 @@ mod tests {
         doc.set_body(projects, "typing, typing, typing").unwrap();
         doc.set_body(projects, "more typing").unwrap();
         doc.rename(omatree, "OmaTree 2").unwrap();
-        doc.create_root("another");
+        doc.create_root("another").unwrap();
         assert!(doc.recovery().checkpoints().is_empty());
         assert!(doc.recovery().trash().is_empty());
     }
@@ -1385,11 +1405,11 @@ mod tests {
     fn file_with_recovery_history(dir: &TempDir, name: &str) -> PathBuf {
         let path = dir.join(name);
         let mut doc = Document::open(&path).unwrap();
-        let projects = doc.create_root("Projects");
+        let projects = doc.create_root("Projects").unwrap();
         doc.create_child(projects, "Child").unwrap();
-        doc.create_root("Inbox");
+        doc.create_root("Inbox").unwrap();
         doc.delete(projects).unwrap();
-        let note = doc.create_root("Note");
+        let note = doc.create_root("Note").unwrap();
         doc.set_body(note, "body").unwrap();
         doc.save().unwrap();
         assert_eq!(doc.dirty_domains(), (false, false));
@@ -1417,7 +1437,7 @@ mod tests {
         assert_eq!(doc.dirty_domains(), (true, false), "rename");
 
         doc.save_as_dirty_reset_for_test();
-        doc.create_root("another");
+        doc.create_root("another").unwrap();
         assert_eq!(doc.dirty_domains(), (true, false), "create root");
 
         doc.save_as_dirty_reset_for_test();
@@ -1482,7 +1502,7 @@ mod tests {
         let root = doc.notebook().roots()[0].id();
         doc.set_body(root, "edited body").unwrap();
         doc.rename(root, "Renamed").unwrap();
-        let fresh = doc.create_root("Fresh");
+        let fresh = doc.create_root("Fresh").unwrap();
         doc.create_child(fresh, "Fresh child").unwrap();
         assert_eq!(doc.dirty_domains(), (true, false));
 
@@ -1517,7 +1537,7 @@ mod tests {
 
         let mut doc = Document::open_existing(&path).unwrap();
         for i in 0..6 {
-            doc.create_root(&format!("n{i}"));
+            doc.create_root(&format!("n{i}")).unwrap();
             doc.save().unwrap();
             let root = doc.notebook().roots()[0].id();
             doc.set_body(root, &format!("edit {i}")).unwrap();
@@ -1605,7 +1625,7 @@ mod tests {
         };
 
         let mut doc = Document::open_existing(&path).unwrap();
-        doc.create_root("will not stick");
+        doc.create_root("will not stick").unwrap();
         assert_eq!(doc.dirty_domains(), (true, false));
         assert!(doc.save().is_err());
         assert_eq!(
@@ -1770,17 +1790,17 @@ mod tests {
         let dir = TempDir::new();
         let path = dir.join("ids.omatree");
         let mut doc = Document::open(&path).unwrap();
-        let a = doc.create_root("a");
-        let b = doc.create_root("b");
+        let a = doc.create_root("a").unwrap();
+        let b = doc.create_root("b").unwrap();
         doc.delete(b).unwrap(); // highest id now only in Trash
         doc.save().unwrap(); // full
-        let c = doc.create_root("c");
+        let c = doc.create_root("c").unwrap();
         doc.save().unwrap(); // active-only
         assert!(c > b && c > a);
         drop(doc);
 
         let mut doc = Document::open_existing(&path).unwrap();
-        let d = doc.create_root("d");
+        let d = doc.create_root("d").unwrap();
         assert!(d > c, "{d:?} must be above {c:?}");
         doc.save().unwrap();
         drop(doc);
@@ -1817,7 +1837,7 @@ mod tests {
         // failures: cycle, missing node, missing parent
         assert!(doc.move_node(projects, Some(ideas), 0).is_err());
         assert!(doc.move_node(projects, Some(projects), 0).is_err());
-        let gone = doc.create_root("gone");
+        let gone = doc.create_root("gone").unwrap();
         doc.delete(gone).unwrap();
         doc.save_as_dirty_reset_for_test();
         let checkpoints = doc.recovery().checkpoints().len();
@@ -1910,5 +1930,276 @@ mod tests {
             Some(omatree)
         );
         assert_eq!(doc.notebook().get(threat).unwrap().parent_id(), Some(inbox));
+    }
+
+    // ---- sibling title uniqueness ----
+
+    /// A saved-looking version 2 file as an older OmaTree could have left it:
+    /// roots "Ideas" and "ideas " and, under the first, children "x" and "X".
+    fn write_legacy_file(path: &Path) {
+        Storage::create(path).unwrap();
+        let conn = rusqlite::Connection::open(path).unwrap();
+        conn.execute_batch(
+            "INSERT INTO nodes VALUES (0, NULL, 0, 'Ideas', 'first body');
+             INSERT INTO nodes VALUES (1, NULL, 1, 'ideas ', 'second body');
+             INSERT INTO nodes VALUES (2, 0, 0, 'x', '');
+             INSERT INTO nodes VALUES (3, 0, 1, 'X', '');",
+        )
+        .unwrap();
+    }
+
+    fn legacy_node(id: u64, parent: Option<u64>, pos: usize, title: &str) -> crate::notebook::Node {
+        crate::notebook::Node::from_parts(
+            NodeId::from_raw(id),
+            parent.map(NodeId::from_raw),
+            pos,
+            title.to_string(),
+            String::new(),
+        )
+    }
+
+    #[test]
+    fn new_notes_get_unique_default_names_independently_per_parent() {
+        let mut doc = Document::untitled();
+        let names: Vec<String> = (0..3)
+            .map(|_| {
+                let id = doc.create_default_root().unwrap();
+                doc.notebook().get(id).unwrap().title().to_string()
+            })
+            .collect();
+        assert_eq!(names, ["New note", "New note 2", "New note 3"]);
+        let parent = doc.notebook().roots()[0].id();
+        let first = doc.create_default_child(parent).unwrap();
+        let second = doc.create_default_child(parent).unwrap();
+        assert_eq!(doc.notebook().get(first).unwrap().title(), "New note");
+        assert_eq!(doc.notebook().get(second).unwrap().title(), "New note 2");
+        assert_eq!(doc.dirty_domains(), (true, false));
+    }
+
+    #[test]
+    fn a_refused_rename_changes_nothing_at_all() {
+        let (mut doc, [projects, inbox, ..]) = clean_sample();
+        assert_eq!(
+            doc.rename(inbox, "projects"),
+            Err(NotebookError::TitleConflict)
+        );
+        assert_eq!(doc.rename(inbox, "   "), Err(NotebookError::EmptyTitle));
+        assert_eq!(doc.notebook().get(inbox).unwrap().title(), "Inbox");
+        assert_eq!(doc.dirty_domains(), (false, false));
+        assert!(doc.recovery().checkpoints().is_empty());
+        let _ = projects;
+        // A case-only rename of the same note is a real change.
+        assert!(doc.rename(inbox, "INBOX").unwrap());
+        assert_eq!(doc.dirty_domains(), (true, false));
+    }
+
+    #[test]
+    fn a_title_collision_move_is_refused_before_any_checkpoint_or_dirty_state() {
+        let mut doc = Document::untitled();
+        let projects = doc.create_root("Projects").unwrap();
+        let archive = doc.create_root("Archive").unwrap();
+        let ideas = doc.create_child(projects, "Ideas").unwrap();
+        doc.create_child(archive, "ideas").unwrap();
+        doc.save_as_dirty_reset_for_test();
+        let before = doc.notebook().snapshot_nodes();
+
+        assert_eq!(
+            doc.move_node(ideas, Some(archive), 0),
+            Err(NotebookError::TitleConflict)
+        );
+        assert_eq!(
+            doc.plan_move(ideas, Some(archive), 0),
+            Err(NotebookError::TitleConflict)
+        );
+        assert!(doc.recovery().checkpoints().is_empty(), "no checkpoint");
+        assert_eq!(doc.dirty_domains(), (false, false), "no dirty state");
+        assert_eq!(doc.notebook().snapshot_nodes(), before, "tree unchanged");
+        // Reordering inside the parent is still fine.
+        assert!(doc.move_node(ideas, Some(projects), 0).is_ok());
+    }
+
+    #[test]
+    fn trash_restore_into_a_collision_is_refused_and_changes_nothing() {
+        let mut doc = Document::untitled();
+        let projects = doc.create_root("Projects").unwrap();
+        let ideas = doc.create_child(projects, "Ideas").unwrap();
+        doc.delete(ideas).unwrap();
+        doc.create_child(projects, "ideas").unwrap(); // took the name meanwhile
+        doc.save_as_dirty_reset_for_test();
+        let (checkpoints, notebook) = (
+            doc.recovery().checkpoints().len(),
+            doc.notebook().snapshot_nodes(),
+        );
+
+        assert_eq!(doc.plan_trash_restore(0), Err(RecoveryError::TitleConflict));
+        assert_eq!(doc.restore_trash(0), Err(RecoveryError::TitleConflict));
+        assert_eq!(doc.recovery().trash().len(), 1, "the entry stays in Trash");
+        assert_eq!(
+            doc.recovery().checkpoints().len(),
+            checkpoints,
+            "no checkpoint"
+        );
+        assert_eq!(doc.dirty_domains(), (false, false));
+        assert_eq!(doc.notebook().snapshot_nodes(), notebook);
+        assert!(!RecoveryError::TitleConflict.message().is_empty());
+    }
+
+    #[test]
+    fn the_root_fallback_of_a_trash_restore_is_checked_against_the_roots() {
+        let mut doc = Document::untitled();
+        let parent = doc.create_root("P").unwrap();
+        let child = doc.create_child(parent, "Notes").unwrap();
+        doc.delete(child).unwrap();
+        doc.delete(parent).unwrap(); // the child's old parent is gone too
+        doc.create_root("notes").unwrap();
+        doc.save_as_dirty_reset_for_test();
+        let index = doc
+            .recovery()
+            .trash()
+            .iter()
+            .position(|e| e.title() == "Notes")
+            .unwrap();
+        assert_eq!(
+            doc.plan_trash_restore(index),
+            Err(RecoveryError::TitleConflict)
+        );
+        assert_eq!(doc.restore_trash(index), Err(RecoveryError::TitleConflict));
+        assert_eq!(doc.recovery().trash().len(), 2);
+        assert_eq!(doc.dirty_domains(), (false, false));
+    }
+
+    #[test]
+    fn a_legacy_trash_subtree_with_internal_duplicates_is_still_recoverable() {
+        let mut doc = Document::untitled();
+        let entry = TrashEntry::new(
+            1,
+            vec![
+                legacy_node(10, None, 0, "Old"),
+                legacy_node(11, Some(10), 0, "dup"),
+                legacy_node(12, Some(10), 1, "DUP"),
+            ],
+        )
+        .unwrap();
+        doc.recovery = Recovery::from_parts(vec![entry], vec![]);
+        assert_eq!(doc.notebook().sibling_title_conflicts(), 0);
+        doc.restore_trash(0).unwrap();
+        // Restored exactly as stored; the conflict is reported, not repaired.
+        assert_eq!(
+            titles(doc.notebook(), Some(NodeId::from_raw(10))),
+            ["dup", "DUP"]
+        );
+        assert_eq!(doc.notebook().sibling_title_conflicts(), 1);
+    }
+
+    #[test]
+    fn a_legacy_checkpoint_restores_exactly_and_its_conflicts_are_detected() {
+        let mut doc = Document::untitled();
+        doc.create_root("current").unwrap();
+        let legacy = vec![
+            legacy_node(0, None, 0, "Same"),
+            legacy_node(1, None, 1, "same"),
+            legacy_node(2, Some(0), 0, "a"),
+            legacy_node(3, Some(0), 1, " a "),
+        ];
+        let checkpoint =
+            Checkpoint::from_stored(5, "From an old version".into(), legacy.clone()).unwrap();
+        doc.recovery = Recovery::from_parts(vec![], vec![checkpoint]);
+        assert_eq!(doc.notebook().sibling_title_conflicts(), 0);
+
+        doc.restore_checkpoint(0)
+            .expect("recovery must not be blocked by the new rule");
+        assert_eq!(sorted(doc.notebook().snapshot_nodes()), sorted(legacy));
+        assert_eq!(doc.notebook().sibling_title_conflicts(), 2);
+        assert_eq!(doc.dirty_domains(), (true, true));
+        // The state it replaced was checkpointed as usual.
+        assert_eq!(doc.recovery().checkpoints().len(), 2);
+    }
+
+    #[test]
+    fn a_legacy_file_opens_without_being_touched_and_its_conflicts_are_counted() {
+        let dir = TempDir::new();
+        let path = dir.join("legacy.omatree");
+        write_legacy_file(&path);
+        let before = std::fs::read(&path).unwrap();
+
+        let doc = Document::open_existing(&path).unwrap();
+        assert_eq!(doc.notebook().sibling_title_conflicts(), 2);
+        assert_eq!(titles(doc.notebook(), None), ["Ideas", "ideas "]);
+        assert!(!doc.is_dirty());
+        drop(doc);
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "opening writes nothing"
+        );
+
+        let clean = file_with_recovery_history(&dir, "clean.omatree");
+        let doc = Document::open_existing(&clean).unwrap();
+        assert_eq!(doc.notebook().sibling_title_conflicts(), 0);
+    }
+
+    #[test]
+    fn saving_and_reopening_legacy_data_never_renames_it() {
+        let dir = TempDir::new();
+        let path = dir.join("legacy.omatree");
+        write_legacy_file(&path);
+        let mut doc = Document::open_existing(&path).unwrap();
+        doc.set_body(NodeId::from_raw(0), "edited").unwrap();
+        doc.save().unwrap();
+        drop(doc);
+
+        let doc = Document::open_existing(&path).unwrap();
+        assert_eq!(titles(doc.notebook(), None), ["Ideas", "ideas "]);
+        assert_eq!(
+            titles(doc.notebook(), Some(NodeId::from_raw(0))),
+            ["x", "X"]
+        );
+        assert_eq!(
+            doc.notebook().get(NodeId::from_raw(0)).unwrap().body(),
+            "edited"
+        );
+        assert_eq!(doc.notebook().sibling_title_conflicts(), 2);
+    }
+
+    #[test]
+    fn legacy_conflicts_can_be_repaired_by_rename_delete_and_move() {
+        let dir = TempDir::new();
+        let path = dir.join("legacy.omatree");
+        write_legacy_file(&path);
+        let mut doc = Document::open_existing(&path).unwrap();
+        // rename one root, move one child to the (childless) other root, then
+        // nothing is left in conflict.
+        doc.rename(NodeId::from_raw(1), "Renamed").unwrap();
+        assert_eq!(doc.notebook().sibling_title_conflicts(), 1);
+        assert!(doc
+            .move_node(NodeId::from_raw(3), Some(NodeId::from_raw(1)), 0)
+            .unwrap());
+        assert_eq!(doc.notebook().sibling_title_conflicts(), 0);
+
+        // Deleting is the third way out.
+        let mut other = Document::open_existing(&path).unwrap();
+        other.delete(NodeId::from_raw(3)).unwrap();
+        other.rename(NodeId::from_raw(1), "Other").unwrap();
+        assert_eq!(other.notebook().sibling_title_conflicts(), 0);
+    }
+
+    #[test]
+    fn new_duplicates_stay_blocked_after_loading_a_legacy_file() {
+        let dir = TempDir::new();
+        let path = dir.join("legacy.omatree");
+        write_legacy_file(&path);
+        let mut doc = Document::open_existing(&path).unwrap();
+        assert_eq!(doc.create_root("IDEAS"), Err(NotebookError::TitleConflict));
+        assert_eq!(
+            doc.create_child(NodeId::from_raw(0), " x "),
+            Err(NotebookError::TitleConflict)
+        );
+        assert_eq!(
+            doc.rename(NodeId::from_raw(1), "ideas"),
+            Err(NotebookError::TitleConflict)
+        );
+        assert_eq!(doc.dirty_domains(), (false, false));
+        let id = doc.create_default_root().unwrap();
+        assert_eq!(doc.notebook().get(id).unwrap().title(), "New note");
     }
 }

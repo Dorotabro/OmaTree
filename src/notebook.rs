@@ -70,6 +70,16 @@ impl Node {
     }
 }
 
+/// The title the UI gives a new note before the user renames it.
+pub(crate) const DEFAULT_TITLE: &str = "New note";
+
+/// The form titles are compared in: surrounding whitespace removed and
+/// lowercased with the standard library's Unicode-aware conversion. Internal
+/// whitespace is kept, so "A  b" and "A b" are different titles.
+pub(crate) fn normalize_title(title: &str) -> String {
+    title.trim().to_lowercase()
+}
+
 /// A validated, non-trivial move: where the node is now and where it ends up.
 /// Positions are final sibling indexes, never Qt destination rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +99,10 @@ pub enum NotebookError {
     IdCollision(NodeId),
     /// A move would put a node beneath itself or one of its descendants.
     WouldCreateCycle,
+    /// The title is empty once surrounding whitespace is trimmed.
+    EmptyTitle,
+    /// A sibling under the same parent already has an equivalent title.
+    TitleConflict,
 }
 
 impl fmt::Display for NotebookError {
@@ -98,6 +112,8 @@ impl fmt::Display for NotebookError {
             NotebookError::InvalidStructure(why) => write!(f, "invalid notebook: {why}"),
             NotebookError::IdCollision(id) => write!(f, "node {} already exists", id.0),
             NotebookError::WouldCreateCycle => write!(f, "a node cannot be moved beneath itself"),
+            NotebookError::EmptyTitle => write!(f, "a note needs a title"),
+            NotebookError::TitleConflict => write!(f, "a sibling already has that title"),
         }
     }
 }
@@ -237,7 +253,7 @@ impl Notebook {
             .first()
             .ok_or(NotebookError::InvalidStructure("empty subtree"))?;
         let roots = self.siblings(None).len();
-        Ok(match root.parent_id {
+        let placement = match root.parent_id {
             // It was a root: back to its old place among the roots.
             None => (None, root.position.min(roots)),
             Some(parent) if self.nodes.contains_key(&parent) => (
@@ -246,7 +262,13 @@ impl Notebook {
             ),
             // Its parent is gone: last root.
             Some(_) => (None, roots),
-        })
+        };
+        // The restored root must not collide with a sibling at its new
+        // place. Titles inside the subtree are restored exactly as stored.
+        if self.has_sibling_title(placement.0, root.title(), None) {
+            return Err(NotebookError::TitleConflict);
+        }
+        Ok(placement)
     }
 
     /// Inserts a subtree at `restore_placement`, shifting later siblings
@@ -298,11 +320,11 @@ impl Notebook {
     }
 
     /// Whether `id` could be placed under `new_parent` (None = top level):
-    /// both must exist and the move must not create a cycle.
+    /// both must exist, the move must not create a cycle, and a new parent
+    /// must not already have a child with an equivalent title. (The same
+    /// parent is always fine: that is only a reorder.)
     pub(crate) fn can_reparent(&self, id: NodeId, new_parent: Option<NodeId>) -> bool {
-        self.nodes.contains_key(&id)
-            && new_parent
-                .is_none_or(|p| self.nodes.contains_key(&p) && !self.is_self_or_descendant(p, id))
+        self.plan_move(id, new_parent, usize::MAX).is_ok()
     }
 
     /// Validates a move without changing anything.
@@ -324,6 +346,12 @@ impl Notebook {
             if self.is_self_or_descendant(parent, id) {
                 return Err(NotebookError::WouldCreateCycle);
             }
+        }
+        // Only a change of parent can introduce a new collision; reordering
+        // among current siblings never does (even in a legacy duplicate set).
+        if node.parent_id != new_parent && self.has_sibling_title(new_parent, &node.title, Some(id))
+        {
+            return Err(NotebookError::TitleConflict);
         }
         let others = self
             .siblings(new_parent)
@@ -400,21 +428,103 @@ impl Notebook {
         out
     }
 
-    pub fn create_root(&mut self, title: &str) -> NodeId {
-        self.insert(None, title)
+    // ---- sibling titles ----
+    //
+    // Within one parent (root notes are siblings of each other) titles must
+    // be unique. Two titles are equivalent when `normalize_title` gives the
+    // same text. The rule governs new changes only: loading stored data is
+    // permissive, so notebooks written before the rule existed still open
+    // and are never rewritten.
+
+    /// Whether `parent` (None = top level) has a child whose title is
+    /// equivalent to `title`, ignoring `exclude` (the node being renamed).
+    pub(crate) fn has_sibling_title(
+        &self,
+        parent: Option<NodeId>,
+        title: &str,
+        exclude: Option<NodeId>,
+    ) -> bool {
+        let wanted = normalize_title(title);
+        self.nodes.values().any(|n| {
+            n.parent_id == parent && Some(n.id) != exclude && normalize_title(&n.title) == wanted
+        })
+    }
+
+    /// The first of `base`, `base 2`, `base 3`, ... that no sibling under
+    /// `parent` is equivalent to. Gaps in the numbering are reused.
+    pub(crate) fn unique_default_title(&self, parent: Option<NodeId>, base: &str) -> String {
+        let mut candidate = base.to_string();
+        let mut n = 1u64;
+        while self.has_sibling_title(parent, &candidate, None) {
+            n += 1;
+            candidate = format!("{base} {n}");
+        }
+        candidate
+    }
+
+    /// How many (parent, title) groups hold more than one equivalent sibling.
+    /// Zero for any notebook that only ever saw the uniqueness rule.
+    pub(crate) fn sibling_title_conflicts(&self) -> usize {
+        let mut seen: BTreeMap<(Option<NodeId>, String), usize> = BTreeMap::new();
+        for node in self.nodes.values() {
+            *seen
+                .entry((node.parent_id, normalize_title(&node.title)))
+                .or_default() += 1;
+        }
+        seen.values().filter(|count| **count > 1).count()
+    }
+
+    /// Creates a top-level note. The stored title is trimmed; an empty or
+    /// conflicting title is refused.
+    pub fn create_root(&mut self, title: &str) -> Result<NodeId, NotebookError> {
+        let title = self.checked_title(None, title, None)?;
+        Ok(self.insert(None, &title))
     }
 
     pub fn create_child(&mut self, parent: NodeId, title: &str) -> Result<NodeId, NotebookError> {
         self.require(parent)?;
-        Ok(self.insert(Some(parent), title))
+        let title = self.checked_title(Some(parent), title, None)?;
+        Ok(self.insert(Some(parent), &title))
+    }
+
+    /// Trims `title` and checks it against the siblings under `parent`.
+    fn checked_title(
+        &self,
+        parent: Option<NodeId>,
+        title: &str,
+        exclude: Option<NodeId>,
+    ) -> Result<String, NotebookError> {
+        let trimmed = title.trim();
+        if trimmed.is_empty() {
+            return Err(NotebookError::EmptyTitle);
+        }
+        if self.has_sibling_title(parent, trimmed, exclude) {
+            return Err(NotebookError::TitleConflict);
+        }
+        Ok(trimmed.to_string())
     }
 
     pub fn get(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(&id)
     }
 
+    /// Renames a node. The stored title is trimmed. An empty title or one
+    /// that is equivalent to another sibling's is refused and nothing
+    /// changes; changing only the capitalization of the node's own title is
+    /// fine. Re-entering the title it already has always succeeds, so a
+    /// legacy duplicate can stay as it is until the user decides.
     pub fn rename(&mut self, id: NodeId, title: &str) -> Result<(), NotebookError> {
-        self.require_mut(id)?.title = title.to_string();
+        let node = self.require(id)?;
+        let trimmed = title.trim();
+        if trimmed.is_empty() {
+            return Err(NotebookError::EmptyTitle);
+        }
+        if node.title == trimmed {
+            return Ok(());
+        }
+        let parent = node.parent_id;
+        let title = self.checked_title(parent, trimmed, Some(id))?;
+        self.require_mut(id)?.title = title;
         Ok(())
     }
 
@@ -508,8 +618,8 @@ mod tests {
     #[test]
     fn creates_multiple_roots() {
         let mut nb = Notebook::new();
-        let a = nb.create_root("A");
-        let b = nb.create_root("B");
+        let a = nb.create_root("A").unwrap();
+        let b = nb.create_root("B").unwrap();
         assert_ne!(a, b);
         assert_eq!(nb.get(a).unwrap().parent_id(), None);
         assert_eq!(nb.get(b).unwrap().title(), "B");
@@ -519,7 +629,7 @@ mod tests {
     #[test]
     fn creates_nested_children() {
         let mut nb = Notebook::new();
-        let root = nb.create_root("Projects");
+        let root = nb.create_root("Projects").unwrap();
         let child = nb.create_child(root, "OmaTree").unwrap();
         let grandchild = nb.create_child(child, "Ideas").unwrap();
         assert_eq!(nb.get(child).unwrap().parent_id(), Some(root));
@@ -532,9 +642,9 @@ mod tests {
     #[test]
     fn roots_are_in_creation_order() {
         let mut nb = Notebook::new();
-        nb.create_root("one");
-        nb.create_root("two");
-        nb.create_root("three");
+        nb.create_root("one").unwrap();
+        nb.create_root("two").unwrap();
+        nb.create_root("three").unwrap();
         assert_eq!(titles(nb.roots()), ["one", "two", "three"]);
         let positions: Vec<usize> = nb.roots().iter().map(|n| n.position()).collect();
         assert_eq!(positions, [0, 1, 2]);
@@ -543,7 +653,7 @@ mod tests {
     #[test]
     fn children_are_in_creation_order() {
         let mut nb = Notebook::new();
-        let root = nb.create_root("root");
+        let root = nb.create_root("root").unwrap();
         nb.create_child(root, "x").unwrap();
         nb.create_child(root, "y").unwrap();
         nb.create_child(root, "z").unwrap();
@@ -553,7 +663,7 @@ mod tests {
     #[test]
     fn renames_a_node() {
         let mut nb = Notebook::new();
-        let id = nb.create_root("old");
+        let id = nb.create_root("old").unwrap();
         nb.rename(id, "new").unwrap();
         assert_eq!(nb.get(id).unwrap().title(), "new");
     }
@@ -561,7 +671,7 @@ mod tests {
     #[test]
     fn updates_body_text() {
         let mut nb = Notebook::new();
-        let id = nb.create_root("note");
+        let id = nb.create_root("note").unwrap();
         assert_eq!(nb.get(id).unwrap().body(), "");
         nb.set_body(id, "hello\nworld").unwrap();
         assert_eq!(nb.get(id).unwrap().body(), "hello\nworld");
@@ -570,7 +680,7 @@ mod tests {
     #[test]
     fn deletes_a_leaf_and_renumbers_siblings() {
         let mut nb = Notebook::new();
-        let root = nb.create_root("root");
+        let root = nb.create_root("root").unwrap();
         nb.create_child(root, "a").unwrap();
         let b = nb.create_child(root, "b").unwrap();
         nb.create_child(root, "c").unwrap();
@@ -585,8 +695,8 @@ mod tests {
     #[test]
     fn delete_removes_all_descendants() {
         let mut nb = Notebook::new();
-        let keep = nb.create_root("keep");
-        let root = nb.create_root("root");
+        let keep = nb.create_root("keep").unwrap();
+        let root = nb.create_root("root").unwrap();
         let child = nb.create_child(root, "child").unwrap();
         let grandchild = nb.create_child(child, "grandchild").unwrap();
         nb.delete(root).unwrap();
@@ -600,16 +710,16 @@ mod tests {
     #[test]
     fn ids_are_not_reused_after_delete() {
         let mut nb = Notebook::new();
-        let a = nb.create_root("a");
+        let a = nb.create_root("a").unwrap();
         nb.delete(a).unwrap();
-        let b = nb.create_root("b");
+        let b = nb.create_root("b").unwrap();
         assert_ne!(a, b);
     }
 
     #[test]
     fn invalid_ids_fail_cleanly() {
         let mut nb = Notebook::new();
-        let id = nb.create_root("gone");
+        let id = nb.create_root("gone").unwrap();
         nb.delete(id).unwrap();
         let missing = NotebookError::NodeNotFound(id);
         assert_eq!(nb.create_child(id, "orphan"), Err(missing));
@@ -633,7 +743,7 @@ mod tests {
     /// Four roots A B C D, all with ids in creation order.
     fn four_roots() -> (Notebook, [NodeId; 4]) {
         let mut nb = Notebook::new();
-        let ids = ["A", "B", "C", "D"].map(|t| nb.create_root(t));
+        let ids = ["A", "B", "C", "D"].map(|t| nb.create_root(t).unwrap());
         (nb, ids)
     }
 
@@ -663,8 +773,8 @@ mod tests {
     /// Archive
     fn nested() -> (Notebook, [NodeId; 6]) {
         let mut nb = Notebook::new();
-        let projects = nb.create_root("Projects");
-        let archive = nb.create_root("Archive");
+        let projects = nb.create_root("Projects").unwrap();
+        let archive = nb.create_root("Archive").unwrap();
         let omatree = nb.create_child(projects, "OmaTree").unwrap();
         let threat = nb.create_child(projects, "Threatwright").unwrap();
         let ideas = nb.create_child(omatree, "Ideas").unwrap();
@@ -693,7 +803,7 @@ mod tests {
     #[test]
     fn reorders_children_up_and_down() {
         let mut nb = Notebook::new();
-        let p = nb.create_root("P");
+        let p = nb.create_root("P").unwrap();
         let ids = ["a", "b", "c", "d"].map(|t| nb.create_child(p, t).unwrap());
         assert!(nb.move_node(ids[2], Some(p), 0).unwrap());
         assert_eq!(order(&nb, Some(p)), ["c", "a", "b", "d"]);
@@ -715,8 +825,8 @@ mod tests {
     #[test]
     fn moves_a_child_between_parents() {
         let mut nb = Notebook::new();
-        let p1 = nb.create_root("P1");
-        let p2 = nb.create_root("P2");
+        let p1 = nb.create_root("P1").unwrap();
+        let p2 = nb.create_root("P2").unwrap();
         let x = nb.create_child(p1, "x").unwrap();
         nb.create_child(p1, "y").unwrap();
         nb.create_child(p2, "z").unwrap();
@@ -823,7 +933,7 @@ mod tests {
     #[test]
     fn a_missing_source_or_destination_fails() {
         let (mut nb, [a, ..]) = four_roots();
-        let gone = nb.create_root("gone");
+        let gone = nb.create_root("gone").unwrap();
         nb.delete(gone).unwrap();
         let before = nb.snapshot_nodes();
         assert_eq!(
@@ -891,5 +1001,283 @@ mod tests {
         let (mut nb, [_, _, _, d]) = four_roots();
         assert!(nb.move_node(d, None, 0).unwrap());
         assert_eq!(order(&nb, None), ["D", "A", "B", "C"]);
+    }
+
+    // ---- sibling title uniqueness ----
+
+    /// Hand-built data as an older OmaTree could have stored it:
+    /// roots "Ideas" and "ideas " (note the trailing space), and under the
+    /// first one two children "x" and "X".
+    fn legacy_duplicates() -> Notebook {
+        let n = |id: u64, parent: Option<u64>, pos: usize, title: &str| {
+            Node::from_parts(
+                NodeId::from_raw(id),
+                parent.map(NodeId::from_raw),
+                pos,
+                title.to_string(),
+                String::new(),
+            )
+        };
+        Notebook::from_nodes(vec![
+            n(0, None, 0, "Ideas"),
+            n(1, None, 1, "ideas "),
+            n(2, Some(0), 0, "x"),
+            n(3, Some(0), 1, "X"),
+        ])
+        .unwrap()
+    }
+
+    #[test]
+    fn duplicate_root_titles_are_rejected_exactly_by_case_and_by_whitespace() {
+        let mut nb = Notebook::new();
+        nb.create_root("Ideas").unwrap();
+        for dup in [
+            "Ideas",
+            "ideas",
+            "IDEAS",
+            " Ideas ",
+            "ideas   ",
+            "\tIdeas\n",
+        ] {
+            assert_eq!(
+                nb.create_root(dup),
+                Err(NotebookError::TitleConflict),
+                "{dup:?}"
+            );
+        }
+        assert_eq!(nb.roots().len(), 1);
+    }
+
+    #[test]
+    fn duplicate_children_are_rejected_but_other_parents_may_reuse_a_title() {
+        let mut nb = Notebook::new();
+        let work = nb.create_root("Work").unwrap();
+        let personal = nb.create_root("Personal").unwrap();
+        nb.create_child(work, "Ideas").unwrap();
+        assert_eq!(
+            nb.create_child(work, "ideas"),
+            Err(NotebookError::TitleConflict)
+        );
+        // The same title in another branch, or at the top level, is fine.
+        nb.create_child(personal, "Ideas").unwrap();
+        nb.create_root("Ideas").unwrap();
+        assert_eq!(nb.sibling_title_conflicts(), 0);
+    }
+
+    #[test]
+    fn empty_and_whitespace_only_titles_are_rejected() {
+        let mut nb = Notebook::new();
+        let a = nb.create_root("a").unwrap();
+        for bad in ["", "   ", "\t\n "] {
+            assert_eq!(nb.create_root(bad), Err(NotebookError::EmptyTitle));
+            assert_eq!(nb.create_child(a, bad), Err(NotebookError::EmptyTitle));
+            assert_eq!(nb.rename(a, bad), Err(NotebookError::EmptyTitle));
+        }
+        assert_eq!(
+            nb.get(a).unwrap().title(),
+            "a",
+            "a failed rename keeps the title"
+        );
+        assert_eq!(nb.roots().len(), 1);
+    }
+
+    #[test]
+    fn committed_titles_are_trimmed_and_internal_whitespace_is_kept() {
+        let mut nb = Notebook::new();
+        let a = nb.create_root("  Project  Ideas \n").unwrap();
+        assert_eq!(nb.get(a).unwrap().title(), "Project  Ideas");
+        // "Project Ideas" (one space) is a different title.
+        let b = nb.create_root("Project Ideas").unwrap();
+        assert_ne!(a, b);
+        nb.rename(b, "  Padded  ").unwrap();
+        assert_eq!(nb.get(b).unwrap().title(), "Padded");
+    }
+
+    #[test]
+    fn comparison_uses_unicode_lowercase() {
+        let mut nb = Notebook::new();
+        nb.create_root("Éclair").unwrap();
+        assert_eq!(nb.create_root("éCLAIR"), Err(NotebookError::TitleConflict));
+        assert_eq!(normalize_title("  ÄÖ  "), "äö");
+    }
+
+    #[test]
+    fn a_case_only_rename_of_the_same_node_is_allowed() {
+        let mut nb = Notebook::new();
+        let a = nb.create_root("ideas").unwrap();
+        nb.create_root("other").unwrap();
+        nb.rename(a, "Ideas").unwrap();
+        assert_eq!(nb.get(a).unwrap().title(), "Ideas");
+        nb.rename(a, "Ideas").unwrap(); // unchanged: fine
+    }
+
+    #[test]
+    fn default_titles_pick_the_first_free_name() {
+        let mut nb = Notebook::new();
+        let next = |nb: &mut Notebook| {
+            let title = nb.unique_default_title(None, DEFAULT_TITLE);
+            nb.create_root(&title).unwrap();
+            title
+        };
+        assert_eq!(next(&mut nb), "New note");
+        assert_eq!(next(&mut nb), "New note 2");
+        assert_eq!(next(&mut nb), "New note 3");
+    }
+
+    #[test]
+    fn default_titles_reuse_gaps_and_ignore_case_and_padding() {
+        let mut nb = Notebook::new();
+        nb.create_root("New note").unwrap();
+        nb.create_root("NEW NOTE 2").unwrap();
+        nb.create_root(" new note 4 ").unwrap();
+        assert_eq!(nb.unique_default_title(None, DEFAULT_TITLE), "New note 3");
+        nb.create_root("New note 3").unwrap();
+        assert_eq!(nb.unique_default_title(None, DEFAULT_TITLE), "New note 5");
+    }
+
+    #[test]
+    fn default_titles_are_independent_per_parent() {
+        let mut nb = Notebook::new();
+        let a = nb.create_root("A").unwrap();
+        let b = nb.create_root("B").unwrap();
+        nb.create_root("New note").unwrap();
+        nb.create_root("New note 2").unwrap();
+        // The children of A and B are separate groups, unaffected by the roots.
+        assert_eq!(nb.unique_default_title(Some(a), DEFAULT_TITLE), "New note");
+        nb.create_child(a, "New note").unwrap();
+        assert_eq!(
+            nb.unique_default_title(Some(a), DEFAULT_TITLE),
+            "New note 2"
+        );
+        assert_eq!(nb.unique_default_title(Some(b), DEFAULT_TITLE), "New note");
+        assert_eq!(nb.unique_default_title(None, DEFAULT_TITLE), "New note 3");
+    }
+
+    #[test]
+    fn renaming_into_a_sibling_collision_fails_and_keeps_the_title() {
+        let mut nb = Notebook::new();
+        let b1 = nb.create_root("Branch 1").unwrap();
+        let b2 = nb.create_root("Branch 2").unwrap();
+        let before = nb.snapshot_nodes();
+        assert_eq!(nb.rename(b2, "Branch 1"), Err(NotebookError::TitleConflict));
+        assert_eq!(
+            nb.rename(b2, " branch 1 "),
+            Err(NotebookError::TitleConflict)
+        );
+        assert_eq!(nb.get(b2).unwrap().title(), "Branch 2");
+        assert_eq!(nb.snapshot_nodes(), before);
+        let _ = b1;
+    }
+
+    #[test]
+    fn renaming_can_resolve_a_legacy_duplicate_but_not_make_another() {
+        let mut nb = legacy_duplicates();
+        assert_eq!(nb.sibling_title_conflicts(), 2);
+        let ideas2 = NodeId::from_raw(1);
+        // A different conflicting title is still forbidden.
+        assert_eq!(
+            nb.rename(ideas2, "Ideas"),
+            Err(NotebookError::TitleConflict)
+        );
+        // "ideas " becomes "ideas" once trimmed, which collides with "Ideas".
+        assert_eq!(
+            nb.rename(ideas2, "ideas"),
+            Err(NotebookError::TitleConflict)
+        );
+        // Re-entering exactly what is stored is harmless, duplicate or not.
+        assert!(nb.rename(NodeId::from_raw(3), "X").is_ok());
+        nb.rename(ideas2, "Different").unwrap();
+        nb.rename(NodeId::from_raw(3), "Y").unwrap();
+        assert_eq!(nb.sibling_title_conflicts(), 0);
+    }
+
+    #[test]
+    fn moving_to_another_parent_with_the_same_title_fails_cleanly() {
+        let mut nb = Notebook::new();
+        let projects = nb.create_root("Projects").unwrap();
+        let archive = nb.create_root("Archive").unwrap();
+        let ideas = nb.create_child(projects, "Ideas").unwrap();
+        nb.create_child(archive, "ideas").unwrap();
+        let before = nb.snapshot_nodes();
+        assert_eq!(
+            nb.move_node(ideas, Some(archive), 0),
+            Err(NotebookError::TitleConflict)
+        );
+        assert_eq!(
+            nb.plan_move(ideas, Some(archive), 0),
+            Err(NotebookError::TitleConflict)
+        );
+        assert!(!nb.can_reparent(ideas, Some(archive)));
+        assert_eq!(nb.snapshot_nodes(), before, "nothing moved");
+        // A free destination works.
+        assert!(nb.can_reparent(ideas, None));
+        assert!(nb.move_node(ideas, None, 0).unwrap());
+    }
+
+    #[test]
+    fn moving_to_the_root_level_checks_the_existing_roots() {
+        let mut nb = Notebook::new();
+        let projects = nb.create_root("Projects").unwrap();
+        nb.create_root("Ideas").unwrap();
+        let child = nb.create_child(projects, "ideas").unwrap();
+        let before = nb.snapshot_nodes();
+        assert_eq!(
+            nb.move_node(child, None, 0),
+            Err(NotebookError::TitleConflict)
+        );
+        assert!(!nb.can_reparent(child, None));
+        assert_eq!(nb.snapshot_nodes(), before);
+    }
+
+    #[test]
+    fn reordering_within_one_parent_is_always_allowed_even_with_legacy_duplicates() {
+        let mut nb = legacy_duplicates();
+        let (first, second) = (NodeId::from_raw(0), NodeId::from_raw(1));
+        assert!(nb.move_node(second, None, 0).unwrap());
+        assert_eq!(nb.get(second).unwrap().position(), 0);
+        assert_eq!(nb.get(first).unwrap().position(), 1);
+        // The duplicate children under `first` can be reordered too.
+        assert!(nb.move_node(NodeId::from_raw(3), Some(first), 0).unwrap());
+        assert_eq!(
+            nb.sibling_title_conflicts(),
+            2,
+            "reordering changes no titles"
+        );
+    }
+
+    #[test]
+    fn a_legacy_duplicate_can_move_to_a_conflict_free_parent() {
+        let mut nb = legacy_duplicates();
+        let other_root = NodeId::from_raw(1);
+        // "X" (id 3) is a duplicate of "x" under id 0; the other root has no children.
+        assert!(nb.can_reparent(NodeId::from_raw(3), Some(other_root)));
+        assert!(nb
+            .move_node(NodeId::from_raw(3), Some(other_root), 0)
+            .unwrap());
+        assert_eq!(
+            nb.sibling_title_conflicts(),
+            1,
+            "one conflict left, the roots"
+        );
+    }
+
+    #[test]
+    fn conflicts_are_counted_per_parent_and_title_group() {
+        assert_eq!(legacy_duplicates().sibling_title_conflicts(), 2);
+        let (clean, _) = {
+            let mut nb = Notebook::new();
+            let a = nb.create_root("a").unwrap();
+            nb.create_child(a, "x").unwrap();
+            nb.create_root("x").unwrap();
+            (nb, a)
+        };
+        assert_eq!(clean.sibling_title_conflicts(), 0);
+    }
+
+    #[test]
+    fn loading_is_permissive_and_never_rewrites_titles() {
+        let nb = legacy_duplicates();
+        assert_eq!(nb.get(NodeId::from_raw(1)).unwrap().title(), "ideas ");
+        assert_eq!(nb.get(NodeId::from_raw(3)).unwrap().title(), "X");
     }
 }

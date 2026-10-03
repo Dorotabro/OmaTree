@@ -11,6 +11,8 @@ Dialog {
 
     // Restoring failed; `message` is ready to show the user.
     signal failed(string message)
+    // A Trash entry or checkpoint was restored.
+    signal restored
 
     // Reading this inside a binding makes it re-run when Trash or the
     // checkpoints change.
@@ -29,10 +31,12 @@ Dialog {
     }
 
     function finish(error) {
-        if (error !== "")
+        if (error !== "") {
             failed(error);
-        else
+        } else {
             close();
+            restored();
+        }
     }
 
     parent: Overlay.overlay

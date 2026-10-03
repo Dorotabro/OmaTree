@@ -13,7 +13,7 @@ use cxx_qt_lib::{QList, QModelIndex, QString, QUrl, QVariant};
 use std::path::Path;
 
 use crate::document::{with_default_extension, Document};
-use crate::notebook::{NodeId, Notebook};
+use crate::notebook::{NodeId, Notebook, NotebookError};
 use crate::recovery::RecoveryError;
 
 #[cxx_qt::bridge]
@@ -145,23 +145,32 @@ pub mod qobject {
 
     // Operations callable from QML. Nodes are addressed by QModelIndex.
     unsafe extern "RustQt" {
-        /// Appends a root node. Returns its index.
+        /// Appends a top-level note named "New note", "New note 2", ...
+        /// (the first name no sibling has). Returns its index.
         #[qinvokable]
-        #[cxx_name = "createRoot"]
-        fn create_root(self: Pin<&mut NotebookModel>, title: &QString) -> QModelIndex;
+        #[cxx_name = "createDefaultRoot"]
+        fn create_default_root(self: Pin<&mut NotebookModel>) -> QModelIndex;
 
-        /// Appends a child under `parent`. Returns its index, or an invalid
-        /// index if `parent` is invalid or stale.
+        /// Appends a child under `parent`, named like `createDefaultRoot`.
+        /// Returns its index, or an invalid index if `parent` is invalid or
+        /// stale.
         #[qinvokable]
-        #[cxx_name = "createChild"]
-        fn create_child(
-            self: Pin<&mut NotebookModel>,
-            parent: &QModelIndex,
-            title: &QString,
-        ) -> QModelIndex;
+        #[cxx_name = "createDefaultChild"]
+        fn create_default_child(self: Pin<&mut NotebookModel>, parent: &QModelIndex)
+            -> QModelIndex;
 
+        /// Renames a note. Returns an empty string on success, otherwise a
+        /// message for the user (an empty name, a sibling that already has
+        /// that name, or a stale index); on failure the title is unchanged.
         #[qinvokable]
-        fn rename(self: Pin<&mut NotebookModel>, index: &QModelIndex, title: &QString) -> bool;
+        fn rename(self: Pin<&mut NotebookModel>, index: &QModelIndex, title: &QString) -> QString;
+
+        /// How many groups of same-named siblings the notebook contains.
+        /// Always zero for notebooks that only ever followed the naming rule;
+        /// older files may have some.
+        #[qinvokable]
+        #[cxx_name = "titleConflictCount"]
+        fn title_conflict_count(self: &NotebookModel) -> i32;
 
         /// Moves a node, with its subtree, under `parent` (an invalid index
         /// means top level) at final sibling position `position`. A position
@@ -363,6 +372,17 @@ fn child_count(nb: &Notebook, parent: Option<NodeId>) -> usize {
 fn nth_newest(len: usize, position: i32) -> Option<usize> {
     let position = usize::try_from(position).ok()?;
     (position < len).then(|| len - 1 - position)
+}
+
+/// What to tell the user when a rename was refused.
+fn rename_error_message(error: NotebookError, title: &str) -> String {
+    match error {
+        NotebookError::TitleConflict => {
+            format!("A note named \"{}\" already exists here.", title.trim())
+        }
+        NotebookError::EmptyTitle => "A note needs a name.".to_string(),
+        _ => "That note could not be renamed.".to_string(),
+    }
 }
 
 fn count_to_i32(len: usize) -> i32 {
@@ -666,39 +686,12 @@ impl qobject::NotebookModel {
         self.index_for(id)
     }
 
-    fn create_root(mut self: Pin<&mut Self>, title: &QString) -> QModelIndex {
+    fn create_default_root(mut self: Pin<&mut Self>) -> QModelIndex {
         let row = child_count(self.rust().document.notebook(), None);
         let row = i32::try_from(row).unwrap_or(i32::MAX);
         self.as_mut()
             .begin_insert_rows(&QModelIndex::default(), row, row);
-        let id = self
-            .as_mut()
-            .rust_mut()
-            .document
-            .create_root(&String::from(title));
-        self.as_mut().end_insert_rows();
-        self.as_mut().sync_state();
-        self.as_mut().document_mutated();
-        self.index_for(id)
-    }
-
-    fn create_child(
-        mut self: Pin<&mut Self>,
-        parent: &QModelIndex,
-        title: &QString,
-    ) -> QModelIndex {
-        // An invalid parent is an error here, not "top level".
-        let Some(parent_id) = self.node_for(parent) else {
-            return QModelIndex::default();
-        };
-        let row = child_count(self.rust().document.notebook(), Some(parent_id));
-        let row = i32::try_from(row).unwrap_or(i32::MAX);
-        self.as_mut().begin_insert_rows(parent, row, row);
-        let created = self
-            .as_mut()
-            .rust_mut()
-            .document
-            .create_child(parent_id, &String::from(title));
+        let created = self.as_mut().rust_mut().document.create_default_root();
         self.as_mut().end_insert_rows();
         self.as_mut().sync_state();
         match created {
@@ -710,17 +703,40 @@ impl qobject::NotebookModel {
         }
     }
 
-    fn rename(mut self: Pin<&mut Self>, index: &QModelIndex, title: &QString) -> bool {
-        let Some(id) = self.node_for(index) else {
-            return false;
+    fn create_default_child(mut self: Pin<&mut Self>, parent: &QModelIndex) -> QModelIndex {
+        // An invalid parent is an error here, not "top level".
+        let Some(parent_id) = self.node_for(parent) else {
+            return QModelIndex::default();
         };
-        let Ok(changed) = self
+        let row = child_count(self.rust().document.notebook(), Some(parent_id));
+        let row = i32::try_from(row).unwrap_or(i32::MAX);
+        self.as_mut().begin_insert_rows(parent, row, row);
+        let created = self
             .as_mut()
             .rust_mut()
             .document
-            .rename(id, &String::from(title))
-        else {
-            return false;
+            .create_default_child(parent_id);
+        self.as_mut().end_insert_rows();
+        self.as_mut().sync_state();
+        match created {
+            Ok(id) => {
+                self.as_mut().document_mutated();
+                self.index_for(id)
+            }
+            Err(_) => QModelIndex::default(),
+        }
+    }
+
+    fn rename(mut self: Pin<&mut Self>, index: &QModelIndex, title: &QString) -> QString {
+        let Some(id) = self.node_for(index) else {
+            return QString::from("That note is no longer available.");
+        };
+        let title = String::from(title);
+        let changed = match self.as_mut().rust_mut().document.rename(id, &title) {
+            Ok(changed) => changed,
+            Err(e) => {
+                return QString::from(rename_error_message(e, &title).as_str());
+            }
         };
         let index = self.index_for(id);
         self.as_mut()
@@ -729,7 +745,11 @@ impl qobject::NotebookModel {
         if changed {
             self.as_mut().document_mutated();
         }
-        true
+        QString::default()
+    }
+
+    fn title_conflict_count(&self) -> i32 {
+        count_to_i32(self.rust().document.notebook().sibling_title_conflicts())
     }
 
     fn remove_node(mut self: Pin<&mut Self>, index: &QModelIndex) -> bool {
@@ -880,8 +900,8 @@ mod tests {
     /// Inbox
     fn sample() -> (Notebook, [NodeId; 5]) {
         let mut nb = Notebook::new();
-        let projects = nb.create_root("Projects");
-        let inbox = nb.create_root("Inbox");
+        let projects = nb.create_root("Projects").unwrap();
+        let inbox = nb.create_root("Inbox").unwrap();
         let omatree = nb.create_child(projects, "OmaTree").unwrap();
         let threat = nb.create_child(projects, "Threatwright").unwrap();
         let ideas = nb.create_child(omatree, "Ideas").unwrap();
