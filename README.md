@@ -112,6 +112,24 @@ It is a tree of notes.
 
 That should remain easy to understand.
 
+## Testing
+
+    cargo test                       # everything: unit tests and integration tests
+    cargo test integration_tests     # only the integration tests (about 10 s)
+
+The integration tests run the real application, headless, in separate
+processes on Qt's `offscreen` platform (no desktop session needed, only the
+Qt 6 Quick and QtTest QML modules and the usual Qt platform plugins). Each
+scenario in `tests/qml/` drives the production `main.qml` with QtTest and
+checks workflows that cross Rust, the Qt models and QML: saving and
+reopening, autosave, New/Open, Search, expansion state, Trash and Recovery,
+Markdown Preview (including that it loads no resources), live theme
+switching and a keyboard/dialog smoke test. They use only temporary
+directories (their own HOME and XDG state, never yours), contact only
+`127.0.0.1`, and fail on any QML warning or a scenario that hangs. See
+`src/integration_tests.rs` for how they are run and `tests/qml/Base.qml` for
+the helpers; a new scenario is one new QML file plus a short test function.
+
 ## Platform support
 
 Development currently happens primarily on Linux / Omarchy.
