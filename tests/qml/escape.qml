@@ -58,6 +58,19 @@ Base {
         until("tree again", () => tree.activeFocus);
         check("Edit mode preserved", !editorPane.previewing);
 
+        // Enter on a note in the tree starts editing it, from Edit or Preview.
+        keyClick(Qt.Key_Return);
+        until("Enter in the tree focuses the body", () => bodyField().activeFocus && !editorPane.previewing);
+        keyClick(Qt.Key_Escape);
+        until("Escape back", () => tree.activeFocus);
+        shortcut("Ctrl+E");
+        until("Preview", () => editorPane.previewing);
+        tree.forceActiveFocus();
+        keyClick(Qt.Key_Return);
+        until("Enter from Preview switches to Edit and focuses the body", () => !editorPane.previewing && bodyField().activeFocus);
+        keyClick(Qt.Key_Escape);
+        until("and back to the tree", () => tree.activeFocus);
+
         // The tree itself: Escape is a no-op.
         const before = selected();
         const rows = tree.rows;

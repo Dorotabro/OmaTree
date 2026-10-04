@@ -15,6 +15,8 @@ Item {
     required property ItemSelectionModel selection
 
     signal newRootRequested
+    // Enter on the current note: start editing it.
+    signal editRequested
     signal newChildRequested
     signal deleteRequested
     signal newNotebookRequested
@@ -388,6 +390,9 @@ Item {
                     const next = tree.nextItemInFocusChain(forward);
                     if (next && next !== tree)
                         next.forceActiveFocus(forward ? Qt.TabFocusReason : Qt.BacktabFocusReason);
+                    event.accepted = true;
+                } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && !event.modifiers && pane.selection.currentIndex.valid) {
+                    pane.editRequested();
                     event.accepted = true;
                 } else if (event.key === Qt.Key_Menu || (event.key === Qt.Key_F10 && event.modifiers === Qt.ShiftModifier)) {
                     pane.openContextMenuFromKeyboard();

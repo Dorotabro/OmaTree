@@ -417,6 +417,7 @@ ApplicationWindow {
             notebook: notebook
             selection: selection
             onNewRootRequested: root.createRoot()
+            onEditRequested: editorPane.editBody()
             onNewChildRequested: root.createChild()
             onDeleteRequested: confirmDelete.askAboutSelection()
             onNewNotebookRequested: root.requestNewNotebook()

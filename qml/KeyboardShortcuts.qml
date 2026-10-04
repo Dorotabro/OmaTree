@@ -16,7 +16,7 @@ ThemedDialog {
     // The sections, in the order shown: [heading, [[keys, what it does], ...]].
     readonly property var sections: [
         [qsTr("Notes"), [["Ctrl+N", qsTr("New note")], ["Ctrl+Shift+N", qsTr("New child")], ["F2", qsTr("Rename the note")], ["Delete", qsTr("Move the note to Trash (in the tree)")], ["Alt+Up", qsTr("Move the note up")], ["Alt+Down", qsTr("Move the note down")]]],
-        [qsTr("Tree"), [["Up / Down", qsTr("Move through the notes")], ["Left / Right", qsTr("Collapse / expand")], ["Ctrl+Left", qsTr("Collapse the subtree")], ["Ctrl+Right", qsTr("Expand the subtree")], ["Ctrl+Click", qsTr("Toggle a whole subtree (marker)")], ["Shift+F10", qsTr("Open the tree menu")], ["Menu key", qsTr("Open the tree menu")]]],
+        [qsTr("Tree"), [["Up / Down", qsTr("Move through the notes")], ["Enter", qsTr("Edit the note")], ["Left / Right", qsTr("Collapse / expand")], ["Ctrl+Left", qsTr("Collapse the subtree")], ["Ctrl+Right", qsTr("Expand the subtree")], ["Ctrl+Click", qsTr("Toggle a whole subtree (marker)")], ["Shift+F10", qsTr("Open the tree menu")], ["Menu key", qsTr("Open the tree menu")]]],
         [qsTr("Editor"), [["Ctrl+E", qsTr("Edit / Preview")], ["Escape", qsTr("Back to the tree")], ["Ctrl+Z", qsTr("Undo")], ["Ctrl+Shift+Z", qsTr("Redo")], ["Ctrl+X / C / V", qsTr("Cut / copy / paste")], ["Ctrl+A", qsTr("Select all")]]],
         [qsTr("Search"), [["Ctrl+F", qsTr("Focus the search field")], ["Up / Down", qsTr("Choose a result")], ["Enter", qsTr("Open the result")], ["Escape", qsTr("Clear the search")]]],
         [qsTr("Files"), [["Ctrl+O", qsTr("Open a notebook")], ["Ctrl+S", qsTr("Save")], ["Ctrl+Shift+S", qsTr("Save As")]]],

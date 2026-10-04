@@ -62,6 +62,14 @@ Item {
         }
     }
 
+    // Start editing the current note's body: Edit mode, cursor in the text.
+    function editBody() {
+        if (!hasNote)
+            return;
+        previewing = false;
+        body.forceActiveFocus();
+    }
+
     function resetMode() {
         previewing = false;
     }
