@@ -1,4 +1,4 @@
-use cxx_qt_build::{CxxQtBuilder, QmlFile, QmlModule};
+use cxx_qt_build::{CxxQtBuilder, QResource, QResources, QmlFile, QmlModule};
 
 fn main() {
     CxxQtBuilder::new_qml_module(QmlModule::new("org.omatree").qml_files([
@@ -22,5 +22,17 @@ fn main() {
         "src/markdown.rs",
     ])
     .cpp_file("cpp/markdown_render.cpp")
+    .cpp_file("cpp/app_identity.cpp")
+    // The application icon, compiled into the executable (see
+    // cpp/app_identity.cpp), so the window has it however OmaTree is started.
+    .qrc_resources(
+        QResources::new().resource(QResource::new().prefix("/icons").files([
+            "assets/logo/omatree-icon-32.png",
+            "assets/logo/omatree-icon-64.png",
+            "assets/logo/omatree-icon-128.png",
+            "assets/logo/omatree-icon-256.png",
+            "assets/logo/omatree-icon-512.png",
+        ])),
+    )
     .build();
 }

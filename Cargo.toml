@@ -2,7 +2,10 @@
 name = "omatree"
 version = "0.1.0"
 edition = "2021"
+description = "A local-first notebook for people who think in trees."
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/Dorotabro/OmaTree"
+publish = false
 
 [dependencies]
 cxx = "1.0"

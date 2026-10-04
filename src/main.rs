@@ -11,7 +11,18 @@ mod theme;
 pub mod theme_model;
 pub mod tree_model;
 
-use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QUrl};
+use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
+
+extern "C" {
+    /// `cpp/app_identity.cpp`: sets the window icon from the compiled-in PNGs.
+    fn omatree_install_window_icon();
+}
+
+/// How the desktop knows OmaTree: the name, and the desktop-file id (without
+/// `.desktop`) that the launcher, task switcher and Wayland compositor match
+/// the window to. It is the application id of the packaged launcher, not the
+/// internal QML module URI `org.omatree`.
+const DESKTOP_FILE_NAME: &str = "io.github.Dorotabro.OmaTree";
 
 /// The QML the application starts from: always `main.qml`, except in debug
 /// builds, where `OMATREE_TEST_QML` may name a file to start from instead.
@@ -39,6 +50,18 @@ pub fn run_app() {
     }
 
     let mut qt_app = QGuiApplication::new();
+    // The application name is what the desktop calls it. (The display name is
+    // left at its default: setting it would make Qt add " — OmaTree" to every
+    // window title, which already starts with the name.)
+    if let Some(mut app) = qt_app.as_mut() {
+        app.as_mut().set_application_name(&QString::from("OmaTree"));
+        app.as_mut()
+            .set_application_version(&QString::from(env!("CARGO_PKG_VERSION")));
+    }
+    QGuiApplication::set_desktop_file_name(&QString::from(DESKTOP_FILE_NAME));
+    // SAFETY: a plain C++ function with no arguments, called once on the main
+    // thread after the QGuiApplication exists.
+    unsafe { omatree_install_window_icon() };
     let mut engine = QQmlApplicationEngine::new();
 
     if let Some(engine) = engine.as_mut() {

@@ -1,0 +1,55 @@
+# Maintainer: the OmaTree project <https://github.com/Dorotabro/OmaTree>
+#
+# Template. build-package.sh turns it into a PKGBUILD by filling in @SOURCE@
+# and @SHA256@. For a validation build the source is a snapshot tarball made
+# from the working tree. For the public release (Ticket 030) @SOURCE@ becomes
+# the URL of the tagged GitHub archive and @SHA256@ its real checksum; never
+# SKIP the checksum for a release.
+
+pkgname=omatree
+pkgver=@PKGVER@
+pkgrel=1
+pkgdesc='A local-first notebook for people who think in trees'
+arch=('x86_64')
+url='https://github.com/Dorotabro/OmaTree'
+license=('MIT' 'Apache-2.0')
+# From the actual binary and its QML imports (see docs/PACKAGING.md): the
+# executable links Qt Core, Gui and Qml directly, and loads Qt Quick, Quick
+# Controls (Basic), Layouts, Dialogs and Templates at run time, which are all
+# in qt6-declarative. SQLite is bundled into the executable. Qt is the
+# system's: no Qt library is copied into this package.
+depends=('qt6-base' 'qt6-declarative' 'glibc' 'libgcc' 'libstdc++')
+makedepends=('cargo' 'gcc')
+optdepends=('qt6-wayland: additional Wayland integration plugins'
+            'xdg-desktop-portal: native file dialogs')
+options=('!debug' '!lto')
+source=("@SOURCE@")
+sha256sums=('@SHA256@')
+
+prepare() {
+    cd "$pkgname-$pkgver"
+    # Only what Cargo.lock names, and nothing else.
+    cargo fetch --locked --target "$CARCH-unknown-linux-gnu"
+}
+
+build() {
+    cd "$pkgname-$pkgver"
+    # Keep the build machine's paths out of the binary: the source tree, the
+    # Cargo home (dependency sources) and the home directory are rewritten,
+    # for Rust and for the C++ that is compiled along with it.
+    local srcroot="$PWD"
+    local cargohome="${CARGO_HOME:-$HOME/.cargo}"
+    export RUSTFLAGS="${RUSTFLAGS:-} \
+        --remap-path-prefix=$HOME=/build/home \
+        --remap-path-prefix=$cargohome=/build/cargo \
+        --remap-path-prefix=$srcroot=/build/$pkgname-$pkgver"
+    export CFLAGS="${CFLAGS:-} -ffile-prefix-map=$HOME=/build/home -ffile-prefix-map=$cargohome=/build/cargo -ffile-prefix-map=$srcroot=/build/$pkgname-$pkgver"
+    export CXXFLAGS="${CXXFLAGS:-} -ffile-prefix-map=$HOME=/build/home -ffile-prefix-map=$cargohome=/build/cargo -ffile-prefix-map=$srcroot=/build/$pkgname-$pkgver"
+    export CARGO_TARGET_DIR=target
+    cargo build --release --locked --frozen
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    packaging/linux/stage.sh "$pkgdir" target/release/omatree
+}

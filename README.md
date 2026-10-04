@@ -31,6 +31,26 @@ The UI and file format are still evolving.
 
 Do not use the current development version as the only copy of important data.
 
+## Install
+
+Binary package, for **Omarchy / Arch Linux x86_64** only (it uses the system
+Qt 6):
+
+    sudo pacman -U ./omatree-0.1.0-1-x86_64.pkg.tar.zst
+
+Remove it with:
+
+    sudo pacman -R omatree
+
+`.omatree` files become associated with OmaTree after the usual desktop and MIME
+database processing that pacman's hooks perform.
+
+To build from source, see [Technology](#technology) and [Testing](#testing):
+`cargo build --release` needs Qt 6 (base and declarative) and a Rust toolchain.
+The package itself is built with `packaging/arch/build-package.sh`; see
+[`docs/PACKAGING.md`](docs/PACKAGING.md). There are no packages for other
+platforms yet.
+
 ## Technology
 
 OmaTree is built with:

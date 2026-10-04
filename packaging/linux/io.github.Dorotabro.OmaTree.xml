@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <!-- Identified by the file name only. An OmaTree notebook is a SQLite
+       database inside, and generic SQLite files must not be claimed, so there
+       is deliberately no magic matching. -->
+  <mime-type type="application/x-omatree">
+    <comment>OmaTree notebook</comment>
+    <glob pattern="*.omatree"/>
+    <icon name="io.github.Dorotabro.OmaTree"/>
+  </mime-type>
+</mime-info>

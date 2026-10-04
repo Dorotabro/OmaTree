@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.Dorotabro.OmaTree</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <name>OmaTree</name>
+  <summary>A local-first notebook for people who think in trees</summary>
+  <description>
+    <p>
+      OmaTree is a deliberately simple note-taking application: a tree of
+      notes on the left and the selected note on the right. Every note can have
+      child notes, so ideas branch the way your thinking does.
+    </p>
+    <p>
+      Notes are plain text that you can switch to a read-only Markdown preview.
+      A notebook is a single local .omatree file on your computer. There is no
+      account and no cloud service.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.Dorotabro.OmaTree.desktop</launchable>
+  <provides>
+    <binary>omatree</binary>
+    <mediatype>application/x-omatree</mediatype>
+  </provides>
+  <url type="homepage">https://github.com/Dorotabro/OmaTree</url>
+  <url type="vcs-browser">https://github.com/Dorotabro/OmaTree</url>
+  <url type="bugtracker">https://github.com/Dorotabro/OmaTree/issues</url>
+  <keywords>
+    <keyword>notes</keyword>
+    <keyword>notebook</keyword>
+    <keyword>tree</keyword>
+    <keyword>markdown</keyword>
+  </keywords>
+  <content_rating type="oars-1.1"/>
+</component>

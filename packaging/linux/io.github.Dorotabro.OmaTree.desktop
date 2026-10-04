@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=OmaTree
+Comment=A local-first notebook for people who think in trees
+Exec=omatree %f
+Icon=io.github.Dorotabro.OmaTree
+Terminal=false
+Categories=Office;Utility;
+MimeType=application/x-omatree;
+Keywords=notes;notebook;tree;markdown;
