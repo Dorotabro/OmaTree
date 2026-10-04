@@ -399,3 +399,8 @@ fn markdown_paragraph_and_block_spacing() {
 fn search_header_is_permanent() {
     scenario("searchheader");
 }
+
+#[test]
+fn new_notes_start_in_edit_mode() {
+    scenario("newnote");
+}

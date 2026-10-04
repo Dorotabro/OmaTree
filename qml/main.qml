@@ -298,8 +298,15 @@ ApplicationWindow {
         }
     }
 
+    // A note that was just created always starts in Edit, whatever mode the
+    // note before it was in; moving among existing notes keeps the mode. The
+    // title is what gets the focus, as before. A failed creation changes
+    // nothing at all.
     function createRoot() {
         const index = notebook.createDefaultRoot();
+        if (!index.valid)
+            return;
+        editorPane.resetMode();
         select(index);
         editorPane.focusTitle();
     }
@@ -310,6 +317,7 @@ ApplicationWindow {
         const index = notebook.createDefaultChild(selection.currentIndex);
         if (!index.valid)
             return;
+        editorPane.resetMode();
         select(index);
         editorPane.focusTitle();
     }
