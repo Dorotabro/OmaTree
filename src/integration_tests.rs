@@ -394,3 +394,8 @@ fn moved_expanded_subtree_matches_the_document_when_revealed() {
 fn markdown_paragraph_and_block_spacing() {
     scenario("spacing");
 }
+
+#[test]
+fn search_header_is_permanent() {
+    scenario("searchheader");
+}

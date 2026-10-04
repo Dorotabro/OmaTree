@@ -18,12 +18,15 @@ Base {
         select(find("Alpha"));
         const stale = current();
         check("a note is selected and shown", titleField().text === "Alpha");
-        check("search finds it", notebook.search("needle") === 1 && notebook.searchCount() === 1);
+        treePane.startSearch();
+        typeText("needle");
+        until("search finds it", () => notebook.searchCount() === 1 && searchField.text === "needle");
 
         // File > New Notebook, the real path (the notebook is clean).
         app.requestNewNotebook();
         check("selection was dropped", !selection.currentIndex.valid);
         check("search results cleared", notebook.searchCount() === 0);
+        check("the query is cleared", searchField.text === "" && tree.visible && !treePane.searching);
         check("editor cleared", titleField().text === "" && bodyField().text === "");
         check("Untitled and clean", notebook.documentName === "Untitled" && !notebook.dirty && !notebook.hasPath());
         check("the old index resolves to nothing", notebook.data(stale, 0) === undefined || notebook.data(stale, 0) === null || notebook.data(stale, 0) === "");
@@ -32,11 +35,13 @@ Base {
         // Open another file, from a state with a selection and results.
         check("open first again", notebook.openFile(url(first)) === "");
         select(find("Child"));
-        notebook.search("alpha");
+        treePane.startSearch();
+        typeText("alpha");
+        until("results before Open", () => notebook.searchCount() >= 1);
         const stale2 = current();
         check("open the second notebook", notebook.openFile(url(other)) === "");
         check("selection dropped on open", !selection.currentIndex.valid);
-        check("search cleared on open", notebook.searchCount() === 0);
+        check("search cleared on open", notebook.searchCount() === 0 && searchField.text === "");
         check("editor cleared on open", titleField().text === "");
         check("the new notebook is what is shown", titles().join("|") === "Beta" && notebook.documentName === "second.omatree");
         check("stale index is harmless", notebook.body(stale2) === "" || notebook.body(stale2) !== undefined);

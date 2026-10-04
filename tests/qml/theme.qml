@@ -21,11 +21,18 @@ Base {
         check("save", saveAs(tmp("theme.omatree")) === "");
         select(find("Note"));
         const before = Theme.accent;
+        // A search is active while the theme changes.
+        shortcut("Ctrl+F");
+        typeText("Heading");
+        until("a search is active", () => treePane.searching && notebook.searchCount() === 1);
 
         writeColors(palette("#f0f0e8", "#0044cc"));
         until("polling picks up the new palette", () => Theme.background.toLowerCase() === "#f0f0e8" && Theme.accent.toLowerCase() === "#0044cc", 8000);
         check("the accent changed", Theme.accent !== before);
         check("document untouched", !notebook.dirty && selected() === "Note");
+        check("the search survived the theme change", treePane.searching && searchField.text === "Heading" && notebook.searchCount() === 1);
+        keyClick(Qt.Key_Escape);
+        until("and clears normally", () => !treePane.searching);
 
         tree.forceActiveFocus();
         shortcut("Ctrl+E");

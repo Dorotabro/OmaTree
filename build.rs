@@ -9,6 +9,7 @@ fn main() {
         QmlFile::from("qml/RecoveryDialog.qml"),
         QmlFile::from("qml/ThemedDialog.qml"),
         QmlFile::from("qml/SearchPane.qml"),
+        QmlFile::from("qml/SearchField.qml"),
         QmlFile::from("qml/Command.qml"),
         QmlFile::from("qml/PointerHover.qml"),
         QmlFile::from("qml/KeyboardShortcuts.qml"),

@@ -56,16 +56,17 @@ Base {
         const lh = p.lineHeight;
         check("a line height was measured", lh > 4);
         const gapPara = p.y("two") - p.y("one") - lh;
-        check("a blank line gives a clearly visible gap", gapPara >= 0.3 * lh && gapPara <= 1.5 * lh);
+        console.log("T> info paragraph gap " + gapPara + " px, line height " + lh);
+        check("a blank line gives a clearly visible gap (0.5 to 1 line)", gapPara >= 0.5 * lh && gapPara <= 1.0 * lh);
 
         const s = show(spaces, "two");
         const gapSpaces = s.y("two") - s.y("one") - s.lineHeight;
-        check("two trailing spaces: two consecutive lines", gapSpaces >= -1 && gapSpaces <= 2);
-        check("a paragraph is measurably taller than a hard break", p.height - s.height >= 0.3 * lh);
+        check("two trailing spaces: two consecutive lines", gapSpaces >= -1 && gapSpaces <= 0.1 * lh);
+        check("a paragraph is measurably taller than a hard break", p.height - s.height >= 0.5 * lh);
 
         const b = show(backslash, "two");
         const gapBackslash = b.y("two") - b.y("one") - b.lineHeight;
-        check("backslash hard break: two consecutive lines", gapBackslash >= -1 && gapBackslash <= 2);
+        check("backslash hard break: two consecutive lines", gapBackslash >= -1 && gapBackslash <= 0.1 * lh);
         check("same height as the two-space break", Math.abs(b.height - s.height) <= 2);
 
         const o = show(soft, "one");

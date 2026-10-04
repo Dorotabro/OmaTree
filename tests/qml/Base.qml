@@ -78,6 +78,7 @@ TestCase {
     property var editorPane: null
     property var tree: null
     property var searchPane: null
+    property var searchField: null
     property var confirmDelete: null
     property var shortcuts: null
     property var recovery: null
@@ -89,10 +90,11 @@ TestCase {
         editorPane = findObj(app, o => o.hasOwnProperty("toggleMode") && o.hasOwnProperty("resetMode"));
         tree = findObj(treePane, o => o.hasOwnProperty("rows") && o.hasOwnProperty("expandToIndex"));
         searchPane = findObj(treePane, o => o.hasOwnProperty("reset") && o.hasOwnProperty("activateCurrent"));
+        searchField = findObj(treePane, o => o.hasOwnProperty("focusAll") && o.hasOwnProperty("moveRequested"));
         confirmDelete = findObj(app, o => o.hasOwnProperty("askAboutSelection"));
         shortcuts = findObj(app, o => o.hasOwnProperty("sections"));
         recovery = findObj(app, o => o.hasOwnProperty("trashCount") && o.hasOwnProperty("checkpointCount"));
-        if (!notebook || !selection || !treePane || !editorPane || !tree || !confirmDelete || !shortcuts)
+        if (!searchField || !notebook || !selection || !treePane || !editorPane || !tree || !confirmDelete || !shortcuts)
             throw new Error("could not find the application's parts");
     }
 
@@ -182,6 +184,10 @@ TestCase {
             return;
         found.activated();
         wait(30);
+    }
+    // A footer command by its label.
+    function command(text) {
+        return findObj(treePane, o => o.hasOwnProperty("text") && o.text === text && o.hasOwnProperty("hint"));
     }
     function typeText(text) {
         for (let i = 0; i < text.length; ++i)

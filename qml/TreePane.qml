@@ -137,29 +137,29 @@ Item {
         });
     }
 
+    // The tree has the keyboard to start with; Ctrl+F or a click moves it.
+    Component.onCompleted: focusTree()
+
     function focusTree() {
         tree.forceActiveFocus();
     }
 
     // --- Search ------------------------------------------------------------
-    // While searching, the result list takes the tree's place. The tree, its
+    // The search field is always at the top of the pane. While it has a query
+    // the result list takes the tree's place below it; the tree, its
     // expansion and the selection stay exactly as they were underneath.
 
-    property bool searching: false
+    readonly property bool searching: searchPane.active
 
+    // Ctrl+F: the field, with the last query selected.
     function startSearch() {
-        searching = true;
-        searchPane.open();
+        searchField.focusAll();
     }
 
-    // Leaves search without touching the selection (Escape, or a note having
-    // been chosen).
+    // Empties the query, which brings the tree back. Touches no selection.
     function stopSearch() {
-        if (!searching)
-            return;
-        searching = false;
+        searchField.text = "";
         searchPane.reset();
-        focusTree();
     }
 
     // The user picked result `index`. The note is looked up again now, as a
@@ -175,6 +175,16 @@ Item {
         stopSearch();
         selection.setCurrentIndex(found, ItemSelectionModel.ClearAndSelect);
         reveal(found);
+        focusTree();
+    }
+
+    // A different notebook (New, Open, a restored checkpoint) starts without
+    // the old query.
+    Connections {
+        target: pane.notebook
+        function onModelAboutToBeReset() {
+            pane.stopSearch();
+        }
     }
 
     // --- Context menu ------------------------------------------------------
@@ -321,6 +331,21 @@ Item {
         anchors.fill: parent
         spacing: 0
 
+        SearchField {
+            id: searchField
+
+            Layout.fillWidth: true
+            onMoveRequested: step => searchPane.moveBy(step)
+            onActivateRequested: searchPane.activateCurrent()
+            // Escape clears a query; with none, it returns to the tree.
+            onEscapeRequested: {
+                if (pane.searching)
+                    pane.stopSearch();
+                else
+                    pane.focusTree();
+            }
+        }
+
         SearchPane {
             id: searchPane
 
@@ -328,8 +353,8 @@ Item {
             Layout.fillHeight: true
             visible: pane.searching
             notebook: pane.notebook
+            query: searchField.text
             onActivateRequested: index => pane.openResult(index)
-            onCloseRequested: pane.stopSearch()
         }
 
         TreeView {
@@ -342,10 +367,6 @@ Item {
             model: pane.notebook
             selectionModel: pane.selection
             boundsBehavior: Flickable.StopAtBounds
-            // Room above the first row, so its text lines up with the title in
-            // the editor's header instead of hugging the window edge. It is
-            // scrolling content, so scrolled back to the top it is the same.
-            topMargin: Ui.medium
             columnWidthProvider: () => tree.width
             onWidthChanged: forceLayout()
 
@@ -410,16 +431,9 @@ Item {
                 border.color: pane.dropKind === "invalid" ? Theme.danger : Theme.accent
             }
 
-            // Keyboard focus: a thin accent edge along the top of the tree,
-            // and the selected row's bar turning accent (see the delegate).
-            Rectangle {
-                parent: tree
-                z: 90
-                width: tree.width
-                height: Ui.hairline
-                color: Theme.accent
-                visible: tree.activeFocus
-            }
+            // Keyboard focus is the selected row's bar turning accent (see the
+            // delegate). It used to be an accent line along the top of the
+            // tree, which would now sit against the search header's separator.
 
             delegate: TreeViewDelegate {
                 id: item
@@ -627,12 +641,6 @@ Item {
             }
             Item {
                 Layout.fillWidth: true
-            }
-            Command {
-                tone: Qt.alpha(Theme.accent, 0.85)
-                text: qsTr("search")
-                hint: qsTr("Search notes   Ctrl+F")
-                onClicked: pane.startSearch()
             }
             // The only document controls on screen: one small menu.
             Command {

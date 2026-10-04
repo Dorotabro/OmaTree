@@ -11,6 +11,10 @@ QtObject {
     readonly property int medium: 8
     readonly property int large: 14
 
+    // The header band of both panes (the search field on the left, the note
+    // title on the right), hairline included, so their separators line up.
+    readonly property int headerHeight: 44
+
     // Heights. Rows are compact, but never smaller than a comfortable target.
     readonly property int rowHeight: 26
     readonly property int controlHeight: 30

@@ -129,6 +129,9 @@ Item {
             Layout.leftMargin: Ui.editorPadding
             Layout.rightMargin: Ui.medium
             Layout.topMargin: Ui.small
+            // The same band as the search field's on the left (Ui.headerHeight,
+            // with the separator below), so the two lines up.
+            Layout.preferredHeight: Ui.headerHeight - Ui.small - Ui.hairline
             spacing: Ui.tiny
 
             TextField {
@@ -185,6 +188,7 @@ Item {
         }
 
         Rectangle {
+            objectName: "headerSeparator"
             Layout.fillWidth: true
             Layout.leftMargin: Ui.editorPadding
             Layout.rightMargin: Ui.medium

@@ -18,9 +18,9 @@ Base {
         until("Escape closes them", () => !shortcuts.visible);
 
         shortcut("Ctrl+F");
-        until("Ctrl+F opens Search", () => treePane.searching);
+        until("Ctrl+F focuses the search field", () => searchField.focused);
         keyClick(Qt.Key_Escape);
-        until("Escape leaves Search", () => !treePane.searching);
+        until("Escape with no query returns to the tree", () => tree.activeFocus && !searchField.focused);
 
         tree.forceActiveFocus();
         shortcut("Ctrl+E");

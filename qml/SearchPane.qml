@@ -3,18 +3,19 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import org.omatree
 
-// Search results, shown in place of the tree while searching. The notebook
-// does the searching and keeps the results; this only asks, displays them by
-// position, and reports which one was chosen. It never holds a note index.
+// The search results, shown in place of the tree while the permanent search
+// field has a query. The notebook does the searching and keeps the results;
+// this only asks, displays them by position, and reports which one was
+// chosen. It never holds a note index.
 Item {
     id: pane
 
     required property var notebook
+    // What the search field says.
+    property string query: ""
 
     // The user chose result `index` (Enter or a click).
     signal activateRequested(int index)
-    // Escape.
-    signal closeRequested
 
     // Reading this inside a binding re-runs it when the results change.
     readonly property int revision: notebook.searchRevision
@@ -22,27 +23,20 @@ Item {
         revision;
         return notebook.searchCount();
     }
-    readonly property bool hasQuery: field.text.trim() !== ""
+    readonly property bool active: query.trim() !== ""
 
-    // Focus the field with what was typed last still selected.
-    function open() {
-        field.forceActiveFocus();
-        field.selectAll();
-        search(false);
-    }
-
-    // Empties the field and forgets the results.
+    // Forgets the query's results.
     function reset() {
         debounce.stop();
-        field.text = "";
         notebook.clearSearch();
+        list.currentIndex = -1;
     }
 
     // Runs the search now. `fresh` puts the highlight back on the first
     // result (the query changed); otherwise it stays where it was, so a
     // refresh caused by an edit doesn't jump around.
     function search(fresh) {
-        const matches = notebook.search(field.text);
+        const matches = notebook.search(query);
         if (matches === 0)
             list.currentIndex = -1;
         else if (fresh || list.currentIndex < 0)
@@ -51,9 +45,27 @@ Item {
             list.currentIndex = Math.min(list.currentIndex, matches - 1);
     }
 
+    // Up and Down in the field move the highlight.
+    function moveBy(step) {
+        if (step > 0)
+            list.incrementCurrentIndex();
+        else
+            list.decrementCurrentIndex();
+    }
+
     function activateCurrent() {
         if (list.currentIndex >= 0)
             activateRequested(list.currentIndex);
+    }
+
+    onQueryChanged: {
+        if (!active) {
+            // Nothing to search for: clear at once, no waiting.
+            reset();
+        } else {
+            list.currentIndex = 0;
+            debounce.restart();
+        }
     }
 
     // One short pause after the last keystroke, or after the notebook
@@ -68,90 +80,24 @@ Item {
     Connections {
         target: pane.notebook
         function onDocumentMutated() {
-            if (pane.visible && pane.hasQuery)
-                debounce.restart();
-        }
-        function onModelReset() {
-            if (pane.visible && pane.hasQuery)
+            if (pane.visible && pane.active)
                 debounce.restart();
         }
     }
 
-    ColumnLayout {
-        anchors.fill: parent
-        spacing: 0
-
-        // The query line, like a command prompt: a "/" and an underline.
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.leftMargin: Ui.medium
-            Layout.rightMargin: Ui.medium
-            Layout.topMargin: Ui.small
-            spacing: Ui.small
-
-            Label {
-                text: "/"
-                color: field.activeFocus ? Theme.accent : Theme.mutedForeground
-                font.family: Ui.monoFamily
-                font.pixelSize: 15
-            }
-            TextField {
-                id: field
-
-                Layout.fillWidth: true
-                leftPadding: 0
-                placeholderText: qsTr("search notes")
-                color: Theme.foreground
-                placeholderTextColor: Theme.mutedForeground
-                selectionColor: Theme.selection
-                selectedTextColor: Theme.selectionForeground
-                background: Rectangle {
-                    color: "transparent"
-
-                    Rectangle {
-                        anchors.bottom: parent.bottom
-                        width: parent.width
-                        height: Ui.hairline
-                        color: field.activeFocus ? Theme.accent : Theme.border
-                    }
-                }
-
-                onTextChanged: {
-                    if (text.trim() === "") {
-                        // Nothing to search for: clear at once, no waiting.
-                        debounce.stop();
-                        pane.search(true);
-                    } else {
-                        list.currentIndex = 0;
-                        debounce.restart();
-                    }
-                }
-                Keys.onDownPressed: list.incrementCurrentIndex()
-                Keys.onUpPressed: list.decrementCurrentIndex()
-                Keys.onReturnPressed: pane.activateCurrent()
-                Keys.onEnterPressed: pane.activateCurrent()
-                Keys.onEscapePressed: pane.closeRequested()
-            }
-        }
-
-        Label {
-            Layout.fillWidth: true
-            Layout.leftMargin: Ui.medium + Ui.small + 9
-            Layout.rightMargin: Ui.medium
-            Layout.topMargin: Ui.small
-            Layout.bottomMargin: Ui.small
-            color: Theme.mutedForeground
-            font.family: Ui.monoFamily
-            font.pixelSize: Ui.commandPixelSize
-            elide: Text.ElideRight
-            text: !pane.hasQuery ? qsTr("type to search notes") : (pane.count === 0 ? qsTr("no matching notes") : (pane.count === 1 ? qsTr("1 match") : qsTr("%1 matches").arg(pane.count)))
-        }
+    // A query with no matches says so, quietly.
+    Label {
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: Ui.large
+        visible: pane.active && pane.count === 0
+        text: qsTr("No matching notes")
+        color: Theme.mutedForeground
+    }
 
         ListView {
             id: list
 
-            Layout.fillWidth: true
-            Layout.fillHeight: true
+            anchors.fill: parent
             clip: true
             model: pane.count
             currentIndex: -1
@@ -231,5 +177,4 @@ Item {
                 }
             }
         }
-    }
 }
