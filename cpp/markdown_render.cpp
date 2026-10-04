@@ -1,6 +1,7 @@
 #include "markdown_render.h"
 
 #include <QtGui/QColor>
+#include <QtGui/QFontMetricsF>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QTextBlock>
 #include <QtGui/QTextCharFormat>
@@ -16,6 +17,7 @@
 #include <QtCore/QHash>
 #include <algorithm>
 #include <QtCore/QList>
+#include <QtCore/QSet>
 #include <QtCore/QRegularExpression>
 
 namespace {
@@ -107,6 +109,57 @@ QTextTableFormat flatTable(int padding, const QColor &background = QColor()) {
     return format;
 }
 
+
+bool isCodeBlock(const QTextBlock &block) {
+    const QTextBlockFormat format = block.blockFormat();
+    return format.hasProperty(QTextFormat::BlockCodeFence) ||
+           format.hasProperty(QTextFormat::BlockCodeLanguage);
+}
+
+// Qt's Markdown importer turns a hard line break (two trailing spaces, or a
+// backslash) into a new block with exactly the format of a paragraph, so the
+// document itself cannot tell "one⏎two" from "one¶two". The importer is the
+// only parser, so ask it: parse a copy of the source with the hard-break
+// markers made soft (a copy, used only here; the note is never touched) and
+// see which blocks of the real document merge into one. Those are the blocks
+// that continue the previous line. Returns the block numbers of the
+// continuations; empty if the two documents do not line up (then nothing is
+// treated as a hard break, which only means looser spacing).
+QSet<int> hardBreakContinuations(const QString &markdown, const QTextDocument &doc,
+                                 QTextDocument::MarkdownFeatures features) {
+    static const QRegularExpression trailingSpaces(QStringLiteral("[ ]{2,}(\\r?\\n)"));
+    static const QRegularExpression backslash(QStringLiteral("\\\\(\\r?\\n)"));
+    QString soft = markdown;
+    soft.replace(trailingSpaces, QStringLiteral(" \\1"));
+    soft.replace(backslash, QStringLiteral("\\1"));
+    if (soft == markdown)
+        return {};
+
+    QTextDocument other;
+    other.setMarkdown(soft, features);
+    QSet<int> continuations;
+    QTextBlock real = doc.begin();
+    for (QTextBlock merged = other.begin(); merged.isValid(); merged = merged.next()) {
+        if (!real.isValid())
+            return {};
+        if (isCodeBlock(merged)) {
+            // One block each way, whatever trailing spaces its lines have.
+            real = real.next();
+            continue;
+        }
+        QString joined = real.text();
+        real = real.next();
+        while (joined != merged.text() && real.isValid() && !isCodeBlock(real)) {
+            joined += QLatin1Char(' ') + real.text();
+            continuations.insert(real.blockNumber());
+            real = real.next();
+        }
+        if (joined != merged.text())
+            return {};
+    }
+    return real.isValid() ? QSet<int>() : continuations;
+}
+
 enum class Box { Quote, Code };
 
 // Replaces a run of blocks with the same content inside a table, because a
@@ -174,6 +227,7 @@ QString omatree_render_markdown(const QString &markdown, const QStringList &colo
     QTextDocument::MarkdownFeatures features(QTextDocument::MarkdownDialectGitHub);
     features |= QTextDocument::MarkdownNoHTML;
     doc.setMarkdown(markdown, features);
+    const QSet<int> continuations = hardBreakContinuations(markdown, doc, features);
 
     const Palette palette = Palette::parse(colorEntries);
     const qreal baseSize = doc.defaultFont().pointSizeF();
@@ -261,6 +315,32 @@ QString omatree_render_markdown(const QString &markdown, const QStringList &colo
                 links.append(range);
             else if (fragment.charFormat().fontFixedPitch() && !code)
                 codeSpans.append(range);
+        }
+    }
+
+    const qreal gap = qRound(QFontMetricsF(doc.defaultFont()).height() * 0.7);
+    // 2b. Paragraph spacing. Qt's own gap between paragraphs is a few pixels;
+    //     here it is a fixed fraction of the text's line height, so it follows
+    //     the font. A block that continues the previous line (a hard break) has
+    //     none, so only real paragraphs are set apart. Blocks that are
+    //     something else (headings, list items, quotes, code) keep their own
+    //     margins; a paragraph next to them still leaves its own gap, which
+    //     is what keeps prose from touching a code panel or a list.
+    {
+        for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
+            const QTextBlockFormat format = block.blockFormat();
+            const bool paragraph = format.headingLevel() == 0 && block.textList() == nullptr &&
+                                   format.intProperty(QTextFormat::BlockQuoteLevel) == 0 &&
+                                   !isCodeBlock(block) &&
+                                   !format.hasProperty(QTextFormat::BlockTrailingHorizontalRulerWidth);
+            if (!paragraph || gap <= 0)
+                continue;
+            QTextBlockFormat spacing;
+            spacing.setTopMargin(continuations.contains(block.blockNumber()) ? 0 : gap);
+            const QTextBlock next = block.next();
+            spacing.setBottomMargin(next.isValid() && continuations.contains(next.blockNumber()) ? 0 : gap);
+            QTextCursor cursor(block);
+            cursor.mergeBlockFormat(spacing);
         }
     }
 
@@ -414,17 +494,32 @@ QString omatree_render_markdown(const QString &markdown, const QStringList &colo
     if (palette.has("raised")) {
         // A collapsed border around a filled panel is drawn twice by the view.
         const QRegularExpression panel(
-            QStringLiteral("<table[^>]*bgcolor=\"%1\"[^>]*>").arg(palette.get("raised").name()));
+            QStringLiteral("<table[^>]*bgcolor=\"%1\"[^>]*>.*?</table>")
+                .arg(palette.get("raised").name()),
+            QRegularExpression::DotMatchesEverythingOption);
+        // The view gives a paragraph no space above it right after a table,
+        // and a panel's own margin would be painted in its background, so the
+        // gap below a code panel is a spacer line of the same height.
+        const QString spacer = QStringLiteral(
+            "<p style=\"margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; "
+            "line-height:%1px;\"><span style=\"font-size:1px;\">&nbsp;</span></p>")
+                                   .arg(gap);
         QString out;
         qsizetype last = 0;
         for (auto it = panel.globalMatch(html); it.hasNext();) {
             const QRegularExpressionMatch m = it.next();
             out += html.mid(last, m.capturedStart() - last);
-            out += m.captured().remove(QStringLiteral("border-collapse:collapse;"));
+            out += m.captured().remove(QStringLiteral("border-collapse:collapse;")) + spacer;
             last = m.capturedEnd();
         }
         html = out + html.mid(last);
     }
+    // Space above and below a list, which the view takes from the list's own
+    // margins (Qt writes them as zero) and not from its items'.
+    html.replace(QStringLiteral("<ul style=\"margin-top: 0px; margin-bottom: 0px;"),
+                 QStringLiteral("<ul style=\"margin-top: %1px; margin-bottom: %1px;").arg(gap));
+    html.replace(QStringLiteral("<ol style=\"margin-top: 0px; margin-bottom: 0px;"),
+                 QStringLiteral("<ol style=\"margin-top: %1px; margin-bottom: %1px;").arg(gap));
     if (palette.has("border")) {
         const QString rule = QStringLiteral(
             "<table width=\"100%\" border=\"0\" cellspacing=\"0\" cellpadding=\"0\" "

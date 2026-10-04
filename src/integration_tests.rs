@@ -389,3 +389,8 @@ fn keyboard_help_and_dialog_smoke() {
 fn moved_expanded_subtree_matches_the_document_when_revealed() {
     scenario("moveexpanded");
 }
+
+#[test]
+fn markdown_paragraph_and_block_spacing() {
+    scenario("spacing");
+}

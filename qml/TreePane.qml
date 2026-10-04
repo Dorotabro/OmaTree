@@ -342,6 +342,10 @@ Item {
             model: pane.notebook
             selectionModel: pane.selection
             boundsBehavior: Flickable.StopAtBounds
+            // Room above the first row, so its text lines up with the title in
+            // the editor's header instead of hugging the window edge. It is
+            // scrolling content, so scrolled back to the top it is the same.
+            topMargin: Ui.medium
             columnWidthProvider: () => tree.width
             onWidthChanged: forceLayout()
 
