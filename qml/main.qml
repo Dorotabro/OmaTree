@@ -435,6 +435,12 @@ ApplicationWindow {
             selection: selection
             onDeleteRequested: confirmDelete.askAboutSelection()
             onRenameFailed: message => root.showError(message)
+            // Escape in the editor or preview goes back to the selected note in
+            // the tree. With no note selected it does nothing.
+            onEscapeRequested: {
+                if (selection.currentIndex.valid)
+                    treePane.focusTree();
+            }
         }
     }
 

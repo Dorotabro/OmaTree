@@ -13,6 +13,9 @@ Item {
     signal deleteRequested
     // A rename was refused (for example, a sibling already has that name).
     signal renameFailed(string message)
+    // Escape in the title, the body or the preview: focus is asked to go back
+    // to the tree. Nothing is reverted or saved by it.
+    signal escapeRequested
 
     readonly property bool hasNote: selection.currentIndex.valid
 
@@ -53,6 +56,9 @@ Item {
         } else {
             refreshPreview();
             previewing = true;
+            // The preview takes the keyboard (the body it replaces had it), so
+            // Escape and the scrolling keys work there.
+            Qt.callLater(() => preview.forceActiveFocus());
         }
     }
 
@@ -160,6 +166,7 @@ Item {
                 onEditingFinished: pane.commitTitle()
                 Keys.onReturnPressed: body.forceActiveFocus()
                 Keys.onEnterPressed: body.forceActiveFocus()
+                Keys.onEscapePressed: pane.escapeRequested()
             }
             // The two modes of the body, as a pair of commands: the current
             // one is lit and underlined.
@@ -223,6 +230,7 @@ Item {
                 // Re-rendered when the text, the mode or the theme changes.
                 text: pane.previewing ? Markdown.render(pane.previewSource, pane.previewColors) : ""
                 onLinkActivated: link => pane.openLink(link)
+                Keys.onEscapePressed: pane.escapeRequested()
 
                 HoverHandler {
                     cursorShape: preview.hoveredLink !== "" ? Qt.PointingHandCursor : Qt.IBeamCursor
@@ -260,6 +268,7 @@ Item {
                 rightPadding: Ui.editorPadding
                 topPadding: Ui.large
                 background: null
+                Keys.onEscapePressed: pane.escapeRequested()
                 onTextChanged: {
                     if (!pane.loading && pane.hasNote)
                         pane.notebook.setBody(pane.selection.currentIndex, text);

@@ -404,3 +404,8 @@ fn search_header_is_permanent() {
 fn new_notes_start_in_edit_mode() {
     scenario("newnote");
 }
+
+#[test]
+fn escape_returns_to_the_tree() {
+    scenario("escape");
+}
