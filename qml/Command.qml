@@ -74,7 +74,7 @@ AbstractButton {
             font.pixelSize: Ui.commandPixelSize
             font.letterSpacing: 0.6
             font.capitalization: Font.AllUppercase
-            color: !control.enabled ? Qt.alpha(Theme.mutedForeground, 0.5) : control.down ? Theme.accentSecondary : (control.pointerOver || control.visualFocus) ? (control.danger ? Theme.danger : Theme.accent) : control.active ? Theme.foreground : control.tone
+            color: !control.enabled ? Qt.alpha(Theme.mutedForeground, 0.5) : control.down ? Theme.accentSecondary : (control.pointerOver || control.activeFocus) ? (control.danger ? Theme.danger : Theme.accent) : control.active ? Theme.foreground : control.tone
 
             Behavior on color {
                 ColorAnimation {
@@ -86,6 +86,8 @@ AbstractButton {
 
     background: Item {
         // Focus (and the current choice of a pair) as a thin line under the text.
+        // The real focus is the only source of it, whatever way the focus got
+        // here: it is the command that Enter and Space will press.
         Rectangle {
             anchors.bottom: parent.bottom
             anchors.bottomMargin: Ui.small
@@ -93,7 +95,7 @@ AbstractButton {
             width: control.contentItem.implicitWidth
             height: control.active ? Ui.bar : Ui.hairline
             color: control.danger ? Theme.danger : Theme.accent
-            visible: control.active || control.visualFocus
+            visible: control.active || control.activeFocus
         }
     }
 

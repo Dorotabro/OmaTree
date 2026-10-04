@@ -20,14 +20,61 @@ Dialog {
     // that should scroll with the keys, say).
     property Item initialFocusItem: null
 
+    // A plain Yes / No question: N and Y answer it at once, in either case.
+    readonly property bool binary: (standardButtons & Dialog.Yes) !== 0 && (standardButtons & Dialog.No) !== 0
+
     padding: Ui.large
 
     // Focus lands on the safe button, so Space and Enter work at once and
-    // Tab / Shift+Tab move on from there. Escape closes (rejects) as usual.
-    onOpened: {
+    // Tab / Shift+Tab (and the arrow keys) move on from there. Escape closes
+    // (rejects) as usual: that is No, or Cancel.
+    property Item previousFocus: null
+    onAboutToShow: {
+        previousFocus = (parent && parent.Window.window) ? parent.Window.window.activeFocusItem : null;
+        Ui.dialogsOpen++;
+    }
+    // (A beat later, because Qt itself puts the focus on an Accept-role
+    // button as the dialog opens, and without the keyboard focus mark.)
+    onOpened: Qt.callLater(focusInitial)
+    function focusInitial() {
+        if (!opened)
+            return;
         const target = initialFocusItem ? initialFocusItem : standardButton(defaultButton);
-        if (target)
-            target.forceActiveFocus(Qt.TabFocusReason);
+        if (!target)
+            return;
+        target.forceActiveFocus(Qt.TabFocusReason);
+    }
+    // Whatever had the keyboard when the dialog opened gets it back, unless
+    // another dialog has opened in the meantime and owns it now. (A beat
+    // later, when this dialog has stopped counting as open.)
+    onClosed: {
+        Ui.dialogsOpen--;
+        Qt.callLater(restoreFocus);
+    }
+    function restoreFocus() {
+        const was = previousFocus;
+        previousFocus = null;
+        if (was && was.visible && Ui.dialogsOpen === 0)
+            was.forceActiveFocus();
+    }
+
+    // N and Y, only while this dialog is open: shortcuts take precedence over
+    // everything beneath, so the keystroke reaches nothing else.
+    readonly property Shortcut noShortcut: noKey
+    readonly property Shortcut yesShortcut: yesKey
+    Shortcut {
+        id: noKey
+
+        sequences: ["N", "Shift+N"]
+        enabled: dialog.opened && dialog.binary
+        onActivated: dialog.standardButton(Dialog.No).click()
+    }
+    Shortcut {
+        id: yesKey
+
+        sequences: ["Y", "Shift+Y"]
+        enabled: dialog.opened && dialog.binary
+        onActivated: dialog.standardButton(Dialog.Yes).click()
     }
 
     background: Rectangle {
@@ -39,6 +86,8 @@ Dialog {
 
     // The button row: quiet commands, with the affirmative choice lit.
     footer: DialogButtonBox {
+        id: buttons
+
         standardButtons: dialog.standardButtons
         alignment: Qt.AlignRight
         spacing: Ui.tiny
@@ -52,6 +101,23 @@ Dialog {
         // handles its own Enter) presses the safe default.
         Keys.onReturnPressed: pressDefault()
         Keys.onEnterPressed: pressDefault()
+        // Left and Right (handled on each button below) move the real
+        // keyboard focus along the buttons, and around: past the last is the
+        // first. What shows the focus is the button's own focus state,
+        // nothing else. They are handled on the buttons because the box's own
+        // list view would otherwise take the arrow keys first and move the
+        // focus without the visible focus mark.
+        function moveFocus(step) {
+            if (count < 2)
+                return;
+            let at = -1;
+            for (let i = 0; i < count; ++i) {
+                if (itemAt(i).activeFocus)
+                    at = i;
+            }
+            const next = at < 0 ? 0 : (at + step + count) % count;
+            itemAt(next).forceActiveFocus(Qt.TabFocusReason);
+        }
         function pressDefault() {
             const button = dialog.standardButton(dialog.defaultButton);
             if (button)
@@ -63,10 +129,18 @@ Dialog {
 
             readonly property bool affirmative: DialogButtonBox.buttonRole === DialogButtonBox.AcceptRole || DialogButtonBox.buttonRole === DialogButtonBox.YesRole
 
-            // The default answer is the lit one.
-            active: dialog.opened && button === dialog.standardButton(dialog.defaultButton)
+            // (No "lit default": the only mark is the focus, and it is the
+            // button that Enter and Space will press.)
             danger: DialogButtonBox.buttonRole === DialogButtonBox.DestructiveRole || (dialog.destructive && affirmative)
             focusPolicy: Qt.StrongFocus
+            Keys.onLeftPressed: event => {
+                buttons.moveFocus(-1);
+                event.accepted = true;
+            }
+            Keys.onRightPressed: event => {
+                buttons.moveFocus(1);
+                event.accepted = true;
+            }
         }
     }
 

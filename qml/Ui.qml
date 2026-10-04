@@ -42,4 +42,8 @@ QtObject {
     // Bookkeeping for hover, not a size: changes whenever a menu or dialog
     // opens or closes. See PointerHover.
     property int popupSerial: 0
+
+    // How many OmaTree dialogs are open (bookkeeping, see ThemedDialog): the
+    // one that closes last gives the keyboard back.
+    property int dialogsOpen: 0
 }

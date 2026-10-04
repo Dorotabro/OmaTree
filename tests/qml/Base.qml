@@ -43,6 +43,17 @@ TestCase {
             while (!app.active && Date.now() < limit)
                 wait(20);
             check("the application window is active", app.active);
+            // The test process is started with libtest's own arguments, which
+            // OmaTree takes for notebook paths and complains about at startup.
+            // That message is no part of any scenario: close it first.
+            const startup = findObj(app, o => o.hasOwnProperty("standardButtons") && o.title === "OmaTree");
+            if (startup && startup.visible) {
+                startup.close();
+                const settle = Date.now() + 2000;
+                while (startup.visible && Date.now() < settle)
+                    wait(20);
+                wait(50);
+            }
             run();
         } catch (e) {
             fails++;
@@ -192,6 +203,11 @@ TestCase {
     // A footer command by its label.
     function command(text) {
         return findObj(treePane, o => o.hasOwnProperty("text") && o.text === text && o.hasOwnProperty("hint"));
+    }
+    // The N or Y shortcut of a Yes / No dialog. Fired directly, like
+    // `shortcut`; its `enabled` says whether the keystroke would act at all.
+    function dialogShortcut(dialog, key) {
+        return key === "N" ? dialog.noShortcut : dialog.yesShortcut;
     }
     function typeText(text) {
         for (let i = 0; i < text.length; ++i)

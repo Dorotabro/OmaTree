@@ -20,7 +20,7 @@ ThemedDialog {
         [qsTr("Editor"), [["Ctrl+E", qsTr("Edit / Preview")], ["Escape", qsTr("Back to the tree")], ["Ctrl+Z", qsTr("Undo")], ["Ctrl+Shift+Z", qsTr("Redo")], ["Ctrl+X / C / V", qsTr("Cut / copy / paste")], ["Ctrl+A", qsTr("Select all")]]],
         [qsTr("Search"), [["Ctrl+F", qsTr("Focus the search field")], ["Up / Down", qsTr("Choose a result")], ["Enter", qsTr("Open the result")], ["Escape", qsTr("Clear the search")]]],
         [qsTr("Files"), [["Ctrl+O", qsTr("Open a notebook")], ["Ctrl+S", qsTr("Save")], ["Ctrl+Shift+S", qsTr("Save As")]]],
-        [qsTr("General"), [["F1", qsTr("This reference")], ["Escape", qsTr("Close a dialog or menu")], ["Tab / Shift+Tab", qsTr("Move between controls")]]]
+        [qsTr("General"), [["F1", qsTr("This reference")], ["Escape", qsTr("Close a dialog or menu")], ["Left / Right", qsTr("Choose a dialog button")], ["N / Y", qsTr("No / Yes, in a Yes / No dialog")], ["Tab / Shift+Tab", qsTr("Move between controls")]]]
     ]
 
     parent: Overlay.overlay

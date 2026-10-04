@@ -94,6 +94,11 @@ ApplicationWindow {
         }
     }
 
+    // While a modal dialog is open nothing beneath it may react to the
+    // keyboard, so the application-wide shortcuts stand down. (Menus are not
+    // modal and do not count.)
+    readonly property bool modalOpen: Overlay.overlay !== null && Overlay.overlay.visible
+
     // Set once the user has chosen to throw away unsaved changes on close.
     property bool discardOnClose: false
 
@@ -381,46 +386,57 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "F1"
+        enabled: !root.modalOpen
         onActivated: root.showShortcuts()
     }
     Shortcut {
         sequence: "Ctrl+N"
+        enabled: !root.modalOpen
         onActivated: root.createRoot()
     }
     Shortcut {
         sequence: "Ctrl+Shift+N"
+        enabled: !root.modalOpen
         onActivated: root.createChild()
     }
     Shortcut {
         sequence: "Ctrl+S"
+        enabled: !root.modalOpen
         onActivated: root.saveCurrent()
     }
     Shortcut {
         sequence: "Ctrl+Shift+S"
+        enabled: !root.modalOpen
         onActivated: root.startSaveAs(null)
     }
     Shortcut {
         sequence: "Ctrl+O"
+        enabled: !root.modalOpen
         onActivated: root.requestOpen()
     }
     Shortcut {
         sequence: "Alt+Up"
+        enabled: !root.modalOpen
         onActivated: root.moveSelected(-1)
     }
     Shortcut {
         sequence: "Alt+Down"
+        enabled: !root.modalOpen
         onActivated: root.moveSelected(1)
     }
     Shortcut {
         sequence: "Ctrl+E"
+        enabled: !root.modalOpen
         onActivated: editorPane.toggleMode()
     }
     Shortcut {
         sequence: "Ctrl+F"
+        enabled: !root.modalOpen
         onActivated: treePane.startSearch()
     }
     Shortcut {
         sequence: "F2"
+        enabled: !root.modalOpen
         onActivated: if (selection.currentIndex.valid)
             editorPane.focusTitle()
     }

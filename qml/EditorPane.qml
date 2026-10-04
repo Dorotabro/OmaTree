@@ -151,7 +151,8 @@ Item {
     }
 
     function commitTitle() {
-        commitPendingTitle();
+        if (!reverting)
+            commitPendingTitle();
     }
 
     Connections {
@@ -170,11 +171,15 @@ Item {
                 return;
             // Leaving a note: its pending title is written first. If that is
             // refused the selection goes back, so the editor never shows one
-            // note while holding another note's typed title.
-            if (!pane.commitTitleFor(previous)) {
-                pane.reverting = true;
+            // note while holding another note's typed title. (`reverting`
+            // covers the whole thing: the message that a refusal shows moves
+            // the focus, which must not commit anything meanwhile.)
+            pane.reverting = true;
+            const committed = pane.commitTitleFor(previous);
+            if (!committed)
                 pane.selection.setCurrentIndex(previous, ItemSelectionModel.ClearAndSelect);
-                pane.reverting = false;
+            pane.reverting = false;
+            if (!committed) {
                 Qt.callLater(pane.focusTitle);
                 return;
             }

@@ -479,3 +479,8 @@ fn an_external_change_blocks_saving_and_autosave() {
         .unwrap();
     assert_eq!(mine, "mine", "Save As kept the in-memory version");
 }
+
+#[test]
+fn dialogs_have_one_visible_keyboard_focus() {
+    scenario("dialogs");
+}
