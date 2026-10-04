@@ -92,6 +92,7 @@ Item {
     function load(index) {
         loading = true;
         title.text = index.valid ? notebook.data(index, Qt.DisplayRole) : "";
+        loadedTitle = title.text;
         body.text = index.valid ? notebook.body(index) : "";
         loading = false;
         // A different note: show its body now, from the top.
@@ -99,21 +100,58 @@ Item {
         previewView.contentItem.contentY = 0;
     }
 
-    function commitTitle() {
-        if (loading || !hasNote)
-            return;
-        const index = selection.currentIndex;
-        const current = notebook.data(index, Qt.DisplayRole);
+    // --- The title being edited -------------------------------------------
+    // The title field is only written to the notebook when it is committed.
+    // `loadedTitle` is the title the field was filled with, so the field has
+    // a pending edit exactly when its text differs from it. A pending edit
+    // is resolved against the note it belongs to *before* that note is left
+    // (see the selection handler below and the callers in main.qml), never
+    // by waiting for the field to lose the focus, which can come too late.
+
+    property string loadedTitle: ""
+    // Set while the selection is being put back after a refused commit.
+    property bool reverting: false
+
+    readonly property bool titlePending: hasNote && title.text.trim() !== loadedTitle
+
+    // Commits the pending title of the note at `index` (the note the field
+    // was filled from). True when there is nothing pending, or it was
+    // written, or the note no longer exists (then the edit has no home).
+    // False when the notebook refused it (an empty name, a sibling with the
+    // same name): the message is shown and the typed text stays where it is,
+    // to be corrected.
+    function commitTitleFor(index) {
+        if (loading || !index.valid || title.text.trim() === loadedTitle)
+            return true;
+        if (notebook.data(index, Qt.DisplayRole) === undefined)
+            return true;
         const wanted = title.text.trim();
-        if (wanted === "" || wanted === current) {
-            title.text = current;
-        } else {
-            const error = notebook.rename(index, wanted);
-            if (error !== "") {
-                title.text = current;
-                renameFailed(error);
-            }
+        const error = notebook.rename(index, wanted);
+        if (error !== "") {
+            renameFailed(error);
+            return false;
         }
+        loadedTitle = wanted;
+        title.text = wanted;
+        return true;
+    }
+
+    // For the current note. Callers that are about to leave it (create a
+    // note, save, open, close) stop when this is false.
+    function commitPendingTitle() {
+        return commitTitleFor(selection.currentIndex);
+    }
+
+    // The note is going away (deleted, or the whole notebook replaced), so
+    // its title edit has nowhere to go.
+    function discardPendingTitle() {
+        loading = true;
+        title.text = loadedTitle;
+        loading = false;
+    }
+
+    function commitTitle() {
+        commitPendingTitle();
     }
 
     Connections {
@@ -128,6 +166,18 @@ Item {
     Connections {
         target: pane.selection
         function onCurrentChanged(current, previous) {
+            if (pane.reverting)
+                return;
+            // Leaving a note: its pending title is written first. If that is
+            // refused the selection goes back, so the editor never shows one
+            // note while holding another note's typed title.
+            if (!pane.commitTitleFor(previous)) {
+                pane.reverting = true;
+                pane.selection.setCurrentIndex(previous, ItemSelectionModel.ClearAndSelect);
+                pane.reverting = false;
+                Qt.callLater(pane.focusTitle);
+                return;
+            }
             pane.load(current);
         }
     }

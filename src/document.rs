@@ -40,10 +40,26 @@ impl fmt::Display for DocumentError {
     }
 }
 
+/// What the user is told when the file was changed behind this window's back.
+const CONFLICT_MESSAGE: &str = "This notebook was changed on disk after OmaTree opened it, \
+     so nothing was saved and the file was left as it is. Your changes are still \
+     here. Use Save As to keep your version, or reopen the notebook to use the one \
+     on disk.";
+
 impl DocumentError {
+    /// Whether this is the "changed on disk by someone else" refusal.
+    #[cfg(test)]
+    pub fn is_conflict(&self) -> bool {
+        matches!(
+            self,
+            DocumentError::Storage(StorageError::ExternallyModified)
+        )
+    }
+
     /// Short human-readable text for a failed open. The raw error is for logs.
     pub fn open_message(&self) -> String {
         match self {
+            DocumentError::Storage(StorageError::ExternallyModified) => CONFLICT_MESSAGE,
             DocumentError::Storage(StorageError::UnsupportedSchemaVersion(_)) => {
                 "This file is not a notebook this version of OmaTree can open. \
                  It was left untouched."
@@ -66,6 +82,7 @@ impl DocumentError {
     /// Short human-readable text for a failed Save As.
     pub fn save_as_message(&self) -> String {
         match self {
+            DocumentError::Storage(StorageError::ExternallyModified) => CONFLICT_MESSAGE,
             DocumentError::NotANotebook(_) => {
                 "That file already exists and is not an OmaTree notebook, so it was \
                  not overwritten."
@@ -82,6 +99,7 @@ impl DocumentError {
     /// Short human-readable text for a failed save.
     pub fn save_message(&self) -> String {
         match self {
+            DocumentError::Storage(StorageError::ExternallyModified) => CONFLICT_MESSAGE,
             DocumentError::NoPath => {
                 "This notebook has no file yet, so it can't be saved. \
                  Start OmaTree with a notebook path to save your notes."
@@ -356,6 +374,14 @@ impl Document {
             .copied()
             .filter(|id| self.notebook.get(*id).is_some())
             .collect()
+    }
+
+    /// Treats the file as it is now as seen. Tests only.
+    #[cfg(test)]
+    fn resync_for_test(&mut self) {
+        if let Some(storage) = self.storage.as_mut() {
+            storage.resync();
+        }
     }
 
     /// The expanded notes still pending to be saved. Tests only.
@@ -1712,6 +1738,9 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), before, "all-or-nothing");
 
         remove_write_guards(&path);
+        // Removing the guards was a commit by another connection.
+        doc.resync_for_test();
+
         doc.save().unwrap();
         assert_eq!(doc.dirty_domains(), (false, false));
     }
@@ -1839,6 +1868,7 @@ mod tests {
         let before = recovery_dumps(&path);
         assert!(before.iter().any(|rows| !rows.is_empty()));
         install_write_guards(&path, &RECOVERY_TABLES);
+        doc.resync_for_test();
 
         doc.set_body(NodeId::from_raw(3), "later edit").unwrap();
         doc.save()
@@ -2566,6 +2596,7 @@ mod tests {
         doc.set_expanded(projects, true);
         doc.set_body(omatree, "changed").unwrap();
         install_write_guards(&path, &RECOVERY_TABLES);
+        doc.resync_for_test();
         doc.save().unwrap();
         remove_write_guards(&path);
         assert_eq!(expanded_rows(&path), [projects.get().to_string()]);
@@ -2579,9 +2610,14 @@ mod tests {
         let mut doc = Document::open_existing(&path).unwrap();
         doc.set_expanded(projects, true);
         install_write_guards(&path, &["expanded_nodes"]);
-        assert!(doc.save().is_err());
+        doc.resync_for_test();
+        assert!(matches!(
+            doc.save(),
+            Err(DocumentError::Storage(StorageError::Sqlite(_)))
+        ));
         assert!(doc.view_dirty());
         remove_write_guards(&path);
+        doc.resync_for_test();
         assert!(expanded_rows(&path).is_empty(), "the old state is intact");
         doc.save().unwrap();
         assert_eq!(expanded_rows(&path), [projects.get().to_string()]);
@@ -2783,5 +2819,283 @@ mod tests {
         assert!(doc.notebook().get(extra).is_none());
         assert_eq!(doc.valid_expanded().len(), 1);
         assert!(!doc.is_expanded(omatree));
+    }
+
+    // ---- the checkpoint byte budget, through files ----
+
+    const MIB: usize = 1024 * 1024;
+
+    fn checkpoint_rows(path: &Path) -> i64 {
+        let conn = rusqlite::Connection::open(path).unwrap();
+        conn.query_row("SELECT count(*) FROM checkpoints", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    /// A saved notebook with five 3 MiB checkpoints (15 MiB: within the
+    /// budget), then every checkpoint row copied once more, as an older
+    /// version with a larger or no budget could have left it: 30 MiB.
+    fn file_with_excess_history(dir: &TempDir) -> PathBuf {
+        let path = dir.join("legacy.omatree");
+        let mut doc = Document::open(&path).unwrap();
+        let big = doc.create_root("Big").unwrap();
+        doc.set_body(big, &"x".repeat(3 * MIB)).unwrap();
+        doc.create_root("Other").unwrap();
+        for i in 0..5 {
+            doc.create_checkpoint(&format!("c{i}"));
+        }
+        doc.save().unwrap();
+        drop(doc);
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "INSERT INTO checkpoints (id, created_at, reason)
+                 SELECT id + 100, created_at, reason || 'b' FROM checkpoints;
+             INSERT INTO checkpoint_nodes
+                 SELECT checkpoint_id + 100, node_id, parent_id, position, title, body
+                 FROM checkpoint_nodes;",
+        )
+        .unwrap();
+        assert_eq!(checkpoint_rows(&path), 10);
+        path
+    }
+
+    #[test]
+    fn a_file_with_excess_history_opens_pruned_in_memory_and_is_not_written() {
+        let dir = TempDir::new();
+        let path = file_with_excess_history(&dir);
+        let before = file_bytes(&path);
+        let doc = Document::open_existing(&path).unwrap();
+        assert_eq!(
+            doc.recovery().checkpoints().len(),
+            5,
+            "pruned to the budget"
+        );
+        assert!(doc.recovery().checkpoint_bytes() <= crate::recovery::MAX_CHECKPOINT_BYTES);
+        assert!(!doc.is_dirty(), "opening is not a change");
+        drop(doc);
+        assert_eq!(file_bytes(&path), before, "opening wrote nothing");
+        assert_eq!(checkpoint_rows(&path), 10);
+    }
+
+    #[test]
+    fn the_next_full_save_persists_the_pruned_history_and_trash_is_untouched() {
+        let dir = TempDir::new();
+        let path = file_with_excess_history(&dir);
+        let mut doc = Document::open_existing(&path).unwrap();
+        let other = doc.notebook().roots()[1].id();
+        doc.delete(other).unwrap(); // a trash entry, and one more checkpoint
+        doc.save().unwrap();
+        drop(doc);
+        let reopened = Document::open_existing(&path).unwrap();
+        assert!(
+            checkpoint_rows(&path) <= 5,
+            "the file now holds the pruned set"
+        );
+        assert_eq!(reopened.recovery().trash().len(), 1);
+        assert_eq!(reopened.recovery().trash()[0].title(), "Other");
+    }
+
+    #[test]
+    fn restoring_a_checkpoint_still_works_after_pruning() {
+        let dir = TempDir::new();
+        let path = file_with_excess_history(&dir);
+        let mut doc = Document::open_existing(&path).unwrap();
+        let newest = doc.recovery().checkpoints().len() - 1;
+        doc.restore_checkpoint(newest).unwrap();
+        assert_eq!(doc.notebook().roots().len(), 2);
+        assert!(doc.recovery().checkpoint_bytes() <= crate::recovery::MAX_CHECKPOINT_BYTES.max(1));
+    }
+
+    // ---- two instances of one notebook ----
+
+    fn two_instances(dir: &TempDir) -> (PathBuf, Document, Document, [NodeId; 5]) {
+        let (path, ids) = saved_sample(dir, "shared.omatree");
+        let a = Document::open_existing(&path).unwrap();
+        let b = Document::open_existing(&path).unwrap();
+        (path, a, b, ids)
+    }
+
+    fn body_on_disk(path: &Path, id: NodeId) -> String {
+        Document::open_existing(path)
+            .unwrap()
+            .notebook()
+            .get(id)
+            .unwrap()
+            .body()
+            .to_string()
+    }
+
+    #[test]
+    fn a_stale_instance_cannot_overwrite_a_newer_save() {
+        let dir = TempDir::new();
+        let (path, mut a, mut b, [projects, inbox, ..]) = two_instances(&dir);
+        a.set_body(projects, "from A").unwrap();
+        a.save().unwrap();
+
+        b.set_body(inbox, "from B").unwrap();
+        let err = b.save().unwrap_err();
+        assert!(err.is_conflict(), "{err}");
+        assert!(err.save_message().contains("changed on disk"));
+        assert!(err.save_as_message().contains("Save As"));
+
+        // A's saved work is intact, and B's change did not reach the file.
+        assert_eq!(body_on_disk(&path, projects), "from A");
+        assert_eq!(body_on_disk(&path, inbox), "");
+        // B's own state is intact and still unsaved.
+        assert_eq!(b.notebook().get(inbox).unwrap().body(), "from B");
+        assert!(b.is_dirty());
+        // The refusal repeats until it is resolved.
+        assert!(b.save().unwrap_err().is_conflict());
+    }
+
+    #[test]
+    fn the_stale_instance_can_save_as_and_reopening_clears_the_conflict() {
+        let dir = TempDir::new();
+        let (path, mut a, mut b, [projects, inbox, ..]) = two_instances(&dir);
+        a.set_body(projects, "from A").unwrap();
+        a.save().unwrap();
+        b.set_body(inbox, "from B").unwrap();
+        assert!(b.save().is_err());
+
+        let copy = dir.join("mine.omatree");
+        b.save_as(&copy, false).unwrap();
+        assert!(!b.is_dirty());
+        assert_eq!(body_on_disk(&copy, inbox), "from B");
+        assert_eq!(
+            body_on_disk(&path, projects),
+            "from A",
+            "the original was not touched"
+        );
+
+        // Reopening the original gives a normal, working instance.
+        let mut again = Document::open_existing(&path).unwrap();
+        assert_eq!(again.notebook().get(projects).unwrap().body(), "from A");
+        again.set_body(inbox, "later").unwrap();
+        again.save().unwrap();
+        assert_eq!(body_on_disk(&path, inbox), "later");
+    }
+
+    #[test]
+    fn an_expansion_only_save_cannot_overwrite_external_content() {
+        let dir = TempDir::new();
+        let (path, mut a, mut b, [projects, _, omatree, ..]) = two_instances(&dir);
+        a.set_body(omatree, "from A").unwrap();
+        a.save().unwrap();
+        b.set_expanded(projects, true);
+        assert!(b.save().unwrap_err().is_conflict());
+        assert_eq!(body_on_disk(&path, omatree), "from A");
+        assert!(expanded_rows(&path).is_empty());
+        assert!(b.view_dirty(), "the view state is still pending");
+    }
+
+    #[test]
+    fn a_structural_save_cannot_overwrite_external_content() {
+        let dir = TempDir::new();
+        let (path, mut a, mut b, [projects, inbox, ..]) = two_instances(&dir);
+        a.set_body(projects, "from A").unwrap();
+        a.save().unwrap();
+        b.delete(inbox).unwrap();
+        assert_eq!(b.dirty_domains(), (true, true));
+        assert!(b.save().unwrap_err().is_conflict());
+        let disk = Document::open_existing(&path).unwrap();
+        assert!(
+            disk.notebook().get(inbox).is_some(),
+            "the delete did not reach the file"
+        );
+        assert!(disk.recovery().trash().is_empty());
+        assert_eq!(b.dirty_domains(), (true, true), "both flags survive");
+        assert_eq!(
+            b.recovery().trash().len(),
+            1,
+            "B's Trash entry is still in memory"
+        );
+    }
+
+    #[test]
+    fn instances_that_only_look_cause_no_conflict() {
+        let dir = TempDir::new();
+        let (path, mut a, mut b, [projects, ..]) = two_instances(&dir);
+        // Neither changed anything: nothing is written, nothing conflicts.
+        a.save().unwrap();
+        b.save().unwrap();
+        let mut c = Document::open_existing(&path).unwrap();
+        c.save().unwrap();
+        // Expanding and collapsing without saving is not a write either.
+        a.set_expanded(projects, true);
+        b.set_expanded(projects, false);
+        // A third instance opened after A's later save sees A's work.
+        a.save().unwrap();
+        let d = Document::open_existing(&path).unwrap();
+        assert!(d.is_expanded(projects));
+    }
+
+    #[test]
+    fn an_instances_own_saves_never_look_like_someone_elses() {
+        let dir = TempDir::new();
+        let (_, mut a, _, [projects, inbox, ..]) = two_instances(&dir);
+        for round in 0..5 {
+            a.set_body(projects, &format!("p{round}")).unwrap();
+            a.save().unwrap(); // active-only
+            a.delete(inbox).unwrap_or(());
+            a.set_expanded(projects, round % 2 == 0);
+            a.save().unwrap(); // structural / view
+            let _ = a.restore_trash(0);
+            a.save().unwrap();
+        }
+    }
+
+    #[test]
+    fn a_save_as_over_an_existing_notebook_is_not_a_conflict_with_the_old_file() {
+        let dir = TempDir::new();
+        let (_, mut a, mut b, [projects, ..]) = two_instances(&dir);
+        a.set_body(projects, "from A").unwrap();
+        a.save().unwrap();
+        // B is stale for its own file, but Save As elsewhere is unaffected.
+        b.set_body(projects, "from B").unwrap();
+        let (other, _) = saved_sample(&dir, "other.omatree");
+        b.save_as(&other, true).unwrap();
+        assert_eq!(body_on_disk(&other, projects), "from B");
+        // And B now owns `other`, so it saves there normally.
+        b.set_body(projects, "again").unwrap();
+        b.save().unwrap();
+    }
+
+    /// The Ticket 027 audit probe, kept as a manual benchmark (never part of a
+    /// normal run, and no timing is asserted): 1000 notes of 2 KB, then 100
+    /// structural changes, each saved. Run with
+    /// `cargo test --release checkpoint_benchmark -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn checkpoint_benchmark() {
+        let dir = TempDir::new();
+        let path = dir.join("bench.omatree");
+        let mut doc = Document::open(&path).unwrap();
+        let body = "x".repeat(2000);
+        let mut ids = Vec::new();
+        for i in 0..1000 {
+            let id = doc.create_root(&format!("note {i}")).unwrap();
+            doc.set_body(id, &body).unwrap();
+            ids.push(id);
+        }
+        doc.save().unwrap();
+        let start = std::fs::metadata(&path).unwrap().len();
+        let began = std::time::Instant::now();
+        let mut last = std::time::Duration::ZERO;
+        for id in ids.iter().take(100) {
+            doc.move_node(*id, None, 999).unwrap();
+            let one = std::time::Instant::now();
+            doc.save().unwrap();
+            last = one.elapsed();
+        }
+        let end = std::fs::metadata(&path).unwrap().len();
+        println!(
+            "BENCH initial {} KB, after 100 moves {} KB ({:.1}x), 100 moves+saves {:?}, final save {:?}, checkpoints kept {}, retained snapshot bytes {} KB",
+            start / 1024,
+            end / 1024,
+            end as f64 / start as f64,
+            began.elapsed(),
+            last,
+            doc.recovery().checkpoints().len(),
+            doc.recovery().checkpoint_bytes() / 1024
+        );
     }
 }

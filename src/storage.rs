@@ -80,6 +80,9 @@ const VIEW_SCHEMA: &str = "
 #[derive(Debug)]
 pub enum StorageError {
     Sqlite(rusqlite::Error),
+    /// Another connection has committed to the file since this one last
+    /// looked, so a write from what this process holds could undo it.
+    ExternallyModified,
     UnsupportedSchemaVersion(i64),
     InvalidData(String),
 }
@@ -88,6 +91,9 @@ impl fmt::Display for StorageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             StorageError::Sqlite(e) => write!(f, "database error: {e}"),
+            StorageError::ExternallyModified => {
+                write!(f, "the notebook file was changed by someone else")
+            }
             StorageError::UnsupportedSchemaVersion(v) => {
                 write!(f, "unsupported notebook schema version {v}")
             }
@@ -114,6 +120,14 @@ pub struct Storage {
     conn: Connection,
     /// Schema version of the file as it is on disk right now (1, 2 or 3).
     version: i64,
+    /// `PRAGMA data_version` of `conn`, as last seen. SQLite changes that
+    /// number for a connection when *another* connection commits, and not for
+    /// the connection's own commits, so comparing it with itself over time (on
+    /// this one connection, never with another's number) says whether anyone
+    /// else has written since. Taken when the file is opened, before it is
+    /// read, so anything slipping in between can only cause a refusal, never a
+    /// missed overwrite.
+    observed: i64,
 }
 
 impl Storage {
@@ -145,9 +159,11 @@ impl Storage {
         )?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         tx.commit()?;
+        let observed = data_version(&conn)?;
         Ok(Storage {
             conn,
             version: SCHEMA_VERSION,
+            observed,
         })
     }
 
@@ -165,7 +181,12 @@ impl Storage {
         if !(OLDEST_READABLE_VERSION..=SCHEMA_VERSION).contains(&version) {
             return Err(StorageError::UnsupportedSchemaVersion(version));
         }
-        Ok(Storage { conn, version })
+        let observed = data_version(&conn)?;
+        Ok(Storage {
+            conn,
+            version,
+            observed,
+        })
     }
 
     /// Replaces everything stored (active notebook, id counter, Trash,
@@ -181,7 +202,7 @@ impl Storage {
     ) -> Result<(), StorageError> {
         let migrating = self.version < SCHEMA_VERSION;
         let from = self.version;
-        let tx = self.conn.transaction()?;
+        let tx = self.begin_checked_write()?;
         if from < RECOVERY_VERSION {
             tx.execute_batch(RECOVERY_SCHEMA)?;
         }
@@ -208,6 +229,28 @@ impl Storage {
         tx.commit()?;
         self.version = SCHEMA_VERSION;
         Ok(())
+    }
+
+    /// Accepts the file as it is now as the baseline. Tests only: the test
+    /// helpers that install write guards are commits by another connection.
+    #[cfg(test)]
+    pub(crate) fn resync(&mut self) {
+        self.observed = data_version(&self.conn).unwrap();
+    }
+
+    /// Starts a write transaction that holds the write lock from the start
+    /// (so nobody can commit between the check and the writes) and refuses
+    /// when the file has been changed by another connection since this one
+    /// last saw it.
+    fn begin_checked_write(&mut self) -> Result<Transaction<'_>, StorageError> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if data_version(&tx)? != self.observed {
+            // Dropping `tx` rolls back; nothing was written.
+            return Err(StorageError::ExternallyModified);
+        }
+        Ok(tx)
     }
 
     /// Like `save_document_with_view`, with nothing expanded. Tests only.
@@ -238,7 +281,7 @@ impl Storage {
         if !self.is_current_schema() {
             return Err(StorageError::UnsupportedSchemaVersion(self.version));
         }
-        let tx = self.conn.transaction()?;
+        let tx = self.begin_checked_write()?;
         // Deleting the nodes also deletes their expanded rows (cascade); the
         // current set is written back below.
         tx.execute("DELETE FROM expanded_nodes", [])?;
@@ -534,6 +577,10 @@ fn read_nodes<P: rusqlite::Params>(
         ));
     }
     Ok(nodes)
+}
+
+fn data_version(conn: &Connection) -> Result<i64, StorageError> {
+    Ok(conn.pragma_query_value(None, "data_version", |row| row.get(0))?)
 }
 
 fn user_version(conn: &Connection) -> Result<i64, StorageError> {

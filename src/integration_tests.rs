@@ -224,6 +224,8 @@ fn is_test_harness_line(line: &str) -> bool {
         // The application's own report of a failed Open, which the
         // replacement scenario provokes on purpose.
         || line.starts_with("omatree: could not open ")
+        // The conflict scenario provokes refused saves on purpose.
+        || line.starts_with("omatree: save failed: the notebook file was changed by someone else")
 }
 
 /// The child process: runs the application when started by `run_in`, and
@@ -408,4 +410,72 @@ fn new_notes_start_in_edit_mode() {
 #[test]
 fn escape_returns_to_the_tree() {
     scenario("escape");
+}
+
+#[test]
+fn a_pending_title_is_never_lost() {
+    scenario("titles");
+}
+
+#[test]
+fn closing_commits_a_pending_title() {
+    let sandbox = Sandbox::new("titleclose");
+    let outcome = run_in(&sandbox, "titleclose", &[], None);
+    assert_clean(&outcome);
+    // Close committed the title and saved it, before the window went away.
+    let conn = rusqlite::Connection::open(sandbox.path("work/titleclose.omatree")).unwrap();
+    let titles: Vec<String> = conn
+        .prepare("SELECT title FROM nodes")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert!(titles.contains(&"Omega".to_string()), "{titles:?}");
+}
+
+#[test]
+fn an_external_change_blocks_saving_and_autosave() {
+    let sandbox = Sandbox::new("conflict");
+    let work = sandbox.path("work");
+    fs::create_dir_all(&work).unwrap();
+    let ready = work.join("ready");
+    let done = work.join("done");
+    let notebook = work.join("conflict.omatree");
+    // The "other instance": waits for the scenario, then commits to the file.
+    let other = {
+        let (ready, done, notebook) = (ready.clone(), done.clone(), notebook.clone());
+        thread::spawn(move || {
+            let started = Instant::now();
+            while !ready.exists() && started.elapsed() < TIMEOUT {
+                thread::sleep(Duration::from_millis(20));
+            }
+            let conn = rusqlite::Connection::open(&notebook).unwrap();
+            conn.execute(
+                "UPDATE nodes SET body = 'external' WHERE title = 'Note'",
+                [],
+            )
+            .unwrap();
+            drop(conn);
+            fs::write(&done, "x").unwrap();
+        })
+    };
+    let outcome = run_in(&sandbox, "conflict", &[], None);
+    other.join().unwrap();
+    assert_clean(&outcome);
+
+    let conn = rusqlite::Connection::open(&notebook).unwrap();
+    let body: String = conn
+        .query_row("SELECT body FROM nodes WHERE title = 'Note'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(body, "external", "the external change was not overwritten");
+    let copy = rusqlite::Connection::open(work.join("mine.omatree")).unwrap();
+    let mine: String = copy
+        .query_row("SELECT body FROM nodes WHERE title = 'Note'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(mine, "mine", "Save As kept the in-memory version");
 }

@@ -70,6 +70,9 @@ ApplicationWindow {
     Connections {
         target: notebook
         function onModelAboutToBeReset() {
+            // The notebook is being replaced: an uncommitted title belongs to
+            // the old one and has no home (New and Open committed it first).
+            editorPane.discardPendingTitle();
             selection.clear();
             selection.clearCurrentIndex();
         }
@@ -187,6 +190,9 @@ ApplicationWindow {
 
     // Ctrl+S: save in place, or Save As if the notebook has no file yet.
     function saveCurrent() {
+        // What is typed in the title is part of what is saved.
+        if (!editorPane.commitPendingTitle())
+            return;
         if (notebook.hasPath()) {
             autosaveTimer.stop();
             save();
@@ -196,6 +202,8 @@ ApplicationWindow {
     }
 
     function startSaveAs(then) {
+        if (!editorPane.commitPendingTitle())
+            return;
         autosaveTimer.stop();
         afterSaveAs = then;
         saveDialog.open();
@@ -240,12 +248,18 @@ ApplicationWindow {
     }
 
     function requestOpen() {
+        if (!editorPane.commitPendingTitle())
+            return;
         whenSafeToLeave(() => openDialog.open());
     }
 
     // File ▸ New Notebook: the same "may I leave this document?" check as
     // Open and Close, then a fresh untitled document in place of this one.
     function requestNewNotebook() {
+        // A title still being typed is committed before anything else is
+        // asked; one the notebook refuses stops the transition.
+        if (!editorPane.commitPendingTitle())
+            return;
         whenSafeToLeave(() => {
             // Out of Search first, so the new document inherits nothing from
             // the old one; the model then resets and clears the selection.
@@ -266,7 +280,15 @@ ApplicationWindow {
     // ahead. Otherwise the close is held back and the user is asked; their
     // answer closes the window again, which is why `discardOnClose` exists.
     onClosing: close => {
-        if (discardOnClose || flushPendingChanges())
+        if (discardOnClose)
+            return;
+        // The title being typed is committed first, so that it takes part in
+        // the save (or the question) below. A refused one keeps the window.
+        if (!editorPane.commitPendingTitle()) {
+            close.accepted = false;
+            return;
+        }
+        if (flushPendingChanges())
             return;
         close.accepted = false;
         confirmUnsaved.ask(() => {
@@ -303,6 +325,8 @@ ApplicationWindow {
     // title is what gets the focus, as before. A failed creation changes
     // nothing at all.
     function createRoot() {
+        if (!editorPane.commitPendingTitle())
+            return;
         const index = notebook.createDefaultRoot();
         if (!index.valid)
             return;
@@ -313,6 +337,8 @@ ApplicationWindow {
 
     function createChild() {
         if (!selection.currentIndex.valid)
+            return;
+        if (!editorPane.commitPendingTitle())
             return;
         const index = notebook.createDefaultChild(selection.currentIndex);
         if (!index.valid)
@@ -336,6 +362,8 @@ ApplicationWindow {
         // Drop the selection first so no stale index survives the removal,
         // then fall back to the parent (if any).
         const parentIndex = notebook.parent(index);
+        // The note is going to Trash; a title typed for it has no home.
+        editorPane.discardPendingTitle();
         selection.clear();
         selection.clearCurrentIndex();
         notebook.removeNode(index);

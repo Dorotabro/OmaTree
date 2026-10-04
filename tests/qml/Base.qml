@@ -12,6 +12,8 @@ TestCase {
     property var app: null
     property var params: ({})
     property int fails: 0
+    // The scenario closes the window itself, as part of what it tests.
+    property bool closesItself: false
 
     name: "scenario"
     when: false
@@ -48,8 +50,10 @@ TestCase {
         }
         console.log("T> DONE fails=" + fails);
         // Closing the last window ends the application.
-        app.discardOnClose = true;
-        app.close();
+        if (!closesItself) {
+            app.discardOnClose = true;
+            app.close();
+        }
     }
 
     // --- Finding the application's parts -----------------------------------
