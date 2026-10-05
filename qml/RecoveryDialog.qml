@@ -48,8 +48,19 @@ ThemedDialog {
     modal: true
     title: qsTr("Recovery")
     standardButtons: Dialog.Close
-    // Always start on Trash.
-    onAboutToShow: tabs.currentIndex = 0
+    // Always start on Trash, with the first row current (none if empty).
+    onAboutToShow: {
+        tabs.currentIndex = 0;
+        trashList.reset();
+        checkpointList.reset();
+    }
+    // The list has the keyboard on open when it has entries; otherwise the
+    // safe default (Close) does.
+    initialFocusItem: trashCount > 0 ? trashList : null
+
+    function currentList() {
+        return tabs.currentIndex === 0 ? trashList : checkpointList;
+    }
 
     contentItem: ColumnLayout {
         spacing: 8
@@ -58,6 +69,16 @@ ThemedDialog {
             id: tabs
 
             Layout.fillWidth: true
+            // Left / Right on the header switch tab; the list never does.
+            // The destination list starts on its first row.
+            onCurrentIndexChanged: {
+                // A key on the header keeps the keyboard on the header, on the
+                // tab it has just chosen.
+                const onHeader = tabs.activeFocus || tabs.contentChildren.some(t => t.activeFocus);
+                dialog.currentList().reset();
+                if (onHeader && tabs.currentItem)
+                    Qt.callLater(() => tabs.currentItem.forceActiveFocus(Qt.TabFocusReason));
+            }
             background: Rectangle {
                 color: "transparent"
                 Rectangle {
@@ -83,14 +104,12 @@ ThemedDialog {
 
             // Trash
             Item {
-                ListView {
+                RecoveryList {
                     id: trashList
+                    objectName: "trashList"
 
-                    anchors.fill: parent
-                    clip: true
                     model: dialog.trashCount
-                    boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: ScrollBar {}
+                    onRestoreCurrent: dialog.finish(dialog.notebook.restoreTrash(currentIndex))
 
                     delegate: RecoveryRow {
                         required property int index
@@ -119,14 +138,12 @@ ThemedDialog {
 
             // Checkpoints
             Item {
-                ListView {
+                RecoveryList {
                     id: checkpointList
+                    objectName: "checkpointList"
 
-                    anchors.fill: parent
-                    clip: true
                     model: dialog.checkpointCount
-                    boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: ScrollBar {}
+                    onRestoreCurrent: dialog.finish(dialog.notebook.restoreCheckpoint(currentIndex))
 
                     delegate: RecoveryRow {
                         required property int index
@@ -157,6 +174,9 @@ ThemedDialog {
     component RecoveryTab: TabButton {
         id: tab
 
+        // The header is one stop for Tab (on the current tab); Left / Right
+        // choose the other.
+        focusPolicy: checked ? Qt.StrongFocus : Qt.NoFocus
         contentItem: Label {
             text: tab.text
             horizontalAlignment: Text.AlignHCenter
@@ -179,6 +199,66 @@ ThemedDialog {
         }
     }
 
+    // A list of either kind. The ListView's own currentIndex is the one
+    // selection: Up / Down move it (bounded, no wrap), Enter / Space restore
+    // that row through the same path as its RESTORE command, and the row it
+    // marks is the row they restore. The mark shows only while the list has
+    // the keyboard, so it never competes with another focus mark.
+    component RecoveryList: ListView {
+        id: list
+
+        signal restoreCurrent
+
+        // First row current, or nothing when empty.
+        // (The view gives the keyboard focus to its current row whenever that
+        // changes; where the focus was is put back, so that choosing a tab
+        // leaves it on the tab header.)
+        function reset() {
+            const window = Window.window;
+            const was = window ? window.activeFocusItem : null;
+            currentIndex = count > 0 ? 0 : -1;
+            positionViewAtBeginning();
+            if (was && window.activeFocusItem !== was)
+                was.forceActiveFocus(Qt.TabFocusReason);
+        }
+
+        anchors.fill: parent
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        activeFocusOnTab: true
+        keyNavigationEnabled: true
+        keyNavigationWraps: false
+        highlightMoveDuration: 0
+        highlightFollowsCurrentItem: true
+        ScrollBar.vertical: ScrollBar {}
+        // Entries come and go while open: never leave the selection dangling.
+        onCountChanged: {
+            if (count === 0)
+                currentIndex = -1;
+            else if (currentIndex < 0)
+                currentIndex = 0;
+            else if (currentIndex >= count)
+                currentIndex = count - 1;
+        }
+        highlight: Rectangle {
+            visible: list.activeFocus && list.currentIndex >= 0
+            color: Qt.alpha(Theme.accent, 0.12)
+            Rectangle {
+                width: Ui.bar
+                height: parent.height
+                color: Theme.accent
+            }
+        }
+        Keys.onReturnPressed: event => activate(event)
+        Keys.onEnterPressed: event => activate(event)
+        Keys.onSpacePressed: event => activate(event)
+        function activate(event) {
+            event.accepted = true;
+            if (currentIndex >= 0 && currentIndex < count)
+                restoreCurrent();
+        }
+    }
+
     // One row of either list: a title, a smaller detail line, and Restore.
     component RecoveryRow: RowLayout {
         id: row
@@ -193,6 +273,7 @@ ThemedDialog {
 
         ColumnLayout {
             Layout.fillWidth: true
+            Layout.leftMargin: Ui.medium
             spacing: 0
 
             Label {
@@ -209,6 +290,8 @@ ThemedDialog {
             }
         }
         Command {
+            // Clickable; the keyboard restores through the list instead.
+            focusPolicy: Qt.NoFocus
             text: qsTr("restore")
             onClicked: row.restoreClicked()
         }

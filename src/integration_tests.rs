@@ -484,3 +484,8 @@ fn an_external_change_blocks_saving_and_autosave() {
 fn dialogs_have_one_visible_keyboard_focus() {
     scenario("dialogs");
 }
+
+#[test]
+fn recovery_is_navigable_from_the_keyboard() {
+    scenario("recoverykeys");
+}
