@@ -1,6 +1,7 @@
 # Build output and release artefacts
 /target
 /dist/
+/tickets/
 
 # Qt tooling
 .qmlls.ini
