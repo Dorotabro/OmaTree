@@ -103,7 +103,7 @@ Cargo cache.
 `--remap-path-prefix` (Rust) and `-ffile-prefix-map` (C++) for the source tree,
 the Cargo home and `$HOME`. Ordinary development builds are unchanged.
 
-**For the public release (Ticket 033):** the template's `source` must become the
+**For a public release:** the template's `source` must become the
 tagged GitHub archive URL and `sha256sums` its real checksum (never `SKIP`).
 The metainfo file also needs its first `<release>` (version and date).
 
@@ -225,6 +225,17 @@ step two installs the distribution's usual desktop libraries and requires a clea
 headless run with extract-and-run. Passing: Ubuntu 20.04, Debian 11, 12 and 13,
 Ubuntu 24.04 and 26.04.
 
+## Release builds
+
+    packaging/release-build.sh v0.1.0
+
+checks the tag out into a clean temporary worktree, builds all three packages from
+it with the scripts above, and writes `dist/SHA256SUMS` for exactly those three
+files. Use it, not the day-to-day builds, for anything that is published. (The
+Arch build makes its source tarball from that checkout, with its real SHA-256.
+A PKGBUILD for a public source archive, as an AUR package would use, takes the
+archive URL and its checksum instead; see `PKGBUILD.in`.)
+
 ## Checksums
 
     packaging/checksums.sh
@@ -245,10 +256,9 @@ for the desktop entry, AppStream, MIME, icon, build-path and headless-launch
 checks. The AppImage verifier also checks the bundled Qt, plugins and QML modules,
 the library policy, the licence files, and measures the ABI.
 
-Known validator output (all formats): `desktop-file-validate` hints that
-`Office;Utility;` has two main categories; AppStream reports pedantic notes for the
-mixed-case component id (it is the fixed application id), missing release
-information (Ticket 033) and missing developer information.
+Known validator output: `desktop-file-validate` is clean. `appstreamcli validate`
+reports one pedantic note, that developer information is missing (none is
+invented to silence it). The AppStream file carries the `0.1.0` release entry.
 
 ## Release-readiness commands
 

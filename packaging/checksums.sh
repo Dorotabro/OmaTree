@@ -4,7 +4,7 @@
 #   packaging/checksums.sh
 #
 # Run it after the three build scripts. It does not sign anything and uploads
-# nothing; the release (Ticket 033) regenerates the sums from the tagged source.
+# nothing. For a release, run it after building all three from the tagged source.
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

@@ -1,8 +1,8 @@
 # OmaTree Architecture
 
-This document describes the intended technical direction.
+This document describes the technical direction and how the application is built.
 
-It is deliberately small and may evolve as implementation teaches us more.
+It is deliberately small and may evolve.
 
 ## Technology stack
 
@@ -10,7 +10,7 @@ It is deliberately small and may evolve as implementation teaches us more.
 
 Rust
 
-Responsibilities will eventually include:
+Responsibilities include:
 
 - notebook model
 - node manipulation
@@ -68,7 +68,7 @@ QML should primarily describe presentation and interaction rather than contain a
 
 ## Node model
 
-The intended conceptual model is:
+The conceptual model is:
 
     Node
     ├── id
@@ -87,27 +87,26 @@ There are no separate folder objects.
 
 ## Persistence
 
-SQLite is intended for notebook storage.
-
-The initial design should aim for one notebook corresponding to one file.
-
-The exact file extension and schema will be defined in a later ticket.
+SQLite is used for notebook storage: one notebook is one file, conventionally
+named `*.omatree` (MIME type `application/x-omatree`). The schema is versioned,
+and may change between releases.
 
 SQLite should remain an internal implementation detail.
 
 ## Note contents
 
-For the initial application, treat note contents as UTF-8 text.
+Note contents are UTF-8 text. The editor is a plain-text editor.
 
-Do not introduce a Markdown rendering engine, rich-text document model, or HTML editor unless a future ticket explicitly requires it.
+A note can be shown in a read-only Markdown Preview, rendered with Qt's built-in
+Markdown support. Preview never loads local or remote resources.
 
-Formatting capabilities can be evaluated later.
+Do not introduce a rich-text document model or HTML editor.
 
 ## Themes
 
 The application must have a generic Qt theme implementation.
 
-Omarchy support should later be provided through an optional theme integration layer.
+Omarchy support is provided through an optional theme integration layer.
 
 Conceptually:
 
@@ -129,8 +128,7 @@ Prefer the smallest practical dependency set.
 
 A dependency should solve a concrete problem rather than merely provide convenience.
 
-## Current priority
+## Scope
 
-Do not attempt to implement the complete architecture immediately.
-
-Development should proceed in small independently testable tickets.
+Keep changes small and independently testable, and preserve OmaTree's deliberately
+small scope (see `VISION.md`).

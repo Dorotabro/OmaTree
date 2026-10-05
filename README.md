@@ -1,44 +1,64 @@
 
 # OmaTree
 
-OmaTree is a simple tree-structured note-taking application.
+**OmaTree is a local-first notebook for people who think in trees.**
 
-Each node in the tree is a note, and every note can have child notes.
+A tree of notes on the left, the selected note on the right, and very little
+else. Every node in the tree is itself a note, and any note can have child notes,
+nested as deeply as you like. There are no folders or note types to think about:
+you write, press Ctrl+Shift+N, and the idea you are following gets its own note
+right under the one that spawned it.
 
-The goal is to keep the interface deliberately minimal: a tree on the left,
-text on the right, and very little else.
+## What it does
 
-OmaTree is being built with Omarchy in mind, but is intended to remain
-cross-platform.
+- **Notes in a tree.** Create, rename, nest, reorder and move notes, with the
+  mouse (drag and drop) or the keyboard (Alt+Up / Alt+Down).
+- **Markdown.** Notes are plain text; Ctrl+E switches between editing and a
+  read-only Markdown Preview. Preview never loads images or other resources,
+  local or remote.
+- **Local search.** Ctrl+F searches titles and text of the open notebook.
+- **Keyboard first.** The whole application can be driven from the keyboard;
+  F1 lists the shortcuts.
+- **Safe by default.** Autosave is silent. Deleted notes go to a persistent
+  Trash, and larger changes take recovery checkpoints, so a bad drag or an
+  accidental delete can be undone.
+- **One notebook, one file.** A notebook is a single `.omatree` file on your disk
+  (a SQLite database). No account, no cloud service, no network access, no
+  telemetry.
+- **Fits in.** On Omarchy, OmaTree follows the current theme live; elsewhere it
+  follows your system's light or dark setting.
+
+## What it deliberately is not
+
+OmaTree is small on purpose. It has no sync, collaboration, plugins, graph view,
+AI features or rich-text editing, and it is not meant to grow into a
+knowledge-management platform. See [`VISION.md`](VISION.md).
 
 ## Status
 
-OmaTree is currently in early development.
-
-It already supports:
-
-- hierarchical notes
-- plain-text note editing
-- drag-and-drop reordering and reparenting
-- SQLite notebook files
-- Open, Save and Save As
-- debounced autosave
-- persistent Trash
-- recovery checkpoints
-- recovery after destructive tree operations
-
-The UI and file format are still evolving.
-
-Do not use the current development version as the only copy of important data.
+This is the first public release, **v0.1.0**. It is early software: the
+notebook format is versioned but may still change between releases, and you
+should keep backups of notebooks that matter to you.
 
 ## Install
 
-OmaTree 0.1.0 has three Linux x86_64 packages. Pick the one for your system.
-(The files are built locally; no release has been published yet.)
+Release downloads are on the
+[GitHub Releases page](https://github.com/Dorotabro/OmaTree/releases). Every file
+is listed in `SHA256SUMS`.
+
+| System | Package | Qt |
+|---|---|---|
+| Omarchy / Arch Linux | native package | system |
+| Debian 13+, recent Ubuntu | native `.deb` | system (Qt 6.8 or newer) |
+| Other x86_64 Linux | AppImage | bundled (6.8.3) |
+| macOS | planned | |
+| Windows | planned | |
+
+There are no macOS or Windows builds yet, and no dates are promised.
 
 ### Omarchy / Arch Linux
 
-Native package; it uses the system Qt 6:
+A native package; it uses the system Qt 6:
 
     sudo pacman -U ./omatree-0.1.0-1-x86_64.pkg.tar.zst
 
@@ -46,45 +66,50 @@ Remove it with `sudo pacman -R omatree`.
 
 ### Debian / Ubuntu
 
-Native package for amd64; it uses the system Qt 6, which must be
-**newer than Qt 6.4** (OmaTree uses Qt APIs that 6.4 lacks; it has been tested
-with Qt 6.8 and 6.11). Use `apt`, not `dpkg -i`, so
-that dependencies are installed too:
+A native package for amd64 that uses the system Qt 6. OmaTree needs a newer Qt
+than Debian 12 and Ubuntu 22.04/24.04 provide (Qt 6.2 and 6.4), so the `.deb` is
+supported only where it has been tested: **Debian 13**, **Ubuntu 25.10** and
+**Ubuntu 26.04**. Use `apt`, not `dpkg -i`, so that dependencies are installed:
 
     sudo apt install ./omatree_0.1.0_amd64.deb
 
-Tested on **Debian 13**, **Ubuntu 25.10** and **Ubuntu 26.04 LTS**, plus
-derivatives with equivalent Qt 6 runtime packages. It does **not** work on
-Debian 12 or Ubuntu 22.04/24.04: they ship Qt 6.2/6.4 and the window does not
-load correctly there. For those systems use the AppImage.
-
 Remove it with `sudo apt purge omatree`.
+
+On Debian 12, Ubuntu 22.04 or 24.04, and other systems the `.deb` does not
+support, use the AppImage below.
 
 ### Other x86_64 Linux: AppImage
 
-A portable, self-contained build that bundles its own Qt 6.8.3:
+A self-contained build that brings its own Qt, so it does not depend on your
+system's Qt version:
 
     chmod +x OmaTree-0.1.0-x86_64.AppImage
     ./OmaTree-0.1.0-x86_64.AppImage [notebook.omatree]
 
-It needs glibc 2.30 or newer and the usual desktop libraries of any Linux
-desktop (OpenGL/EGL, X11 or Wayland client libraries, fontconfig, FreeType,
-libxkbcommon). Tested on Ubuntu 20.04, Debian 11, 12 and 13, and Ubuntu 24.04
-and 26.04 (headless), and on Arch Linux with a real Wayland session. If FUSE is
-not available, run it with `APPIMAGE_EXTRACT_AND_RUN=1`.
+- The measured binary requirement is **glibc 2.30 or newer** (and libstdc++ from
+  GCC 5 or newer), on x86_64.
+- It also needs the usual libraries of a Linux desktop: OpenGL/EGL, the X11 or
+  Wayland client libraries, fontconfig, FreeType and libxkbcommon.
+- Tested on Ubuntu 20.04, Debian 11, 12 and 13, and Ubuntu 24.04 and 26.04
+  (headless), and on Arch Linux with real Wayland and X11 (XWayland) sessions.
+- Without FUSE, run it with `APPIMAGE_EXTRACT_AND_RUN=1`.
 
-Running the file works as it is; it does not install itself. Menu entries and
-the `.omatree` file association need an AppImage integration tool of your
-desktop (the AppImage contains the desktop, icon and MIME files such a tool
-uses). The AppImage coexists with the native package.
+Running the file works as it is; the AppImage does not install itself. A menu
+entry and the `.omatree` file association need your desktop's AppImage
+integration tool (the AppImage contains the desktop, icon and MIME files such a
+tool uses). It can be used alongside a native package.
 
-### Building from source
+## Build from source
 
-To build from source, see [Technology](#technology) and [Testing](#testing):
-`cargo build --release` needs Qt 6 newer than 6.4 (base and declarative; tested
-with 6.8 and 6.11) and a Rust toolchain. How the three packages are built and checked is in
-[`docs/PACKAGING.md`](docs/PACKAGING.md). There are no Windows or macOS
-packages yet.
+You need a Rust toolchain and Qt 6 (base and declarative modules, with Qt Quick
+Controls, Layouts and Dialogs) newer than 6.4; Qt 6.8 and 6.11 are tested.
+On Arch: `qt6-base` and `qt6-declarative`.
+
+    cargo build --release
+    ./target/release/omatree [notebook.omatree]
+
+How the three packages are built and verified is in
+[`docs/PACKAGING.md`](docs/PACKAGING.md).
 
 ## Technology
 
@@ -149,12 +174,13 @@ cargo test
 cargo build
 ```
 
+
 Project design and development rules are documented in:
 
 - `VISION.md`
 - `ARCHITECTURE.md`
 - `AGENTS.md`
-- `tickets/`
+- `CONTRIBUTING.md`
 
 ## Design philosophy
 
@@ -187,9 +213,17 @@ the helpers; a new scenario is one new QML file plus a short test function.
 
 ## Platform support
 
-Development currently happens primarily on Linux / Omarchy.
+    Linux
+      Arch / Omarchy              native package
+      Debian 13+, Ubuntu 25.10+   native .deb (tested: Debian 13, Ubuntu 25.10, 26.04)
+      other x86_64 Linux          AppImage (glibc 2.30+)
 
-Windows and macOS support are intended, but are not yet a development priority.
+    macOS                         planned
+    Windows                       planned
+
+Development happens primarily on Arch Linux / Omarchy. macOS and Windows are
+intended eventually, and the stack (Rust, Qt 6) is cross-platform, but nothing is
+built or tested there yet, so they are not supported.
 
 ## License
 

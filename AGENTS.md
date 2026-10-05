@@ -48,7 +48,7 @@ Do not introduce:
 - networking
 - plugin systems
 
-unless a future ticket explicitly requires them.
+unless the maintainer explicitly decides otherwise.
 
 Do not replace the approved technology stack without explicit instruction.
 
@@ -79,22 +79,21 @@ Keyboard navigation should be treated as a first-class interaction method.
 
 ## Development
 
-Work only on the ticket explicitly requested.
-
-Do not begin later tickets automatically.
+Work only on the change that was asked for, and do not add functionality
+merely because it might be useful.
 
 Before making substantial changes:
 
 1. inspect the repository
-2. read the relevant ticket
-3. produce a short implementation plan
+2. read the relevant documentation (`VISION.md`, `ARCHITECTURE.md`)
+3. make a short plan
 
-Before declaring a ticket complete, run the appropriate checks.
+Before declaring a change complete, run the appropriate checks.
 
 For Rust code, normally:
 
     cargo fmt --check
-    cargo clippy
+    cargo clippy --all-targets
     cargo test
     cargo build
 

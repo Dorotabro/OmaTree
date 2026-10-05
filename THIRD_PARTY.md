@@ -1,10 +1,8 @@
 # Third-party software
 
-This is an inventory prepared for binary distribution (Ticket 022). It records
-what OmaTree uses and what a later packaging step must do. It is **not** a
-statement that OmaTree's distribution is already compliant, and it is not
-legal advice. Facts below come from the installed Qt files' SPDX headers and
-license texts, `Cargo.lock`/`cargo metadata`, and the crates' own sources, as
+This is an inventory prepared for binary distribution. It records what OmaTree
+uses and what a package must do. It is **not** legal advice.
+Facts below come from the installed Qt files' SPDX headers and license texts, `Cargo.lock`/`cargo metadata`, and the crates' own sources, as
 of OmaTree 0.1.0 on the development machine (Arch Linux).
 
 OmaTree itself is `MIT OR Apache-2.0` (see `LICENSE-MIT`, `LICENSE-APACHE`).
@@ -39,11 +37,11 @@ OmaTree itself is `MIT OR Apache-2.0` (see `LICENSE-MIT`, `LICENSE-APACHE`).
 - **No GPL-only Qt module is used.** (Checked: none of the modules above is
   GPL-only; GPL-only Qt add-ons such as Charts or Virtual Keyboard are not used.)
 
-### What a later packaging step must satisfy (Ticket 023)
+### What a package that bundles Qt must satisfy
 
 These follow from the LGPL-3.0 text and Qt's open-source licensing; verify
 them against the official Qt licensing documentation for the exact release
-when packaging. Writing them down here does not satisfy them.
+when packaging.
 
 - Provide the LGPL-3.0 license text (and the GPL-3.0 text it builds on) with
   the distribution, and say that OmaTree uses Qt, with a pointer to the
@@ -64,7 +62,7 @@ when packaging. Writing them down here does not satisfy them.
   installed from the distro.
 - Do not use Qt's trademarks beyond acknowledging Qt.
 
-### Qt in the AppImage (Ticket 032)
+### Qt in the AppImage
 
 The Arch and Debian/Ubuntu packages use the system's Qt and contain none. The
 **AppImage is the one format that redistributes Qt**, so for it the obligations

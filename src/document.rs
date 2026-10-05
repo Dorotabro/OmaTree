@@ -3059,7 +3059,7 @@ mod tests {
         b.save().unwrap();
     }
 
-    /// The Ticket 027 audit probe, kept as a manual benchmark (never part of a
+    /// The pre-release audit probe, kept as a manual benchmark (never part of a
     /// normal run, and no timing is asserted): 1000 notes of 2 KB, then 100
     /// structural changes, each saved. Run with
     /// `cargo test --release checkpoint_benchmark -- --ignored --nocapture`.

@@ -1,4 +1,4 @@
-# Disposable build environment for the AppImage (Ticket 032).
+# Disposable build environment for the AppImage.
 #
 # Build userspace: Ubuntu 20.04 (glibc 2.31), pinned by digest. An AppImage can
 # run on nothing older than the userspace it was built in, so the oldest

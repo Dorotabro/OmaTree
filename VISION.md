@@ -16,7 +16,7 @@ For example:
     ├── OmaTree
     │   ├── Ideas
     │   └── Bugs
-    └── Threatwright
+    └── Website
         ├── Architecture
         └── Roadmap
 
@@ -34,7 +34,7 @@ The intended interface is approximately:
     │   ├ OmaTree        │                             │
     │   │ ├ Ideas        │ A stupidly simple tree      │
     │   │ └ Bugs         │ of notes.                   │
-    │   └ Threatwright   │                             │
+    │   └ Website   │                             │
     │                    │                             │
     │                    │                             │
     └────────────────────┴─────────────────────────────┘

@@ -1,4 +1,20 @@
+# Build output and release artefacts
 /target
+/dist/
+
+# Qt tooling
 .qmlls.ini
 
-/dist/
+# Notebooks and their SQLite sidecars: personal data, never source
+*.omatree
+*.omatree-journal
+*.omatree-wal
+*.omatree-shm
+
+# Editor leftovers and crash dumps
+*.swp
+*.swo
+*~
+/core
+/core.*
+*.core

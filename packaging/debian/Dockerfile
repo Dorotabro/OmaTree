@@ -1,4 +1,4 @@
-# Disposable build environment for the Debian/Ubuntu package (Ticket 032).
+# Disposable build environment for the Debian/Ubuntu package.
 # Debian 13 (trixie), pinned by digest; its system Qt 6.8 is what the package is
 # built against. (Debian 12's Qt 6.4 is too old: OmaTree's QML needs newer.)
 # Debian's own Rust is far too old, so the toolchain comes from a pinned,

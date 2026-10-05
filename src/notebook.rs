@@ -833,7 +833,7 @@ mod tests {
 
     #[test]
     fn reorders_a_root_downward_to_its_final_position() {
-        // The example from the ticket: move B to final position 3.
+        // The worked example: move B to final position 3.
         let (mut nb, [_, b, ..]) = four_roots();
         assert!(nb.move_node(b, None, 3).unwrap());
         assert_eq!(order(&nb, None), ["A", "C", "D", "B"]);
