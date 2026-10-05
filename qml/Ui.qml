@@ -34,9 +34,10 @@ QtObject {
     readonly property int hoverDuration: 80
 
     // Command-like details (the strip, shortcut hints, mode switch) use the
-    // platform's fixed-width font, asked for by generic family and never by
-    // name, at a small size.
-    readonly property string monoFamily: "monospace"
+    // platform's fixed-width font at a small size: the generic family where
+    // the system resolves one (fontconfig), and macOS's own fixed-width font,
+    // which has no generic "monospace" family.
+    readonly property string monoFamily: Qt.platform.os === "osx" ? "Menlo" : "monospace"
     readonly property int commandPixelSize: 12
 
     // Bookkeeping for hover, not a size: changes whenever a menu or dialog

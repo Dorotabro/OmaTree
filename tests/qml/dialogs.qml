@@ -58,7 +58,7 @@ Base {
         until("the arrows wrap: Right from YES is NO", () => onlyFocused(confirmDelete, Dialog.No));
         keyClick(Qt.Key_Left);
         until("and Left from NO is YES", () => onlyFocused(confirmDelete, Dialog.Yes));
-        check("while open, nothing beneath reacts: application shortcuts stand down", !findObj(app, o => o.hasOwnProperty("sequence") && o.hasOwnProperty("enabled") && o.sequence.toString() === "Ctrl+N").enabled);
+        check("while open, nothing beneath reacts: application shortcuts stand down", !findShortcut("Ctrl+N").enabled);
         keyClick(Qt.Key_Return);
         until("Right + Enter moves the note to Trash", () => !confirmDelete.visible && rowsNow() === three - 1 && notebook.trashCount() === 1);
         restore();

@@ -16,6 +16,8 @@ use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
 extern "C" {
     /// `cpp/app_identity.cpp`: sets the window icon from the compiled-in PNGs.
     fn omatree_install_window_icon();
+    /// `cpp/keyboard_policy.cpp`: lets Tab reach every control on macOS.
+    fn omatree_apply_keyboard_policy();
 }
 
 /// How the desktop knows OmaTree: the name, and the desktop-file id (without
@@ -62,6 +64,8 @@ pub fn run_app() {
     // SAFETY: a plain C++ function with no arguments, called once on the main
     // thread after the QGuiApplication exists.
     unsafe { omatree_install_window_icon() };
+    // SAFETY: as above.
+    unsafe { omatree_apply_keyboard_policy() };
     let mut engine = QQmlApplicationEngine::new();
 
     if let Some(engine) = engine.as_mut() {

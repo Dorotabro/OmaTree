@@ -3,6 +3,7 @@ use cxx_qt_build::{CxxQtBuilder, QResource, QResources, QmlFile, QmlModule};
 fn main() {
     CxxQtBuilder::new_qml_module(QmlModule::new("org.omatree").qml_files([
         QmlFile::from("qml/Ui.qml").singleton(true),
+        QmlFile::from("qml/Keymap.qml").singleton(true),
         QmlFile::from("qml/main.qml"),
         QmlFile::from("qml/TreePane.qml"),
         QmlFile::from("qml/EditorPane.qml"),
@@ -23,6 +24,7 @@ fn main() {
     ])
     .cpp_file("cpp/markdown_render.cpp")
     .cpp_file("cpp/app_identity.cpp")
+    .cpp_file("cpp/keyboard_policy.cpp")
     // The application icon, compiled into the executable (see
     // cpp/app_identity.cpp), so the window has it however OmaTree is started.
     .qrc_resources(

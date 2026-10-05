@@ -15,12 +15,12 @@ ThemedDialog {
 
     // The sections, in the order shown: [heading, [[keys, what it does], ...]].
     readonly property var sections: [
-        [qsTr("Notes"), [["Ctrl+N", qsTr("New note")], ["Ctrl+Shift+N", qsTr("New child")], ["F2", qsTr("Rename the note")], ["Delete", qsTr("Move the note to Trash (in the tree)")], ["Alt+Up", qsTr("Move the note up")], ["Alt+Down", qsTr("Move the note down")]]],
-        [qsTr("Tree"), [["Up / Down", qsTr("Move through the notes")], ["Enter", qsTr("Edit the note")], ["Left / Right", qsTr("Collapse / expand")], ["Ctrl+Left", qsTr("Collapse the subtree")], ["Ctrl+Right", qsTr("Expand the subtree")], ["Ctrl+Click", qsTr("Toggle a whole subtree (marker)")], ["Shift+F10", qsTr("Open the tree menu")], ["Menu key", qsTr("Open the tree menu")]]],
-        [qsTr("Editor"), [["Ctrl+E", qsTr("Edit / Preview")], ["Escape", qsTr("Back to the tree")], ["Ctrl+Z", qsTr("Undo")], ["Ctrl+Shift+Z", qsTr("Redo")], ["Ctrl+X / C / V", qsTr("Cut / copy / paste")], ["Ctrl+A", qsTr("Select all")]]],
-        [qsTr("Search"), [["Ctrl+F", qsTr("Focus the search field")], ["Up / Down", qsTr("Choose a result")], ["Enter", qsTr("Open the result")], ["Escape", qsTr("Clear the search")]]],
-        [qsTr("Files"), [["Ctrl+O", qsTr("Open a notebook")], ["Ctrl+S", qsTr("Save")], ["Ctrl+Shift+S", qsTr("Save As")]]],
-        [qsTr("General"), [["F1", qsTr("This reference")], ["Escape", qsTr("Close a dialog or menu")], ["Left / Right", qsTr("Choose a dialog button")], ["N / Y", qsTr("No / Yes, in a Yes / No dialog")], ["Tab / Shift+Tab", qsTr("Move between controls")]]]
+        [qsTr("Notes"), [[Keymap.text(Keymap.newNote), qsTr("New note")], [Keymap.text(Keymap.newChild), qsTr("New child")], [Keymap.text(Keymap.rename), qsTr("Rename the note")], ["Delete", qsTr("Move the note to Trash (in the tree)")], [Keymap.text(Keymap.moveUp), qsTr("Move the note up")], [Keymap.text(Keymap.moveDown), qsTr("Move the note down")]]],
+        [qsTr("Tree"), [["Up / Down", qsTr("Move through the notes")], ["Enter", qsTr("Edit the note")], ["Left / Right", qsTr("Collapse / expand")], [Keymap.text(["Ctrl+Left"]), qsTr("Collapse the subtree")], [Keymap.text(["Ctrl+Right"]), qsTr("Expand the subtree")], [Keymap.withCtrl("Click"), qsTr("Toggle a whole subtree (marker)")], ["Shift+F10", qsTr("Open the tree menu")], ["Menu key", qsTr("Open the tree menu")]]],
+        [qsTr("Editor"), [[Keymap.text(Keymap.togglePreview), qsTr("Edit / Preview")], ["Escape", qsTr("Back to the tree")], [Keymap.text(["Ctrl+Z"]), qsTr("Undo")], [Keymap.text(["Ctrl+Shift+Z"]), qsTr("Redo")], [Keymap.cutCopyPaste(), qsTr("Cut / copy / paste")], [Keymap.text(["Ctrl+A"]), qsTr("Select all")]]],
+        [qsTr("Search"), [[Keymap.text(Keymap.find), qsTr("Focus the search field")], ["Up / Down", qsTr("Choose a result")], ["Enter", qsTr("Open the result")], ["Escape", qsTr("Clear the search")]]],
+        [qsTr("Files"), [[Keymap.text(Keymap.open), qsTr("Open a notebook")], [Keymap.text(Keymap.save), qsTr("Save")], [Keymap.text(Keymap.saveAs), qsTr("Save As")]].concat(Keymap.mac ? [[Keymap.text(Keymap.closeWindow), qsTr("Close the window")]] : [])],
+        [qsTr("General"), [[Keymap.text(Keymap.help), qsTr("This reference")], ["Escape", qsTr("Close a dialog or menu")], ["Left / Right", qsTr("Choose a dialog button")], ["N / Y", qsTr("No / Yes, in a Yes / No dialog")], ["Tab / Shift+Tab", qsTr("Move between controls")]]]
     ]
 
     parent: Overlay.overlay

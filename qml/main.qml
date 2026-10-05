@@ -132,7 +132,7 @@ ApplicationWindow {
             showError(qsTr("This notebook contains duplicate note names under the same parent.\nNothing was changed. Rename the duplicates to resolve them.\nOmaTree will prevent new duplicates."));
     }
 
-    // An explicit save (Ctrl+S, the Save button of a dialog): a failure is
+    // An explicit save (the Save shortcut, the Save button of a dialog): a failure is
     // reported, because the user asked for it.
     function save() {
         const error = notebook.save();
@@ -169,7 +169,7 @@ ApplicationWindow {
             autosaveFailureShown = false;
         } else if (!autosaveFailureShown) {
             autosaveFailureShown = true;
-            showError(qsTr("Autosave failed: %1 Your changes are still open in OmaTree. Press Ctrl+S to try again.").arg(error));
+            showError(qsTr("Autosave failed: %1 Your changes are still open in OmaTree. Press %2 to try again.").arg(error).arg(Keymap.text(Keymap.save)));
         }
     }
 
@@ -193,7 +193,7 @@ ApplicationWindow {
             then();
     }
 
-    // Ctrl+S: save in place, or Save As if the notebook has no file yet.
+    // Save (Ctrl+S): save in place, or Save As if the notebook has no file yet.
     function saveCurrent() {
         // What is typed in the title is part of what is saved.
         if (!editorPane.commitPendingTitle())
@@ -385,57 +385,65 @@ ApplicationWindow {
     }
 
     Shortcut {
-        sequence: "F1"
+        sequences: Keymap.help
         enabled: !root.modalOpen
         onActivated: root.showShortcuts()
     }
     Shortcut {
-        sequence: "Ctrl+N"
+        sequences: Keymap.newNote
         enabled: !root.modalOpen
         onActivated: root.createRoot()
     }
     Shortcut {
-        sequence: "Ctrl+Shift+N"
+        sequences: Keymap.newChild
         enabled: !root.modalOpen
         onActivated: root.createChild()
     }
     Shortcut {
-        sequence: "Ctrl+S"
+        sequences: Keymap.save
         enabled: !root.modalOpen
         onActivated: root.saveCurrent()
     }
     Shortcut {
-        sequence: "Ctrl+Shift+S"
+        sequences: Keymap.saveAs
         enabled: !root.modalOpen
         onActivated: root.startSaveAs(null)
     }
     Shortcut {
-        sequence: "Ctrl+O"
+        sequences: Keymap.open
         enabled: !root.modalOpen
         onActivated: root.requestOpen()
     }
     Shortcut {
-        sequence: "Alt+Up"
+        sequences: Keymap.moveUp
         enabled: !root.modalOpen
         onActivated: root.moveSelected(-1)
     }
     Shortcut {
-        sequence: "Alt+Down"
+        sequences: Keymap.moveDown
         enabled: !root.modalOpen
         onActivated: root.moveSelected(1)
     }
     Shortcut {
-        sequence: "Ctrl+E"
+        sequences: Keymap.togglePreview
         enabled: !root.modalOpen
         onActivated: editorPane.toggleMode()
     }
     Shortcut {
-        sequence: "Ctrl+F"
+        sequences: Keymap.find
         enabled: !root.modalOpen
         onActivated: treePane.startSearch()
     }
+    // Command+W closes the window on macOS, through the same close handling
+    // (unsaved changes included) as the window's own button. Elsewhere there
+    // is no such key in OmaTree.
     Shortcut {
-        sequence: "F2"
+        sequences: Keymap.closeWindow
+        enabled: Keymap.mac && !root.modalOpen
+        onActivated: root.close()
+    }
+    Shortcut {
+        sequences: Keymap.rename
         enabled: !root.modalOpen
         onActivated: if (selection.currentIndex.valid)
             editorPane.focusTitle()
@@ -539,14 +547,7 @@ ApplicationWindow {
         standardButtons: Dialog.Save | Dialog.Discard | Dialog.Cancel
         // The Save button reads "Save As…" for a notebook with no file, and
         // Discard is not "Close without Saving", since it is also used by Open.
-        onAboutToShow: {
-            const save = standardButton(Dialog.Save);
-            if (save)
-                save.text = notebook.hasPath() ? qsTr("Save") : qsTr("Save As…");
-            const discard = standardButton(Dialog.Discard);
-            if (discard)
-                discard.text = qsTr("Discard");
-        }
+        saveText: notebook.hasPath() ? qsTr("Save") : qsTr("Save As…")
         // Save: carry on only if the save worked. A failed or cancelled save
         // keeps the current notebook and drops the pending action.
         onAccepted: {

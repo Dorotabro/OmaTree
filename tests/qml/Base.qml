@@ -188,13 +188,20 @@ TestCase {
     function saveAs(path) {
         return notebook.saveAs(path, true);
     }
+    // The application-wide `Shortcut` for `sequence`, written portably
+    // ("Ctrl+N"): the one whose key the platform shows the same way, so
+    // "Ctrl+N" finds the one bound to Command+N on macOS. Null if there is none.
+    function findShortcut(sequence) {
+        const wanted = Keymap.text([sequence]);
+        return findObj(app, o => o.hasOwnProperty("nativeText") && o.hasOwnProperty("activated") && o.nativeText === wanted);
+    }
     // Application-wide shortcuts (the `Shortcut` items of main.qml): QtTest's
     // synthetic key events do not go through Qt's shortcut map, so this fires
     // the one bound to `sequence`, which checks that it exists and is wired
     // to its action. Keys handled by items (Delete, Escape, Shift+F10, the
     // editors) are sent as real key events instead.
     function shortcut(sequence) {
-        const found = findObj(app, o => o.hasOwnProperty("sequence") && o.hasOwnProperty("activated") && o.sequence.toString() === sequence);
+        const found = findShortcut(sequence);
         if (!check("a shortcut " + sequence + " exists", found !== null))
             return;
         found.activated();

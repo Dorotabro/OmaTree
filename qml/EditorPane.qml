@@ -235,13 +235,13 @@ Item {
             // one is lit and underlined.
             Command {
                 text: qsTr("edit")
-                hint: qsTr("Edit the note   Ctrl+E")
+                hint: qsTr("Edit the note   %1").arg(Keymap.text(Keymap.togglePreview))
                 active: !pane.previewing
                 onClicked: pane.setPreviewing(false)
             }
             Command {
                 text: qsTr("preview")
-                hint: qsTr("Preview as Markdown   Ctrl+E")
+                hint: qsTr("Preview as Markdown   %1").arg(Keymap.text(Keymap.togglePreview))
                 active: pane.previewing
                 onClicked: pane.setPreviewing(true)
             }

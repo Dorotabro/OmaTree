@@ -218,7 +218,8 @@ fn assert_clean(outcome: &Outcome) {
 /// The child is a test run, so the libtest harness prints a few lines of
 /// its own around the application's output.
 fn is_test_harness_line(line: &str) -> bool {
-    line.starts_with("running ")
+    is_offscreen_default_font_note(line)
+        || line.starts_with("running ")
         || line.starts_with("test integration_tests::app_child")
         || line.starts_with("test result:")
         // The application's own report of a failed Open, which the
@@ -226,6 +227,18 @@ fn is_test_harness_line(line: &str) -> bool {
         || line.starts_with("omatree: could not open ")
         // The conflict scenario provokes refused saves on purpose.
         || line.starts_with("omatree: save failed: the notebook file was changed by someone else")
+}
+
+/// Qt's offscreen platform plugin, on macOS only, names a default font family
+/// ("Sans Serif") that macOS does not have, and Qt says so once on stderr. It
+/// is the plugin's own default, not something the application asks for (the
+/// real macOS platform plugin does not do it), so it is not an application
+/// warning. The same note about any other family still fails a run: that is how
+/// a font OmaTree asks for and the system lacks would show up.
+fn is_offscreen_default_font_note(line: &str) -> bool {
+    cfg!(target_os = "macos")
+        && line.starts_with("qt.qpa.fonts: Populating font family aliases took ")
+        && line.contains("missing font family \"Sans Serif\"")
 }
 
 /// The child process: runs the application when started by `run_in`, and
@@ -360,6 +373,9 @@ fn markdown_preview_loads_no_resources() {
     );
 }
 
+/// Omarchy is a Linux desktop: its live theme is followed (and so tested) on
+/// Linux only. Other platforms are covered by the two system-theme tests.
+#[cfg(target_os = "linux")]
 #[test]
 fn theme_follows_an_isolated_palette() {
     let sandbox = Sandbox::new("theme");
@@ -488,4 +504,75 @@ fn dialogs_have_one_visible_keyboard_focus() {
 #[test]
 fn recovery_is_navigable_from_the_keyboard() {
     scenario("recoverykeys");
+}
+
+#[test]
+fn built_in_theme_follows_the_system_scheme() {
+    scenario("systemtheme");
+}
+
+/// Off Linux an Omarchy-like theme where Linux would look for one is not read
+/// and nothing watches for it: there is no Omarchy provider on this platform.
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn an_omarchy_like_theme_is_ignored_off_linux() {
+    let sandbox = Sandbox::new("systemtheme-omarchy");
+    let state = sandbox.path("omarchy-state");
+    let theme_dir = state.join("omarchy/current/theme");
+    fs::create_dir_all(&theme_dir).unwrap();
+    fs::write(
+        theme_dir.join("colors.toml"),
+        "background = \"#101820\"\nforeground = \"#d0d0d0\"\naccent = \"#ff8800\"\n",
+    )
+    .unwrap();
+    let outcome = run_in(&sandbox, "systemtheme", &[], Some(&state));
+    assert_clean(&outcome);
+}
+
+#[test]
+fn shortcuts_hints_and_dialog_labels_fit_the_platform() {
+    scenario("keymap");
+}
+
+/// Notebooks in folders with spaces, accents, Czech and other non-ASCII
+/// letters (one of them with decomposed accents) are saved, autosaved and
+/// reopened under exactly the names given, however the path arrives.
+#[test]
+fn spaced_and_unicode_paths_save_autosave_and_reopen() {
+    let sandbox = Sandbox::new("paths");
+    let work = sandbox.path("work");
+    let names = [
+        "OmaTree Test",
+        "Příliš žluťoučký",
+        "nested/ünï ✓ 日本語/deeper still",
+        "Cafe\u{301} decomposed",
+    ];
+    let dirs: Vec<PathBuf> = names.iter().map(|n| work.join(n)).collect();
+    for dir in &dirs {
+        fs::create_dir_all(dir).unwrap();
+    }
+    let list = dirs
+        .iter()
+        .map(|d| json_string(&d.to_string_lossy()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let outcome = run_in(&sandbox, "paths", &[("dirs", format!("[{list}]"))], None);
+    assert_clean(&outcome);
+
+    for dir in &dirs {
+        // The name on disk is the one that was typed, byte for byte.
+        let listed: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| !n.ends_with("-wal") && !n.ends_with("-shm") && !n.ends_with("-journal"))
+            .collect();
+        assert_eq!(listed, ["poznámky.omatree"], "in {}", dir.display());
+        let conn = rusqlite::Connection::open(dir.join("poznámky.omatree")).unwrap();
+        let body: String = conn
+            .query_row("SELECT body FROM nodes WHERE title = 'Note'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(body.starts_with("autosaved "), "{body:?}");
+    }
 }

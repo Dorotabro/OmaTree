@@ -23,6 +23,29 @@ Dialog {
     // A plain Yes / No question: N and Y answer it at once, in either case.
     readonly property bool binary: (standardButtons & Dialog.Yes) !== 0 && (standardButtons & Dialog.No) !== 0
 
+    // The standard buttons' own text is Qt's, translated into the user's
+    // system language (on macOS, "Ano" / "Ne"), while the rest of OmaTree is
+    // English. So every standard button is labelled here, explicitly, and the
+    // process locale is left alone. The Save button may read otherwise (Save
+    // As…) for a dialog whose Save does that.
+    property string saveText: qsTr("Save")
+    readonly property var buttonTexts: ({
+            [Dialog.Yes]: qsTr("Yes"),
+            [Dialog.No]: qsTr("No"),
+            [Dialog.Save]: saveText,
+            [Dialog.Discard]: qsTr("Discard"),
+            [Dialog.Cancel]: qsTr("Cancel"),
+            [Dialog.Ok]: qsTr("OK"),
+            [Dialog.Close]: qsTr("Close")
+        })
+    function labelButtons() {
+        for (const which in buttonTexts) {
+            const button = standardButton(Number(which));
+            if (button)
+                button.text = buttonTexts[which];
+        }
+    }
+
     padding: Ui.large
 
     // Focus lands on the safe button, so Space and Enter work at once and
@@ -30,6 +53,7 @@ Dialog {
     // (rejects) as usual: that is No, or Cancel.
     property Item previousFocus: null
     onAboutToShow: {
+        labelButtons();
         previousFocus = (parent && parent.Window.window) ? parent.Window.window.activeFocusItem : null;
         Ui.dialogsOpen++;
     }

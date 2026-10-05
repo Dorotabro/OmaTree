@@ -634,13 +634,13 @@ Item {
             Command {
                 glyph: "+"
                 text: qsTr("note")
-                hint: qsTr("New note   Ctrl+N")
+                hint: qsTr("New note   %1").arg(Keymap.text(Keymap.newNote))
                 onClicked: pane.newRootRequested()
             }
             Command {
                 glyph: "+"
                 text: qsTr("child")
-                hint: qsTr("New child note   Ctrl+Shift+N")
+                hint: qsTr("New child note   %1").arg(Keymap.text(Keymap.newChild))
                 enabled: pane.selection.currentIndex.valid
                 onClicked: pane.newChildRequested()
             }
@@ -663,15 +663,15 @@ Item {
                         onTriggered: pane.newNotebookRequested()
                     }
                     CommandMenuItem {
-                        text: qsTr("Open…\tCtrl+O")
+                        text: qsTr("Open…\t%1").arg(Keymap.text(Keymap.open))
                         onTriggered: pane.openRequested()
                     }
                     CommandMenuItem {
-                        text: qsTr("Save\tCtrl+S")
+                        text: qsTr("Save\t%1").arg(Keymap.text(Keymap.save))
                         onTriggered: pane.saveRequested()
                     }
                     CommandMenuItem {
-                        text: qsTr("Save As…\tCtrl+Shift+S")
+                        text: qsTr("Save As…\t%1").arg(Keymap.text(Keymap.saveAs))
                         onTriggered: pane.saveAsRequested()
                     }
                     CommandMenuSeparator {}
@@ -681,7 +681,7 @@ Item {
                     }
                     CommandMenuSeparator {}
                     CommandMenuItem {
-                        text: qsTr("Keyboard Shortcuts\tF1")
+                        text: qsTr("Keyboard Shortcuts\t%1").arg(Keymap.text(Keymap.help))
                         onTriggered: pane.shortcutsRequested()
                     }
                 }
@@ -697,22 +697,22 @@ Item {
         readonly property bool branch: pane.contextBranch
 
         CommandMenuItem {
-            text: qsTr("New note\tCtrl+N")
+            text: qsTr("New note\t%1").arg(Keymap.text(Keymap.newNote))
             onTriggered: pane.newRootRequested()
         }
         CommandMenuItem {
-            text: qsTr("New child\tCtrl+Shift+N")
+            text: qsTr("New child\t%1").arg(Keymap.text(Keymap.newChild))
             enabled: contextMenu.onNote
             onTriggered: pane.newChildRequested()
         }
         CommandMenuSeparator {}
         CommandMenuItem {
-            text: qsTr("Expand subtree\tCtrl+Right")
+            text: qsTr("Expand subtree\t%1").arg(Keymap.text(["Ctrl+Right"]))
             enabled: contextMenu.branch
             onTriggered: pane.expandSubtree(pane.contextRow)
         }
         CommandMenuItem {
-            text: qsTr("Collapse subtree\tCtrl+Left")
+            text: qsTr("Collapse subtree\t%1").arg(Keymap.text(["Ctrl+Left"]))
             enabled: contextMenu.branch
             onTriggered: pane.collapseSubtree(pane.contextRow)
         }
