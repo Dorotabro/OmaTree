@@ -1,0 +1,31 @@
+#!/usr/bin/make -f
+# Debian packaging for OmaTree. Uses the system Qt; Rust comes from the
+# toolchain on PATH (see packaging/debian/Dockerfile).
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# Keep the build machine's paths out of the binary (Rust and C++).
+CARGO_HOME_DIR := $(or $(CARGO_HOME),$(HOME)/.cargo)
+REMAP := $(HOME)=/build/home $(CARGO_HOME_DIR)=/build/cargo $(CURDIR)=/build/omatree
+export RUSTFLAGS := $(foreach m,$(REMAP),--remap-path-prefix=$(m))
+export CFLAGS   := $(shell dpkg-buildflags --get CFLAGS) $(foreach m,$(REMAP),-ffile-prefix-map=$(m))
+export CXXFLAGS := $(shell dpkg-buildflags --get CXXFLAGS) $(foreach m,$(REMAP),-ffile-prefix-map=$(m))
+
+%:
+	dh $@
+
+override_dh_auto_clean:
+override_dh_auto_configure:
+override_dh_auto_test:
+
+override_dh_auto_build:
+	cargo build --release --locked
+
+override_dh_auto_install:
+	packaging/linux/stage.sh debian/omatree target/release/omatree
+	# Debian keeps licence texts in debian/copyright, not /usr/share/licenses.
+	rm -rf debian/omatree/usr/share/licenses
+
+# Not worth a -dbgsym package for this release.
+override_dh_strip:
+	dh_strip --no-automatic-dbgsym

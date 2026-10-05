@@ -64,6 +64,30 @@ when packaging. Writing them down here does not satisfy them.
   installed from the distro.
 - Do not use Qt's trademarks beyond acknowledging Qt.
 
+### Qt in the AppImage (Ticket 032)
+
+The Arch and Debian/Ubuntu packages use the system's Qt and contain none. The
+**AppImage is the one format that redistributes Qt**, so for it the obligations
+above apply, and are met as follows. This restates facts; it adds no legal
+conclusion beyond the audit above.
+
+- **Qt version and origin:** Qt 6.8.3, the official unmodified binary release
+  from <https://download.qt.io/> (installed with a pinned `aqtinstall`), bundled
+  with ICU 73.2 (Unicode license), which that Qt build links. Qt has no local
+  patches.
+- **Modules and plugins bundled:** listed in the AppImage's
+  `usr/share/doc/omatree/QT-NOTICE.md` (source: `packaging/appimage/QT-NOTICE.md`).
+  The AppImage build checks that every bundled `libQt6*` module is named there.
+- **Dynamic linking:** unchanged. `omatree` links `libQt6Core`, `libQt6Gui` and
+  `libQt6Qml` as shared libraries; nothing is static.
+- **Licence texts:** `Qt-LGPL-3.0.txt`, `Qt-GPL-3.0.txt`, `ICU-73.2-LICENSE.txt`,
+  and the copyright files of the other libraries copied from the build system
+  (`third-party/`, with `BUNDLED-LIBRARIES.txt`), in `usr/share/licenses/omatree/`.
+- **Replaceability and source:** the AppImage can be unpacked
+  (`--appimage-extract`) and its Qt libraries replaced; the exact Qt source is at
+  `https://download.qt.io/archive/qt/6.8/6.8.3/`. Both are explained in
+  `QT-NOTICE.md`.
+
 ## Rust dependencies
 
 Direct dependencies (all have machine-readable license metadata):
@@ -115,9 +139,13 @@ dependency that would be distributed provides one.
 
 ## Distribution checklist
 
-- [ ] LGPL-3.0 text and Qt acknowledgement included (see above).
-- [ ] The Qt libraries stay replaceable in the chosen package format.
-- [ ] Source/offer for any Qt libraries that the package itself ships.
-- [ ] Include `LICENSE-MIT`, `LICENSE-APACHE` and this file.
+- [x] LGPL-3.0 text and Qt acknowledgement included (AppImage: `QT-NOTICE.md`
+      and the licence texts; Arch and Debian ship no Qt).
+- [x] The Qt libraries stay replaceable in the chosen package format (system Qt
+      for Arch and Debian; an unpackable AppImage).
+- [x] Source/offer for any Qt libraries that the package itself ships (AppImage:
+      the `download.qt.io` link in `QT-NOTICE.md`).
+- [x] Include `LICENSE-MIT`, `LICENSE-APACHE` and this file (Debian: in
+      `/usr/share/doc/omatree/`, with `copyright`).
 - [ ] Re-run the inventory (`cargo metadata`, `readelf -d`) for the release
       commit and the Qt version actually packaged.

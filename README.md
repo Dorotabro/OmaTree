@@ -33,23 +33,58 @@ Do not use the current development version as the only copy of important data.
 
 ## Install
 
-Binary package, for **Omarchy / Arch Linux x86_64** only (it uses the system
-Qt 6):
+OmaTree 0.1.0 has three Linux x86_64 packages. Pick the one for your system.
+(The files are built locally; no release has been published yet.)
+
+### Omarchy / Arch Linux
+
+Native package; it uses the system Qt 6:
 
     sudo pacman -U ./omatree-0.1.0-1-x86_64.pkg.tar.zst
 
-Remove it with:
+Remove it with `sudo pacman -R omatree`.
 
-    sudo pacman -R omatree
+### Debian / Ubuntu
 
-`.omatree` files become associated with OmaTree after the usual desktop and MIME
-database processing that pacman's hooks perform.
+Native package for amd64; it uses the system Qt 6, which must be
+**newer than Qt 6.4** (OmaTree uses Qt APIs that 6.4 lacks; it has been tested
+with Qt 6.8 and 6.11). Use `apt`, not `dpkg -i`, so
+that dependencies are installed too:
+
+    sudo apt install ./omatree_0.1.0_amd64.deb
+
+Tested on **Debian 13**, **Ubuntu 25.10** and **Ubuntu 26.04 LTS**, plus
+derivatives with equivalent Qt 6 runtime packages. It does **not** work on
+Debian 12 or Ubuntu 22.04/24.04: they ship Qt 6.2/6.4 and the window does not
+load correctly there. For those systems use the AppImage.
+
+Remove it with `sudo apt purge omatree`.
+
+### Other x86_64 Linux: AppImage
+
+A portable, self-contained build that bundles its own Qt 6.8.3:
+
+    chmod +x OmaTree-0.1.0-x86_64.AppImage
+    ./OmaTree-0.1.0-x86_64.AppImage [notebook.omatree]
+
+It needs glibc 2.30 or newer and the usual desktop libraries of any Linux
+desktop (OpenGL/EGL, X11 or Wayland client libraries, fontconfig, FreeType,
+libxkbcommon). Tested on Ubuntu 20.04, Debian 11, 12 and 13, and Ubuntu 24.04
+and 26.04 (headless), and on Arch Linux with a real Wayland session. If FUSE is
+not available, run it with `APPIMAGE_EXTRACT_AND_RUN=1`.
+
+Running the file works as it is; it does not install itself. Menu entries and
+the `.omatree` file association need an AppImage integration tool of your
+desktop (the AppImage contains the desktop, icon and MIME files such a tool
+uses). The AppImage coexists with the native package.
+
+### Building from source
 
 To build from source, see [Technology](#technology) and [Testing](#testing):
-`cargo build --release` needs Qt 6 (base and declarative) and a Rust toolchain.
-The package itself is built with `packaging/arch/build-package.sh`; see
-[`docs/PACKAGING.md`](docs/PACKAGING.md). There are no packages for other
-platforms yet.
+`cargo build --release` needs Qt 6 newer than 6.4 (base and declarative; tested
+with 6.8 and 6.11) and a Rust toolchain. How the three packages are built and checked is in
+[`docs/PACKAGING.md`](docs/PACKAGING.md). There are no Windows or macOS
+packages yet.
 
 ## Technology
 

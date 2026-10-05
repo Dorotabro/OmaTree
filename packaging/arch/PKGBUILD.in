@@ -2,7 +2,7 @@
 #
 # Template. build-package.sh turns it into a PKGBUILD by filling in @SOURCE@
 # and @SHA256@. For a validation build the source is a snapshot tarball made
-# from the working tree. For the public release (Ticket 030) @SOURCE@ becomes
+# from the working tree. For the public release (Ticket 033) @SOURCE@ becomes
 # the URL of the tagged GitHub archive and @SHA256@ its real checksum; never
 # SKIP the checksum for a release.
 
