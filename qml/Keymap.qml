@@ -41,15 +41,23 @@ QtObject {
     }
 
     // How the platform writes `sequences` (each has one entry; the first is
-    // written). The singular `sequence` is what is given to the printer: in
-    // Qt 6.8 `Shortcut.nativeText` follows that property only, and stays empty
-    // for `sequences`.
+    // written). `Shortcut.nativeText` follows `sequences` where Qt supports
+    // that. Where it stays empty (seen on Windows), the singular `sequence`
+    // is used instead: Qt warns when that is given a StandardKey with several
+    // bindings (Linux), so it is only the fallback.
     function text(sequences) {
         const probe = printer.createObject(null, {
-            "sequence": sequences[0]
+            "sequences": sequences
         });
-        const written = probe.nativeText;
+        let written = probe.nativeText;
         probe.destroy();
+        if (written === "") {
+            const single = printer.createObject(null, {
+                "sequence": sequences[0]
+            });
+            written = single.nativeText;
+            single.destroy();
+        }
         return written;
     }
 
