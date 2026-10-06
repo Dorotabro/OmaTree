@@ -1,0 +1,47 @@
+// Windows resources of omatree.exe: the one place they are defined. build.rs
+// compiles this with the Windows SDK's rc.exe and links the result, for the
+// executable only (Windows, MSVC only).
+//
+//   1. the application icon (resource 1 is the one Explorer shows);
+//   2. the application manifest, windows/omatree.manifest (UTF-8 code page);
+//   3. the version information (what Explorer's Properties dialog shows).
+//
+// The manifest is embedded here, not by linker options, so that exactly one
+// manifest resource exists. Constants are spelled out so that no SDK header
+// (and so no INCLUDE path) is needed. The generated version.h comes from
+// build.rs and carries the version of Cargo.toml, so a version bump needs no
+// change here.
+
+#include "version.h"
+
+1 ICON "omatree.ico"
+1 24 "omatree.manifest"
+
+1 VERSIONINFO
+ FILEVERSION OMATREE_VERSION_NUM
+ PRODUCTVERSION OMATREE_VERSION_NUM
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        // 0409 = English (United States), 04b0 = Unicode.
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "FileDescription", "OmaTree"
+            VALUE "FileVersion", OMATREE_VERSION_STR
+            VALUE "InternalName", "omatree"
+            VALUE "LegalCopyright", "Copyright (c) 2026 OmaTree contributors"
+            VALUE "OriginalFilename", "omatree.exe"
+            VALUE "ProductName", "OmaTree"
+            VALUE "ProductVersion", OMATREE_VERSION_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

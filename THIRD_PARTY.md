@@ -172,3 +172,26 @@ BSD-3-Clause, Unicode-3.0 and Apache-2.0 to the LGPL (Qt, glib, libintl,
 graphite2 as one of its options) and dual licences (dbus, FreeType, zstd).
 `packaging/macos/verify-app.sh` fails the build if a bundled library is missing
 from the notices or has no licence text.
+
+## Windows installer
+
+The Windows installer (`packaging/windows/`, see `docs/PACKAGING.md`) **contains** Qt
+and the Microsoft C++ runtime, like the macOS bundle, and its notices are written from
+the finished staged tree by `packaging/windows/write-licenses.ps1`, not from this
+file's inventory:
+
+- Qt 6.8.3, the official unmodified Windows binaries (MSVC 2022, 64-bit; byte for byte
+  what `windeployqt` copies), used under the LGPL-3.0 and dynamically linked: 19 `Qt6*.dll`
+  modules, `platforms\qwindows.dll` and 14 QML plug-ins. For each module the notice gives the
+  licence Qt's own SPDX SBOM states and lists the third-party code that SBOM bundles in or
+  attributes to those modules (zlib, PCRE2, libpng, FreeType, HarfBuzz, md4c,
+  double-conversion, tinycbor, libpsl and others).
+- The licence texts of that inventory are Qt's own `LICENSES/` files at tag v6.8.3
+  (`packaging/windows/licenses/`, 22 texts) and are installed under `licenses\texts\`.
+- Five Microsoft C++ runtime DLLs (`MSVCP140`, `MSVCP140_1`, `MSVCP140_2`, `VCRUNTIME140`,
+  `VCRUNTIME140_1`, 14.44), copied unmodified from the Visual Studio 2022 Build Tools'
+  redistributable folder and installed next to the executable.
+- `LICENSE-MIT`, `LICENSE-APACHE` and this file.
+
+`packaging/windows/verify-package.ps1` fails the build if a bundled component is not
+in the notice or a listed licence has no text. The notice is an inventory, not legal advice.

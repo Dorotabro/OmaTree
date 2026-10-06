@@ -40,24 +40,87 @@ fn main() {
     )
     .build();
 
-    embed_windows_manifest();
+    embed_windows_resources();
 }
 
-/// Windows (MSVC) only: embeds `windows/omatree.manifest`, which makes the
-/// process's ANSI code page UTF-8, so that a non-ASCII command-line path
-/// reaches Qt intact. Only the executable gets it (not the test programs).
-fn embed_windows_manifest() {
-    println!("cargo:rerun-if-changed=windows/omatree.manifest");
-    let target = |name: &str| std::env::var(name).unwrap_or_default();
-    if target("CARGO_CFG_TARGET_OS") != "windows" || target("CARGO_CFG_TARGET_ENV") != "msvc" {
+/// Windows (MSVC) only: embeds the executable's resources, defined in
+/// `windows/omatree.rc`: the icon, the version information (taken from
+/// Cargo.toml) and the manifest `windows/omatree.manifest`, which makes the
+/// process's ANSI code page UTF-8 so that a non-ASCII command-line path reaches
+/// Qt intact. They go into the executable only (not the test programs), through
+/// this one path, so there is exactly one manifest resource.
+fn embed_windows_resources() {
+    use std::path::{Path, PathBuf};
+
+    for file in ["omatree.rc", "omatree.manifest", "omatree.ico"] {
+        println!("cargo:rerun-if-changed=windows/{file}");
+    }
+    let var = |name: &str| std::env::var(name).unwrap_or_default();
+    if var("CARGO_CFG_TARGET_OS") != "windows" || var("CARGO_CFG_TARGET_ENV") != "msvc" {
         return;
     }
-    let manifest = std::path::Path::new(&target("CARGO_MANIFEST_DIR"))
-        .join("windows")
-        .join("omatree.manifest");
-    println!("cargo:rustc-link-arg-bins=/MANIFEST:EMBED");
-    println!(
-        "cargo:rustc-link-arg-bins=/MANIFESTINPUT:{}",
-        manifest.display()
+    let windows_dir = Path::new(&var("CARGO_MANIFEST_DIR")).join("windows");
+    let out_dir = PathBuf::from(var("OUT_DIR"));
+
+    // The version, as the two forms a version resource needs: "0.1.1" and
+    // 0,1,1,0 (a numeric part without a pre-release suffix).
+    let number = |name: &str| var(name).parse::<u16>().unwrap_or(0);
+    let header = format!(
+        "#define OMATREE_VERSION_STR \"{}\"\n#define OMATREE_VERSION_NUM {},{},{},0\n",
+        var("CARGO_PKG_VERSION"),
+        number("CARGO_PKG_VERSION_MAJOR"),
+        number("CARGO_PKG_VERSION_MINOR"),
+        number("CARGO_PKG_VERSION_PATCH"),
+    );
+    std::fs::write(out_dir.join("version.h"), header).expect("could not write version.h");
+
+    let res = out_dir.join("omatree.res");
+    let status = std::process::Command::new(find_rc())
+        .arg("/nologo")
+        .arg("/I")
+        .arg(&windows_dir)
+        .arg("/I")
+        .arg(&out_dir)
+        .arg("/fo")
+        .arg(&res)
+        .arg(windows_dir.join("omatree.rc"))
+        .status()
+        .expect("could not run rc.exe");
+    assert!(status.success(), "rc.exe failed on windows/omatree.rc");
+    println!("cargo:rustc-link-arg-bins={}", res.display());
+}
+
+/// The Windows SDK's resource compiler: `RC` if set, else `rc.exe` on `PATH`
+/// (a Visual Studio developer shell has it), else the newest in the SDK's
+/// default location. Every MSVC setup that can link has the SDK.
+fn find_rc() -> std::path::PathBuf {
+    use std::path::PathBuf;
+
+    if let Some(rc) = std::env::var_os("RC") {
+        return PathBuf::from(rc);
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let candidate = dir.join("rc.exe");
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+    }
+    let program_files = std::env::var_os("ProgramFiles(x86)").unwrap_or_default();
+    let bin = PathBuf::from(program_files).join("Windows Kits/10/bin");
+    let mut versions: Vec<PathBuf> = std::fs::read_dir(&bin)
+        .map(|entries| entries.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    versions.sort();
+    for version in versions.iter().rev() {
+        let candidate = version.join("x64/rc.exe");
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    panic!(
+        "rc.exe (Windows SDK resource compiler) not found: run from a Visual Studio \
+         developer shell, install the Windows SDK, or set RC to the path of rc.exe"
     );
 }

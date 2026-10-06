@@ -22,6 +22,8 @@ use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
 extern "C" {
     /// `cpp/app_identity.cpp`: sets the window icon from the compiled-in PNGs.
     fn omatree_install_window_icon();
+    /// `cpp/app_identity.cpp`: the Windows taskbar identity (a no-op elsewhere).
+    fn omatree_set_app_user_model_id(id: *const std::ffi::c_char);
     /// `cpp/controls_style.cpp`: selects the Basic Qt Quick Controls style.
     fn omatree_select_controls_style();
     /// `cpp/keyboard_policy.cpp`: lets Tab reach every control on macOS.
@@ -62,6 +64,11 @@ pub fn run_app() {
     // SAFETY: a plain C++ function with no arguments, called once on the main
     // thread before any other thread or Qt object exists.
     unsafe { omatree_select_controls_style() };
+
+    // The Windows taskbar identity must be set before any window exists.
+    let app_id = std::ffi::CString::new(DESKTOP_FILE_NAME).expect("no NUL in the application id");
+    // SAFETY: `app_id` is a valid NUL-terminated string that outlives the call.
+    unsafe { omatree_set_app_user_model_id(app_id.as_ptr()) };
 
     let mut qt_app = QGuiApplication::new();
     // The application name is what the desktop calls it. (The display name is

@@ -1,0 +1,50 @@
+# Files removed from what windeployqt copied. One path (wildcards allowed) per
+# line, relative to the staged application directory; '#' starts a comment.
+#
+# Every entry rests on evidence, not on guessing (see docs/PACKAGING.md):
+#   * a traced run of the deployed application (QT_DEBUG_PLUGINS=1,
+#     QML_IMPORT_TRACE=1, and the list of modules the process really loaded)
+#     over a broad session: new note, Preview, Search, F1, Delete dialog, FILE
+#     menu, Recovery, native Open and Save As dialogs, close;
+#   * the application's own configuration: it selects the Basic Qt Quick
+#     Controls style (cpp/controls_style.cpp) and imports only QtQuick,
+#     QtQuick.Controls, QtQuick.Layouts and QtQuick.Dialogs;
+#   * the dependency audit (verify-package.ps1), which fails if anything that
+#     stays imports something removed here, and a second traced run on the
+#     pruned tree.
+# Nothing else is removed. In particular the whole Basic style, Templates,
+# Layouts, Dialogs (with their QML fallback and Labs.FolderListModel), the
+# Network and OpenGL libraries (omatree.exe links them) all stay.
+
+# Qt Quick Controls styles other than Basic: never loaded, never selected.
+Qt6QuickControls2FluentWinUI3StyleImpl.dll
+Qt6QuickControls2Fusion.dll
+Qt6QuickControls2FusionStyleImpl.dll
+Qt6QuickControls2Imagine.dll
+Qt6QuickControls2ImagineStyleImpl.dll
+Qt6QuickControls2Material.dll
+Qt6QuickControls2MaterialStyleImpl.dll
+Qt6QuickControls2Universal.dll
+Qt6QuickControls2UniversalStyleImpl.dll
+Qt6QuickControls2WindowsStyleImpl.dll
+qml\QtQuick\Controls\FluentWinUI3
+qml\QtQuick\Controls\Fusion
+qml\QtQuick\Controls\Imagine
+qml\QtQuick\Controls\Material
+qml\QtQuick\Controls\Universal
+qml\QtQuick\Controls\Windows
+
+# The native (Windows-style) controls: used by the Windows style only.
+qml\QtQuick\NativeStyle
+
+# Style variants of the Dialogs QML fallback, for styles removed above.
+qml\QtQuick\Dialogs\quickimpl\qml\+Fusion
+qml\QtQuick\Dialogs\quickimpl\qml\+Imagine
+qml\QtQuick\Dialogs\quickimpl\qml\+Material
+qml\QtQuick\Dialogs\quickimpl\qml\+Universal
+
+# Modules OmaTree's QML does not import and that were never loaded.
+Qt6QuickEffects.dll
+Qt6QuickShapes.dll
+qml\QtQuick\Effects
+qml\QtQuick\Shapes

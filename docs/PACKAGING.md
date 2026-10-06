@@ -1,7 +1,8 @@
 # Packaging
 
-How OmaTree is packaged for Linux, and what a release still needs. There are
-three formats, built from the same sources and the same desktop metadata:
+How OmaTree is packaged for Linux, macOS and Windows, and what a release still needs.
+The three Linux formats are built from the same sources and the same desktop metadata
+(macOS and Windows are below):
 
 | Format | File | Qt | Built in |
 |---|---|---|---|
@@ -390,6 +391,272 @@ Drive: the file provider adds attributes to its directories and the copy then
 fails `codesign --verify`. (`dist/macos/OmaTree.app` is stripped of them by the
 script, but a synced folder may add them back.)
 
+## Windows (x64, Inno Setup)
+
+    packaging\windows\build-installer.ps1
+
+writes `dist\OmaTree-0.1.1-x64-setup.exe` (about 13.4 MB; 47 MB installed) and
+`dist\OmaTree-0.1.1-x64-setup.exe.sha256` (`<hash>  <file>`, ready to be merged into a
+release-level `SHA256SUMS`). **Unsigned.** The version in both names is read from
+`Cargo.toml`; a version bump needs no change in `packaging\windows\`.
+
+**Status: built and tested on one Windows 11 machine (see "Clean-machine verification"
+for what that does and does not prove). Not published; the README does not yet claim
+Windows support.**
+
+### Tools
+
+| | Tested with |
+|---|---|
+| Windows | 10 1809 or later at run time (Qt 6.8's own floor); built on Windows 11 (10.0.26300) |
+| Rust | 1.99.0, `x86_64-pc-windows-msvc` |
+| C++ | MSVC 19.44 (Visual Studio 2022 Build Tools 14.44, C++ x64 workload) and Windows SDK 10.0.26100 (`rc.exe`) |
+| Qt | 6.8.3 `msvc2022_64`, the official binaries, installed with `aqtinstall` 3.3.0 (`aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 --archives qtbase qtdeclarative qtshadertools qtsvg`); the kit must have `bin\windeployqt.exe` and its `sbom\` folder |
+| Inno Setup | **6.7.3** (`winget install JRSoftware.InnoSetup`); 6.3 or later is needed (`x64compatible`) |
+
+The script finds each tool (parameters `-QtDir`, `-InnoSetup`, `-VcRedistDir`, or
+`QT_DIR`/`QMAKE`/`ISCC`, `PATH`, the usual folders), loads the Visual Studio developer
+environment itself, and stops with a message naming what is missing. It sets `QMAKE`
+for the build from the Qt kit it found, so the packaged Qt is the one it built
+against. `-SkipBuild` restages the last build; `-OutDir` changes `dist\`.
+
+### What the script does
+
+1. Reads the version from `Cargo.toml`.
+2. `cargo build --release --locked` into `target\windows` (so development builds are
+   untouched), with `--remap-path-prefix` for the checkout, Cargo and rustup,
+   `/d1trimfile` for C++, and `/PDBALTPATH:%_PDB%`: **no build-machine path is left in
+   the executable**.
+3. Stages `target\windows-package\app`: the executable, then `windeployqt --release
+   --qmldir qml` (with `--no-translations`, `--no-system-d3d-compiler`,
+   `--no-system-dxc-compiler`, `--no-opengl-sw`, `--no-compiler-runtime` and
+   `--skip-plugin-types generic,iconengines,imageformats,networkinformation,qmltooling,tls`),
+   checks that every Qt file is byte-identical to the kit's, applies `prune.txt`, adds
+   the C++ runtime, licences and notices.
+4. `verify-package.ps1 -Stage`, then compiles `OmaTree.iss`, then
+   `verify-package.ps1 -Installer`, then writes the checksum.
+
+`make-icon.ps1` regenerates `windows\omatree.ico` (committed) from `assets\logo`; run it
+only if the artwork changes. `PackagingTools.ps1` (a PE import reader and resource
+inspector, so no `dumpbin` is needed), `write-licenses.ps1` and `prune.txt` are the
+rest of `packaging\windows\`.
+
+### Identity
+
+| Item | Value |
+|---|---|
+| Installer | `OmaTree-<version>-x64-setup.exe` (Inno's setup program is itself a 32-bit executable; it installs the 64-bit application and refuses non-x64 Windows) |
+| Inno **AppId** | `{60910A77-7C66-4B5D-ABCB-3D8A4D819908}`. **Never change it**: a different AppId installs side by side instead of upgrading |
+| Windows **AUMID** | `io.github.Dorotabro.OmaTree`: the same string as the Linux desktop-file id and macOS bundle identifier (`DESKTOP_FILE_NAME` in `src/main.rs`) |
+| **ProgID** | `OmaTree.Notebook` ("OmaTree Notebook") |
+| Publisher | OmaTree contributors (the copyright holder named in `LICENSE-MIT`; no company is invented) |
+| Install location | `%LOCALAPPDATA%\Programs\OmaTree`, per user, **no administrator rights or UAC prompt** (`PrivilegesRequired=lowest`) |
+| Start menu | `OmaTree` (no folder), carrying the AUMID. A desktop shortcut is offered, **unchecked** |
+| Add/Remove Programs | "OmaTree", version, publisher, the OmaTree icon, size (Settings, Apps shows 0.1.1, 47.3 MB) |
+
+**AUMID.** `cpp/app_identity.cpp` calls `SetCurrentProcessExplicitAppUserModelID` first
+thing (Windows only), and the installer gives the Start-menu shortcut and the ProgID the
+same id. Verified on the real taskbar: one button, "OmaTree - 1 running window", whose
+automation id is `Appid: io.github.Dorotabro.OmaTree`, and `Get-StartApps` lists
+OmaTree with that AppID.
+
+### The executable's resources
+
+One path: `windows\omatree.rc`, compiled by `build.rs` with the SDK's `rc.exe` and
+linked into the executable only (not the test programs). It holds the **icon** (seven
+PNG-compressed images: 16, 24, 32, 48, 64, 128, 256 pixels; the 32 to 256 are the
+existing `assets\logo` PNGs byte for byte, the others are scaled from the 1024 one), the
+**version information** (OmaTree; description OmaTree; product and file version from
+`Cargo.toml`; copyright; no company name) and the **manifest**
+`windows\omatree.manifest` (UTF-8 active code page, `asInvoker`) as the one and only
+manifest resource: a manifest is not also given to the linker. `verify-package.ps1`
+fails on zero or two manifests, a missing icon or version resource, a console
+subsystem, or a version that differs from `Cargo.toml`. The runtime window icon
+(`cpp/app_identity.cpp`) is unchanged: Windows needs it for the title bar, taskbar and
+Alt+Tab as before.
+
+A future change that adds a resource must go into `omatree.rc`; adding another
+manifest by any route makes the link fail with a duplicate-resource error.
+
+### Qt that is bundled, and the MSVC runtime
+
+`windeployqt` copies far more than OmaTree uses (103 MB). What stays (175 files, 43 MB):
+the libraries Core, Gui, Network, OpenGL, Qml, QmlMeta, QmlModels, QmlWorkerScript,
+Quick, QuickControls2 (+Basic, BasicStyleImpl, Impl), QuickDialogs2 (+QuickImpl, Utils),
+QuickLayouts, QuickTemplates2, Labs.FolderListModel; `platforms\qwindows.dll`; the QML
+modules QtQuick (+Window, Controls with the Basic style and `impl`, Templates, Layouts,
+Dialogs with its QML fallback), QtQml (+Models, WorkerScript), Qt.labs.folderlistmodel
+(14 QML plug-ins, 123 QML files).
+
+What goes, and why (`prune.txt` and the `windeployqt` options; **every item is backed by
+evidence**, nothing is removed because it merely looks unused):
+
+- a traced run (`QT_DEBUG_PLUGINS=1`, `QML_IMPORT_TRACE=1`, the list of modules the
+  process really loaded) over new note, Preview, Search, F1, Delete dialog, FILE menu,
+  Recovery, native Open and Save As, close, with a scrubbed environment: only the Basic
+  style, Templates, Controls, Layouts and Dialogs were loaded; no other style, no Effects
+  or Shapes, no TLS, network-information, touch, icon-engine or debugger plug-in.
+  Image-format plug-ins are asked about by Qt (the icon PNGs) but are not needed: PNG is
+  built into Qt Gui, and the app icon is PNG; Markdown images are never loaded.
+- the application forces the Basic style (`cpp/controls_style.cpp`);
+- the dependency audit (nothing that stays imports anything removed) and a second traced
+  run on the pruned tree: no QML or plug-in message, every module from the application
+  folder;
+- `d3dcompiler_47.dll`, `dxcompiler.dll`, `dxil.dll`: Qt Quick ships precompiled shaders
+  and Windows has its own D3D runtime; `opengl32sw.dll` and the 25 MB `vc_redist.x64.exe`
+  that `windeployqt` copies are not shipped (see below).
+
+`QtNetwork` is linked (through the Rust Qt bindings) although OmaTree makes no network
+connection, so `Qt6Network.dll` stays and the TLS plug-ins do not.
+
+**MSVC runtime: app-local deployment.** The files import `MSVCP140`, `MSVCP140_1`,
+`MSVCP140_2`, `VCRUNTIME140` and `VCRUNTIME140_1`. The script copies exactly those
+DLLs (found by following the imports of every staged file, no more), unmodified, from
+the Visual Studio Build Tools' `VC\Redist\MSVC\<version>\x64\Microsoft.VC143.CRT`
+(14.44.35211.0), next to `omatree.exe`, where Windows finds them first (loaded and
+confirmed from the install folder, not System32). So a machine without the
+Visual C++ Redistributable works and **no prerequisite installer or download** is
+involved; the Universal CRT (`api-ms-win-crt-*`) is part of Windows 10 and later. The
+other route, running `vc_redist.x64.exe`, needs administrator rights and would break the
+per-user install, so it is not used. The licence notice says where the files came from
+and links Microsoft's redistribution documentation; it makes no further legal claim.
+
+### Dependency audit (self-containment)
+
+`verify-package.ps1 -Stage` reads the PE import table of every `.exe` and `.dll` in the
+tree: each import must be a DLL in the application folder (where Windows looks, also
+for plug-ins) or a Windows system DLL (an API-set name, or a file in `System32`).
+It also fails if `omatree.exe` contains `C:\Users`, `.cargo`, `.rustup`, `BuildTools`,
+`Visual Studio`, the checkout path or the user name, if any Qt DLL contains `C:\Qt`, or
+if the tree holds import libraries, `.pdb`s, debug Qt, headers or a redistributable
+installer. Measured on the installed app: with the Qt install folder renamed so that it
+did not exist, `PATH` reduced to `System32`, and no `QMAKE`, the app ran with all 30
+loaded modules from its own folder and none from `C:\Qt`.
+
+### Licences of what the installer contains
+
+`write-licenses.ps1` writes `licenses\THIRD_PARTY_NOTICES.md` from the **staged files**:
+every `Qt6*.dll` is looked up in the SPDX SBOMs that ship with the Qt kit
+(`sbom\qtbase-*.spdx.json`, `qtdeclarative-*.spdx.json`) for its licence and for the
+third-party code Qt bundles in that module (zlib, PCRE2, libpng, FreeType, HarfBuzz,
+md4c, double-conversion, tinycbor, the Unicode data, libpsl and its public-suffix list,
+wintab, masm and others: 42 entries; some apply to other platforms or are header-only,
+and the list errs towards including them), the Microsoft runtime files are listed with
+their versions, and 22 licence texts (the texts of Qt's own `LICENSES\` directories at
+tag v6.8.3, kept in `packaging\windows\licenses\`) are copied to `licenses\texts\`.
+The script stops if a Qt module is not in the SBOMs or a text is missing, and the
+verifier fails if a bundled file is not named in the notice or a listed licence has no
+text, so a new Qt module cannot slip in unlisted. Qt is used under the LGPL-3.0,
+dynamically linked, **unmodified** (the Qt files are checked to be byte-identical to the
+kit), and the notice says how to replace it and where the source is. The installed
+folder also holds `LICENSE-MIT`, `LICENSE-APACHE` and `THIRD_PARTY.md`. This is an
+inventory, not legal advice.
+
+### Installing, upgrading, uninstalling
+
+**What the installer writes**, all per user: the files in `{app}`; the Start-menu
+shortcut (and the optional desktop one); the uninstall entry under
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall`; and the `.omatree` type under
+`HKCU\Software\Classes`: `.omatree` (default `OmaTree.Notebook`, `Content Type`
+`application/x-omatree`, `OpenWithProgids`) and the ProgID `OmaTree.Notebook` with its
+friendly name, `AppUserModelID`, `DefaultIcon` (`"{app}\omatree.exe",0`) and
+`shell\open\command` = `"{app}\omatree.exe" "%1"` (executable and notebook both quoted).
+**Only `.omatree`** is registered: no SQLite or generic database extension. It does not
+write a `UserChoice`, so a program the user chose for `.omatree` themselves is never
+overridden or removed. Opening is the existing argv behaviour: one notebook per
+process, as on Linux; double-clicking a second notebook opens a second window. No
+single-instance mechanism exists or was added. Tested with real Explorer double-clicks
+on notebooks with spaces and with Czech letters in their paths; Explorer shows the type
+"OmaTree Notebook" and the OmaTree icon.
+
+**Upgrade.** Running a newer `OmaTree-<version>-x64-setup.exe` over an installation (the
+same AppId) replaces the installer-owned files in place, rewrites the same registry
+entries and the shortcut, and updates the uninstall entry; it never touches a notebook.
+A running OmaTree is asked to close through Windows' restart manager, and its own
+unsaved-changes question applies. Tested: the same version installed over itself (one
+uninstall entry, identical files, association and shortcut intact, notebooks untouched);
+a newer version follows the same path.
+
+**Uninstall** removes the installed files, the shortcuts, the uninstall entry, the
+`.omatree` keys the installer created and `%LOCALAPPDATA%\OmaTree` (below). It deletes
+nothing else: **notebooks are never touched**; they are ordinary files wherever the user
+saved them, and nothing is kept inside the installation folder. Tested on the real
+system: install, reinstall over it, uninstall, install again, uninstall; three notebooks
+(with spaces and Czech characters in their paths) were byte-identical throughout, and an
+unrelated user association (`.iss`) was left alone.
+
+**What OmaTree writes outside a notebook** (audited by watching `%APPDATA%`,
+`%LOCALAPPDATA%`, `%TEMP%` and `ProgramData` during a session that used every feature):
+only Qt's caches in `%LOCALAPPDATA%\OmaTree\cache` (`qmlcache\*.qmlc` and the Qt Quick
+D3D11 pipeline cache; a few KB, rebuilt on demand, removed by the uninstaller) and
+transient SQLite temporary files in `%TEMP%` that are deleted again. No settings file,
+registry value or `%APPDATA%` data.
+
+### Defender, SmartScreen, signing
+
+- **Not signed.** `Get-AuthenticodeSignature` says `NotSigned` for the installer and
+  `omatree.exe`. The Windows certificate stores of the build machine hold no usable
+  code-signing certificate: only two self-signed, GUID-named test certificates that
+  Windows does not trust, which are not used and must not be (they would only fake a
+  signature). Signing needs a real Authenticode certificate. The installer is ready for
+  it: `ISCC /DSignToolName=<name> /S<name>="<signtool command>"` signs the installer and
+  the uninstaller (`SignTool=`/`SignedUninstaller=` in `OmaTree.iss`); signing the
+  executable and DLLs would be an extra step before staging. Nothing else changes.
+- **Microsoft Defender** scans the installer and the installed executable normally and
+  finds nothing (`MpCmdRun -Scan -ScanType 3`, engine 1.1.26080.3, signatures
+  1.459.574.0). It was not disabled.
+- **SmartScreen.** A file built locally has no download mark and starts without a
+  warning. A *downloaded* copy (tested on a copy marked `ZoneId=3`, as a browser
+  does) is stopped: **"Windows protected your PC. Microsoft Defender SmartScreen
+  prevented an unrecognized app from starting. Running this app might put your PC at
+  risk."** with a **More info** link; More info shows *App:
+  OmaTree-0.1.1-x64-setup-downloaded.exe*, *Publisher: Unknown publisher*, and the
+  buttons **Run anyway** and **Don't run**. So a user can proceed with More info, then
+  Run anyway. The warning will repeat for every new unsigned build; a signing
+  certificate (and, for the reputation-based check, time and downloads) is what removes
+  it. None of this was changed or disabled. For the release notes: the installer is
+  unsigned and Windows will warn.
+
+### Clean-machine verification
+
+**A truly clean machine was not available, and this is not claimed.** This Windows 11
+*Home* has no Windows Sandbox or Hyper-V, the machine holds the development tools, and
+creating a second user account is not something the build may do. What was done instead:
+
+- the app was run from the staged folder and from the installed folder with a **scrubbed
+  environment** (`PATH` limited to `System32`, no `QMAKE`/`QTDIR`/Cargo/Visual Studio
+  variables) and with the **Qt install folder renamed away**; every loaded module came
+  from the application folder or Windows; the C++ runtime DLLs loaded were the app-local
+  ones; the dependency audit passed;
+- the install, reinstall, uninstall and file association were exercised in the real user
+  session.
+
+Not shown: that a machine that has *never* had Qt, Visual Studio or a Visual C++
+Redistributable behaves the same. (The app-local runtime and the audit are what argue it
+should.) Repeat on a fresh VM or second PC before a release:
+
+    OmaTree-<version>-x64-setup.exe /VERYSILENT /LOG=setup.log   # or the wizard
+    # then: launch from Start; double-click a .omatree file (spaces, Czech letters);
+    # create, save, reopen; Alt+F4 with an unsaved note; uninstall; check the notebook.
+
+### Testing from an agent or other packaged-app environment
+
+A process started from a *packaged* desktop app (an assistant or terminal that is
+itself an MSIX app) can have its writes to `HKCU` redirected to a private copy: the
+installer then "succeeds" and the keys are readable from that process, but **Explorer
+and Settings never see them**, so the `.omatree` association and the Add/Remove Programs
+entry cannot be tested that way. Start the installer from the real shell (the Run
+dialog, Explorer, or a normal terminal) and read the registry from a process the shell
+started. This is a property of the test environment, not of the installer.
+
+### Linux and macOS
+
+Nothing under `packaging\windows\` or `windows\` is used by the other platforms. Shared
+files changed for Windows packaging: `build.rs` (Windows MSVC only, early return
+elsewhere), `cpp/app_identity.cpp` (a new function, `Q_OS_WIN` only, a no-op elsewhere)
+and `src/main.rs` (one extern declaration and one call that does nothing off Windows).
+These need a Linux and macOS build and test run.
+
 ## Release builds
 
     packaging/release-build.sh v0.1.1
@@ -435,6 +702,7 @@ invented to silence it). The AppStream file carries the `0.1.1` release entry (a
 
 ## Not done
 
-AUR, Flatpak, Snap, RPM, ARM Linux, Windows packages, an apt repository,
-Developer ID signing, notarization, and publishing: none exists. (The Linux ones
+AUR, Flatpak, Snap, RPM, ARM Linux, an apt repository, Developer ID signing,
+notarization, Authenticode signing, ARM Windows, an MSI/MSIX package, and publishing:
+none exists. (The Linux ones
 can reuse `packaging/linux/`. macOS is below.)

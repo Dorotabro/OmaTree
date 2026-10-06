@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <!--
-  Embedded into omatree.exe by build.rs (Windows only).
+  Embedded into omatree.exe (as resource 1 of type 24) by windows/omatree.rc, which
+  build.rs compiles and links (Windows only). It must remain the only manifest.
 
   activeCodePage UTF-8: the process's "ANSI" code page is UTF-8. Qt decodes the
   command line it is given (UTF-8, see cxx-qt-lib) with the ANSI code page, so
@@ -10,6 +11,13 @@
   setting is ignored and only non-ASCII command-line paths suffer.
 -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>
       <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
