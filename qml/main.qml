@@ -258,6 +258,32 @@ ApplicationWindow {
         whenSafeToLeave(() => openDialog.open());
     }
 
+    // Opens the notebook at `url`, replacing the current one. Everything
+    // that opens a file ends here; the callers have already made sure that
+    // nothing is lost.
+    function openUrl(url) {
+        const error = notebook.openFile(url);
+        if (error !== "") {
+            showError(error);
+            resumeAutosave();
+        } else {
+            autosaveTimer.stop();
+            autosaveFailureShown = false;
+            editorPane.resetMode();
+            warnAboutDuplicateTitles();
+        }
+    }
+
+    // A notebook that the system asks OmaTree to open (macOS: a double-click
+    // in Finder, Open With, drag onto the icon; see cpp/file_open.cpp). The
+    // same question about unsaved changes as File ▸ Open. While a dialog is
+    // open the request is ignored rather than stacked on top of it.
+    function openFromSystem(url) {
+        if (modalOpen || !editorPane.commitPendingTitle())
+            return;
+        whenSafeToLeave(() => openUrl(url));
+    }
+
     // File ▸ New Notebook: the same "may I leave this document?" check as
     // Open and Close, then a fresh untitled document in place of this one.
     function requestNewNotebook() {
@@ -615,18 +641,7 @@ ApplicationWindow {
         title: qsTr("Open notebook")
         fileMode: FileDialog.OpenFile
         nameFilters: [qsTr("OmaTree notebooks (*.omatree)"), qsTr("All files (*)")]
-        onAccepted: {
-            const error = notebook.openFile(selectedFile);
-            if (error !== "") {
-                root.showError(error);
-                root.resumeAutosave();
-            } else {
-                autosaveTimer.stop();
-                root.autosaveFailureShown = false;
-                editorPane.resetMode();
-                root.warnAboutDuplicateTitles();
-            }
-        }
+        onAccepted: root.openUrl(selectedFile)
         onRejected: root.resumeAutosave()
     }
 

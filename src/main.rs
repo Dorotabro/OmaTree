@@ -18,6 +18,8 @@ extern "C" {
     fn omatree_install_window_icon();
     /// `cpp/keyboard_policy.cpp`: lets Tab reach every control on macOS.
     fn omatree_apply_keyboard_policy();
+    /// `cpp/file_open.cpp`: macOS Finder "open document" events.
+    fn omatree_install_file_open_handler();
 }
 
 /// How the desktop knows OmaTree: the name, and the desktop-file id (without
@@ -66,6 +68,8 @@ pub fn run_app() {
     unsafe { omatree_install_window_icon() };
     // SAFETY: as above.
     unsafe { omatree_apply_keyboard_policy() };
+    // SAFETY: as above.
+    unsafe { omatree_install_file_open_handler() };
     let mut engine = QQmlApplicationEngine::new();
 
     if let Some(engine) = engine.as_mut() {

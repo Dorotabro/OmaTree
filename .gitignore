@@ -19,3 +19,6 @@
 /core
 /core.*
 *.core
+
+# macOS Finder metadata
+.DS_Store

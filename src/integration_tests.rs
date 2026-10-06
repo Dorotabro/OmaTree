@@ -576,3 +576,8 @@ fn spaced_and_unicode_paths_save_autosave_and_reopen() {
         assert!(body.starts_with("autosaved "), "{body:?}");
     }
 }
+
+#[test]
+fn a_notebook_opened_by_the_system_asks_before_replacing_unsaved_work() {
+    scenario("systemopen");
+}

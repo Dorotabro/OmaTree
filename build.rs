@@ -25,6 +25,7 @@ fn main() {
     .cpp_file("cpp/markdown_render.cpp")
     .cpp_file("cpp/app_identity.cpp")
     .cpp_file("cpp/keyboard_policy.cpp")
+    .cpp_file("cpp/file_open.cpp")
     // The application icon, compiled into the executable (see
     // cpp/app_identity.cpp), so the window has it however OmaTree is started.
     .qrc_resources(

@@ -225,6 +225,147 @@ step two installs the distribution's usual desktop libraries and requires a clea
 headless run with extract-and-run. Passing: Ubuntu 20.04, Debian 11, 12 and 13,
 Ubuntu 24.04 and 26.04.
 
+## macOS (Apple Silicon)
+
+    packaging/macos/build-dmg.sh
+
+writes `dist/OmaTree-0.1.0-arm64.dmg` (about 36 MB) and leaves an inspection copy
+at `dist/macos/OmaTree.app` (about 86 MB). **arm64 only**: there is no universal
+or x86_64 build, and the script refuses to run on another architecture. The app
+needs **macOS 14 or newer**, which is what Qt 6.11.2 itself requires; the script
+reads that from the Qt it bundles and writes it to `LSMinimumSystemVersion`.
+
+**Status: built and checked, ad-hoc signed only, not notarized.** It is not ready
+to hand to the public until it is signed with a Developer ID and notarized (see
+below), and its Qt licence notices are added. The README's macOS status is
+deliberately unchanged.
+
+### Tools
+
+macOS on Apple Silicon, Rust, **Qt 6** with `macdeployqt` (built with Homebrew's
+`qt` 6.11.2; set `QT_PREFIX` for another), and the Xcode command line tools
+(`iconutil`, `sips`, `codesign`, `otool`, `vtool`, `hdiutil`, `plutil`). Full Xcode
+is not needed. The script stops with a clear message if any is missing.
+
+### What the script does
+
+1. `cargo build --release --locked` into `target/macos` (so development builds are
+   undisturbed), with `--remap-path-prefix` / `-ffile-prefix-map` so that no
+   source, Cargo, home or Qt-install path is left in the executable.
+2. Assembles `OmaTree.app` **in a temporary directory**, not in the checkout: a
+   checkout inside iCloud Drive (`~/Documents`) gets Finder / file-provider
+   attributes on every directory, and `codesign` refuses them.
+3. Writes `Info.plist` from `packaging/macos/Info.plist.in` and the icon.
+4. Runs `macdeployqt -qmldir=qml`, then **prunes** (`packaging/macos/prune.sh`).
+5. Makes the bundle self-contained (`make_relocatable`), signs it ad hoc, and runs
+   `packaging/macos/verify-app.sh` on it.
+6. Packs a plain HFS+ disk image: `OmaTree.app` and an `Applications` shortcut.
+
+### Bundle and identity
+
+    OmaTree.app/Contents/{Info.plist, PkgInfo, MacOS/omatree, Frameworks/, PlugIns/,
+                          Resources/{OmaTree.icns, qml/, qt.conf, licenses/}, _CodeSignature/}
+
+| Key | Value |
+|---|---|
+| `CFBundleName`, `CFBundleDisplayName` | OmaTree |
+| `CFBundleIdentifier` | `io.github.Dorotabro.OmaTree` |
+| `CFBundleExecutable` / `CFBundlePackageType` | `omatree` / `APPL` |
+| `CFBundleShortVersionString`, `CFBundleVersion` | 0.1.0 (a valid three-part version; no separate build number) |
+| `LSMinimumSystemVersion` | 14.0 (from Qt) |
+| `CFBundleIconFile` | `OmaTree` (`OmaTree.icns`) |
+
+The executable is the ordinary release binary, with no wrapper. The window title
+is `OmaTree — <notebook>`; the application name shown in the menu bar and Dock
+comes from `CFBundleName`.
+
+**Icon.** `OmaTree.icns` is made by `iconutil` from the existing PNGs
+(`assets/logo/omatree-icon-{32,64,128,256,512,1024}.png`), unaltered. Only the
+16-pixel image is derived, by scaling the 32-pixel one down with `sips`. The
+artwork is a full-bleed square, so macOS 26 draws it inside its own rounded tile.
+
+**Document type.** Only `.omatree` is registered, as the exported type
+`io.github.Dorotabro.OmaTree.notebook` (conforms to `public.data` only, MIME
+`application/x-omatree`), with OmaTree as its Owner/Editor. It does not claim
+SQLite or any generic type, matching the Linux MIME definition. A Finder
+double-click or Open With is not a command-line argument on macOS: the system
+sends the application a file-open event, which `cpp/file_open.cpp` (macOS only)
+passes to `openFromSystem` in `main.qml`. That asks about unsaved changes exactly
+like File ▸ Open. The command-line path still works as on Linux.
+
+### Qt that is bundled
+
+`macdeployqt` copies every module OmaTree's QML imports whole, including all six
+Quick Controls styles, the virtual keyboard, PDF, multimedia and every image
+format (133 MB). OmaTree uses the Basic style only, draws its own UI, makes no
+network connection and loads no images, so `prune.sh` removes what is not used.
+The lists in it are what Qt really loads, measured with `DYLD_PRINT_LIBRARIES`
+over the integration suite on the real macOS platform plugin, plus the QML modules
+the application imports:
+
+- Frameworks: Core, DBus, Gui, Network, OpenGL, Qml, QmlMeta, QmlModels,
+  QmlWorkerScript, Quick, QuickControls2 (+Basic, BasicStyleImpl, Impl),
+  QuickDialogs2 (+QuickImpl, Utils), QuickLayouts, QuickTemplates2,
+  Labs.FolderListModel; and the libraries they need (ICU, glib, OpenSSL because
+  QtNetwork links it, freetype, harfbuzz, libpng, zstd, brotli, pcre2, dbus,
+  md4c, double-conversion, libb2, graphite2, gettext).
+- QML modules: QtQuick, Controls (Basic and impl only), Templates, Layouts,
+  Dialogs, Window, QtQml (Models, WorkerScript), Qt.labs.folderlistmodel.
+- Plug-ins: `platforms/libqcocoa`, `tls/` Secure Transport and certificates-only.
+  No image-format, icon-engine, SQL, multimedia or input-context plug-ins.
+
+`QtNetwork` is linked by the executable (through the Rust Qt bindings), which is
+why the TLS plug-ins and OpenSSL come along although OmaTree never connects out.
+
+### Dependency audit
+
+`verify-app.sh` checks every Mach-O file in the bundle: arm64 only; every run path
+is relative and ends inside the bundle; every dependency is a system library
+(`/usr/lib`, `/System`) or resolves, the way dyld resolves it (`@rpath` through the
+file's own run paths), to a file in the bundle; bundled libraries have `@rpath`
+install names; no `/Users`, `/opt/homebrew` or the builder's home in the
+executable, QML or configuration; `codesign --verify --deep --strict`; and that
+the app starts with `env -i` and prints nothing. Run it on any copy:
+
+    packaging/macos/verify-app.sh /Applications/OmaTree.app
+
+`macdeployqt` leaves Homebrew's run paths (some pointing outside the bundle) and
+some absolute install names; `make_relocatable` replaces them. Strings inside
+Qt's own binaries still contain the Homebrew prefix as compiled-in defaults: those
+are not dependencies, and `qt.conf` points Qt at the bundle.
+
+### Signing, Gatekeeper, notarization
+
+- **State: ad-hoc signed** (`codesign -dv`: `Signature=adhoc`, no team
+  identifier). Not Developer ID signed; **not notarized**; the DMG itself is not
+  signed. `spctl --assess --type execute` says *rejected*, as expected.
+- On this Mac `security find-identity -v -p codesigning` finds **no identities**,
+  so no `Developer ID Application` certificate exists here.
+- `xcrun notarytool` and `stapler` are present (Command Line Tools, notarytool
+  1.1.2). Nothing has been submitted. To notarize later you need: an Apple
+  Developer Program membership, a *Developer ID Application* certificate in the
+  keychain, and notarytool credentials stored with
+  `xcrun notarytool store-credentials` (an app-specific password or an API key).
+  Then: build with `SIGN_IDENTITY="Developer ID Application: ..."` (hardened
+  runtime and a secure timestamp; **untested**, nothing here could try it), sign
+  the DMG, `notarytool submit --wait`, then `stapler staple` the DMG.
+- Until then a copy downloaded from the internet carries the quarantine
+  attribute, and Gatekeeper will not open an ad-hoc-signed app without the user
+  approving it in System Settings ▸ Privacy & Security. A copy built and run on
+  the same Mac is not quarantined.
+
+### Testing a bundle
+
+    packaging/macos/verify-app.sh dist/macos/OmaTree.app   # as above
+    hdiutil attach dist/OmaTree-0.1.0-arm64.dmg            # then copy to /Applications
+    open /Applications/OmaTree.app                         # LaunchServices, no shell environment
+    open notebook.omatree                                  # the Finder double-click path
+
+Install from the DMG (or the temporary bundle), not from a copy inside iCloud
+Drive: the file provider adds attributes to its directories and the copy then
+fails `codesign --verify`. (`dist/macos/OmaTree.app` is stripped of them by the
+script, but a synced folder may add them back.)
+
 ## Release builds
 
     packaging/release-build.sh v0.1.0
@@ -270,5 +411,6 @@ invented to silence it). The AppStream file carries the `0.1.0` release entry.
 
 ## Not done
 
-AUR, Flatpak, Snap, RPM, ARM, macOS and Windows packages, an apt repository,
-signing, and publishing: none exists. Each can reuse `packaging/linux/`.
+AUR, Flatpak, Snap, RPM, ARM Linux, Windows packages, an apt repository,
+Developer ID signing, notarization, and publishing: none exists. (The Linux ones
+can reuse `packaging/linux/`. macOS is below.)
