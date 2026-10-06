@@ -2,7 +2,7 @@
 # Runs the already-built AppImage in a clean container of the given image. The
 # AppImage is not rebuilt per distribution, and nothing is installed from it.
 #
-#   packaging/appimage/test-container.sh dist/OmaTree-0.1.0-x86_64.AppImage ubuntu:20.04
+#   packaging/appimage/test-container.sh dist/OmaTree-0.1.1-x86_64.AppImage ubuntu:20.04
 #
 # Containers have no FUSE, so the AppImage runs with its supported
 # extract-and-run mode (APPIMAGE_EXTRACT_AND_RUN=1). Qt runs offscreen.

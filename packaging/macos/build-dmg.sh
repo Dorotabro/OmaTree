@@ -39,6 +39,8 @@ need codesign "Xcode command line tools"
 need otool "Xcode command line tools"
 need vtool "Xcode command line tools"
 need plutil "part of macOS"
+need python3 "part of the Xcode command line tools"
+need brew "Homebrew supplies the licence information of the bundled libraries"
 
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
 [ -n "$version" ] || die "could not read the version from Cargo.toml"
@@ -103,9 +105,8 @@ sips -z 16 16 "$logo/omatree-icon-32.png" --out "$iconset/icon_16x16.png" >/dev/
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/OmaTree.icns"
 rm -rf "$iconset"
 
-# OmaTree's own licences and the third-party inventory. (The bundled Qt and
-# its libraries need their own notices before a public release: see
-# docs/PACKAGING.md.)
+# OmaTree's own licences and the Rust inventory; the notices for Qt and the
+# other bundled libraries are written after pruning (licenses.py).
 mkdir -p "$app/Contents/Resources/licenses"
 cp "$root/LICENSE-MIT" "$root/LICENSE-APACHE" "$root/THIRD_PARTY.md" "$app/Contents/Resources/licenses/"
 
@@ -128,6 +129,8 @@ echo "macdeployqt done ($(grep -c '^ERROR' "$out/macdeployqt.log" || true) messa
 . "$here/prune.sh"
 prune_qt "$app"
 make_relocatable "$app"
+# The notices are made from what is left in the bundle, so they come last.
+python3 "$here/licenses.py" "$app"
 
 # The pruned bundle is signed again as a whole: removing files invalidates the
 # signatures macdeployqt made. Ad hoc unless SIGN_IDENTITY is given.
@@ -150,6 +153,8 @@ rm -f "$dmg"
 hdiutil create -quiet -volname OmaTree -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$work/OmaTree.dmg"
 hdiutil verify -quiet "$work/OmaTree.dmg"
 cp "$work/OmaTree.dmg" "$dmg"
+# In the format of the other packages' SHA256SUMS, for adding to it.
+(cd "$root/dist" && shasum -a 256 "$(basename "$dmg")" > "$(basename "$dmg").sha256")
 # A copy of the app for inspection. (Do not sign or re-sign this one in place
 # if the repository is in iCloud Drive; see above.)
 ditto --noextattr --noqtn "$app" "$out/OmaTree.app"

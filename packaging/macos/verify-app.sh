@@ -84,6 +84,30 @@ else
     ok "no build paths in QML, qmldir or configuration"
 fi
 
+# ---- third-party notices ------------------------------------------------------
+lic=$c/Resources/licenses
+nt=$lic/THIRD_PARTY_NOTICES.md
+missing=0
+for f in LICENSE-MIT LICENSE-APACHE THIRD_PARTY.md THIRD_PARTY_NOTICES.md Qt-LGPL-3.0.txt Qt-GPL-3.0.txt; do
+    [ -s "$lic/$f" ] || { bad "missing $f in Resources/licenses"; missing=1; }
+done
+if [ -s "$nt" ]; then
+    count=0
+    for f in "$c"/Frameworks/*; do
+        count=$((count + 1))
+        grep -qF "\`$(basename "$f")\`" "$nt" || { bad "$(basename "$f") is bundled but not in THIRD_PARTY_NOTICES.md"; missing=1; }
+    done
+    # every non-Qt entry has a licence text next to it
+    for d in $(sed -n 's/^- \*\*Licence text:\*\* `third-party\/\([^\/]*\)\/.*/\1/p' "$nt"); do
+        ls "$lic/third-party/$d"/* >/dev/null 2>&1 || { bad "no licence file for $d"; missing=1; }
+    done
+    # and nothing is listed that is not bundled
+    for k in $(sed -n 's/^- \*\*In this app:\*\* //p' "$nt" | tr ',' '\n' | tr -d '` '); do
+        [ -e "$c/Frameworks/$k" ] || { bad "$k is in THIRD_PARTY_NOTICES.md but not in the bundle"; missing=1; }
+    done
+    [ "$missing" = 0 ] && ok "third-party notices cover all $count bundled libraries and frameworks, with licence texts"
+fi
+
 # ---- signature ---------------------------------------------------------------
 if err=$(codesign --verify --deep --strict "$app" 2>&1); then ok "codesign --verify --deep --strict"; else bad "codesign: $err"; fi
 

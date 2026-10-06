@@ -7,8 +7,8 @@ Notes live in a simple hierarchy: every node is a note, and every note can have 
 ## What it does
 
 - **Notes in a tree.** Create, rename, nest, reorder and move notes with the mouse or keyboard.
-- **Markdown.** Notes are plain text; `Ctrl+E` switches between editing and a read-only Markdown Preview. Preview never loads images or other resources, local or remote.
-- **Local search.** `Ctrl+F` searches titles and note text in the open notebook.
+- **Markdown.** Notes are plain text; `Ctrl+E` (`⌘E` on macOS) switches between editing and a read-only Markdown Preview. Preview never loads images or other resources, local or remote.
+- **Local search.** `Ctrl+F` (`⌘F` on macOS) searches titles and note text in the open notebook.
 - **Keyboard-first workflow.** The whole application can be driven from the keyboard; `F1` lists the shortcuts.
 - **Autosave and recovery.** Deleted notes go to a persistent Trash, and structural changes create recovery checkpoints.
 - **One notebook, one file.** Each notebook is a single local `.omatree` SQLite file. No account, cloud service, telemetry or network access is required.
@@ -22,7 +22,7 @@ See [`VISION.md`](VISION.md) for the design philosophy.
 
 ## Status
 
-This is the first public release, **v0.1.0**.
+This is **v0.1.1**. It adds macOS support (Apple Silicon); v0.1.0, the first public release, was Linux only.
 
 The notebook format is versioned but may still change between releases, so keep backups of notebooks that matter to you.
 
@@ -35,17 +35,17 @@ Release downloads are available from the [GitHub Releases page](https://github.c
 | Omarchy / Arch Linux | native package | system |
 | Debian 13+, recent Ubuntu | native `.deb` | system Qt 6.8+ |
 | Other x86_64 Linux | AppImage | bundled Qt 6.8.3 |
-| macOS | planned | |
+| macOS 14+, Apple Silicon | disk image (`.dmg`), **unsigned and not notarized** | bundled Qt 6.11.2 |
 | Windows | planned | |
 
-There are no macOS or Windows builds yet, and no release dates are promised.
+There are no Windows builds yet, and no release dates are promised. There is no build for Intel Macs.
 
 ### Omarchy / Arch Linux
 
 The native package uses the system Qt 6:
 
 ```bash
-sudo pacman -U ./omatree-0.1.0-1-x86_64.pkg.tar.zst
+sudo pacman -U ./omatree-0.1.1-1-x86_64.pkg.tar.zst
 ```
 
 Remove it with:
@@ -67,7 +67,7 @@ OmaTree needs a newer Qt than Debian 12 and Ubuntu 22.04/24.04 provide, so the `
 Install with `apt` so dependencies are resolved automatically:
 
 ```bash
-sudo apt install ./omatree_0.1.0_amd64.deb
+sudo apt install ./omatree_0.1.1_amd64.deb
 ```
 
 Remove it with:
@@ -83,8 +83,8 @@ On Debian 12, Ubuntu 22.04 or Ubuntu 24.04, use the AppImage instead.
 The AppImage bundles its own Qt runtime, so it does not depend on your system Qt version:
 
 ```bash
-chmod +x OmaTree-0.1.0-x86_64.AppImage
-./OmaTree-0.1.0-x86_64.AppImage
+chmod +x OmaTree-0.1.1-x86_64.AppImage
+./OmaTree-0.1.1-x86_64.AppImage
 ```
 
 You can also pass a `.omatree` file path to open it directly.
@@ -101,10 +101,28 @@ It has been tested on:
 Without FUSE, run it with:
 
 ```bash
-APPIMAGE_EXTRACT_AND_RUN=1 ./OmaTree-0.1.0-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./OmaTree-0.1.1-x86_64.AppImage
 ```
 
 The AppImage does not install itself. Desktop-menu and `.omatree` file association integration depends on your desktop or AppImage integration tool. The AppImage contains the desktop, icon and MIME metadata those tools can use.
+
+### macOS (Apple Silicon)
+
+`OmaTree-0.1.1-arm64.dmg` is for Macs with Apple silicon (M1 or newer) running **macOS 14 Sonoma or later**. It contains `OmaTree.app` with its own Qt, so nothing else needs to be installed. Notebooks open from Finder (double-click or Open With), and the shortcuts use ⌘ (`F1` lists them).
+
+**The app is not signed with an Apple Developer ID and is not notarized by Apple.** macOS therefore blocks it the first time it is opened. This is expected; you approve it once:
+
+1. Open the disk image and drag `OmaTree` to `Applications`.
+2. Open `OmaTree` from `Applications`. macOS says it cannot check the app for malicious software. Click **Done** (not *Move to Trash*).
+3. Open **System Settings → Privacy & Security** and scroll down to **Security**. There is a note that "OmaTree" was blocked; click **Open Anyway**, authenticate, and click **Open**.
+
+macOS remembers the choice. If you would rather not use System Settings, `xattr -dr com.apple.quarantine /Applications/OmaTree.app` in Terminal removes the quarantine mark instead. Only do either if you got the file from the [Releases page](https://github.com/Dorotabro/OmaTree/releases) and its checksum matches:
+
+```bash
+grep OmaTree-0.1.1-arm64.dmg SHA256SUMS | shasum -a 256 -c -
+```
+
+Remove OmaTree by dragging it to the Trash. Your notebooks are ordinary files and are not touched.
 
 ## Build from source
 
@@ -131,6 +149,8 @@ cargo build --release
 ```
 
 You can optionally pass a `.omatree` file path to open an existing notebook directly.
+
+On macOS, `brew install qt` provides Qt 6 and the same commands work. `packaging/macos/build-dmg.sh` builds the disk image.
 
 For development:
 
@@ -210,13 +230,14 @@ Linux
   Debian 13+, Ubuntu 25.10+   native .deb
   other x86_64 Linux          AppImage (glibc 2.30+)
 
-macOS                         planned
+macOS 14+, Apple Silicon      disk image (unsigned, not notarized)
+
 Windows                       planned
 ```
 
 Development happens primarily on Arch Linux / Omarchy.
 
-macOS and Windows are intended eventually, and the stack is cross-platform, but no builds are currently produced or tested there.
+The macOS build is Apple Silicon only; there is no Intel (x86_64) build. Windows is intended eventually, and the stack is cross-platform, but no Windows builds are currently produced or tested.
 
 ## Design philosophy
 

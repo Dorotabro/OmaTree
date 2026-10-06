@@ -2,8 +2,8 @@
 # Installs the already-built .deb into a clean container of the given image,
 # runs OmaTree headless, then purges it.
 #
-#   packaging/debian/test-install.sh dist/omatree_0.1.0_amd64.deb debian:12
-#   packaging/debian/test-install.sh dist/omatree_0.1.0_amd64.deb ubuntu:24.04
+#   packaging/debian/test-install.sh dist/omatree_0.1.1_amd64.deb debian:12
+#   packaging/debian/test-install.sh dist/omatree_0.1.1_amd64.deb ubuntu:24.04
 #
 # Installs with --no-install-recommends, so the Depends field alone has to be
 # enough. The package is never rebuilt per distribution.

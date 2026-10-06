@@ -3,7 +3,8 @@
 This is an inventory prepared for binary distribution. It records what OmaTree
 uses and what a package must do. It is **not** legal advice.
 Facts below come from the installed Qt files' SPDX headers and license texts, `Cargo.lock`/`cargo metadata`, and the crates' own sources, as
-of OmaTree 0.1.0 on the development machine (Arch Linux).
+of OmaTree 0.1.1 on the development machine (Arch Linux). The macOS app bundle is
+covered at the end.
 
 OmaTree itself is `MIT OR Apache-2.0` (see `LICENSE-MIT`, `LICENSE-APACHE`).
 
@@ -147,3 +148,27 @@ dependency that would be distributed provides one.
       `/usr/share/doc/omatree/`, with `copyright`).
 - [ ] Re-run the inventory (`cargo metadata`, `readelf -d`) for the release
       commit and the Qt version actually packaged.
+
+## macOS app bundle
+
+`OmaTree.app` (Apple Silicon) is the one package that **contains** Qt and the
+libraries Qt needs. It is built with Homebrew's Qt 6.11.2 (the same release as
+above) and carries its own notices, written from the finished bundle by
+`packaging/macos/licenses.py`:
+
+- `Contents/Resources/licenses/THIRD_PARTY_NOTICES.md`: for Qt and each
+  bundled library, the version, the licence as declared by its Homebrew formula,
+  home page, source archive and the files in the app, plus how Qt can be
+  replaced (it is dynamically linked, under the LGPL-3.0);
+- `Contents/Resources/licenses/third-party/<library>/`: the licence files that
+  ship with each library;
+- `Qt-LGPL-3.0.txt`, `Qt-GPL-3.0.txt`, this file, and OmaTree's own licences.
+
+As of 0.1.1 the bundle contains, besides Qt (qtbase and qtdeclarative): libb2,
+brotli, OpenSSL 3 (linked by QtNetwork, though OmaTree makes no network
+connection), dbus, double-conversion, FreeType, glib, graphite2, HarfBuzz, ICU 78,
+gettext (libintl), md4c, PCRE2, libpng and zstd. The licences range from MIT,
+BSD-3-Clause, Unicode-3.0 and Apache-2.0 to the LGPL (Qt, glib, libintl,
+graphite2 as one of its options) and dual licences (dbus, FreeType, zstd).
+`packaging/macos/verify-app.sh` fails the build if a bundled library is missing
+from the notices or has no licence text.

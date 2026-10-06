@@ -33,6 +33,14 @@
   </keywords>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.1.1" date="2026-10-06">
+      <description>
+        <p>Adds macOS support for Apple Silicon (macOS 14 or newer): Command-key
+        shortcuts, opening notebooks from Finder, and a disk image. On Linux,
+        nothing changes except that the dialog buttons are always labelled in
+        English, whatever the system language.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-10-05">
       <description>
         <p>First public release: local-first tree-structured notebooks with

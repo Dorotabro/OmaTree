@@ -2,7 +2,7 @@
 # Builds all three Linux packages from a Git tag, in a clean checkout, and
 # writes dist/SHA256SUMS for exactly those files.
 #
-#   packaging/release-build.sh v0.1.0
+#   packaging/release-build.sh v0.1.1
 #
 # The tag is checked out into a temporary worktree (never your working tree),
 # which must be clean; the three build scripts run there, so nothing from a

@@ -34,7 +34,7 @@ The intended interface is approximately:
     │   ├ OmaTree        │                             │
     │   │ ├ Ideas        │ A stupidly simple tree      │
     │   │ └ Bugs         │ of notes.                   │
-    │   └ Website   │                             │
+    │   └ Website        │                             │
     │                    │                             │
     │                    │                             │
     └────────────────────┴─────────────────────────────┘

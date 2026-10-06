@@ -37,7 +37,8 @@ verify_files "$root"
 # appimagetool/linuxdeploy add exactly one line, X-AppImage-Version.
 check "root desktop entry is the canonical one (plus X-AppImage-Version)" bash -c "diff <(grep -v '^X-AppImage-Version=' '$root/$id.desktop') '$here/../linux/$id.desktop'"
 check "root icon is the canonical logo" cmp -s "$root/$id.svg" "$here/../../assets/logo/omatree-logo.svg"
-check "version 0.1.0 in the file name" bash -c "[[ '$(basename "$src")' == OmaTree-0.1.0-x86_64.AppImage ]]"
+ver=$(sed -n 's/^version = "\(.*\)"/\1/p' "$here/../../Cargo.toml" | head -1)
+check "version $ver in the file name" bash -c "[[ '$(basename "$src")' == OmaTree-$ver-x86_64.AppImage ]]"
 
 echo "== Qt"
 qtver=$(strings -a "$lib/libQt6Core.so.6" | grep -Eo 'Qt 6\.[0-9]+\.[0-9]+' | head -1)

@@ -50,7 +50,7 @@ references the shared libraries `libQt6Core`, `libQt6Gui` and `libQt6Qml`; Qt
 is not compiled into it and is not modified. The AppImage is a plain read-only
 filesystem image, so you can replace Qt with your own build:
 
-    ./OmaTree-0.1.0-x86_64.AppImage --appimage-extract    # writes ./squashfs-root
+    ./OmaTree-0.1.1-x86_64.AppImage --appimage-extract    # writes ./squashfs-root
     # replace the libQt6*.so.6 files in squashfs-root/usr/lib (and plugins/QML
     # modules if needed) with your own build of a compatible Qt 6.8, then run
     ./squashfs-root/AppRun

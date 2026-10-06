@@ -23,7 +23,8 @@ sed 's/^/info  /' "$tmp/ctl/control"
 (cd "$root" && find . -type f | sort) | sed 's/^/file  /'
 
 echo "== control"
-for f in 'Package: omatree' 'Version: 0.1.0' 'Architecture: amd64' 'Section: utils' 'Priority: optional' \
+ver=$(sed -n 's/^version = "\(.*\)"/\1/p' "$here/../../Cargo.toml" | head -1)
+for f in 'Package: omatree' "Version: $ver" 'Architecture: amd64' 'Section: utils' 'Priority: optional' \
     'Homepage: https://github.com/Dorotabro/OmaTree'; do
     check "$f" grep -qx "$f" "$tmp/ctl/control"
 done

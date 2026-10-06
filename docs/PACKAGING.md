@@ -5,9 +5,9 @@ three formats, built from the same sources and the same desktop metadata:
 
 | Format | File | Qt | Built in |
 |---|---|---|---|
-| Arch / Omarchy | `omatree-0.1.0-1-x86_64.pkg.tar.zst` | system | the host (`makepkg`) |
-| Debian / Ubuntu | `omatree_0.1.0_amd64.deb` | system | Debian 13 container |
-| AppImage | `OmaTree-0.1.0-x86_64.AppImage` | **bundled** (6.8.3) | Ubuntu 20.04 container |
+| Arch / Omarchy | `omatree-0.1.1-1-x86_64.pkg.tar.zst` | system | the host (`makepkg`) |
+| Debian / Ubuntu | `omatree_0.1.1_amd64.deb` | system | Debian 13 container |
+| AppImage | `OmaTree-0.1.1-x86_64.AppImage` | **bundled** (6.8.3) | Ubuntu 20.04 container |
 
 All three are written to `dist/` and listed in `dist/SHA256SUMS`. Nothing is
 published, tagged or uploaded by any of these scripts.
@@ -18,7 +18,7 @@ published, tagged or uploaded by any of these scripts.
 |---|---|
 | Display name | OmaTree |
 | Executable | `omatree` |
-| Version | 0.1.0 |
+| Version | 0.1.1 |
 | Application ID | `io.github.Dorotabro.OmaTree` |
 | Notebook extension | `.omatree` (a SQLite database inside) |
 | MIME type | `application/x-omatree` |
@@ -91,8 +91,8 @@ from OmaTree.
 
     packaging/arch/build-package.sh
 
-writes `dist/omatree-0.1.0-1-x86_64.pkg.tar.zst`, a source snapshot
-`dist/omatree-0.1.0.tar.gz` and `dist/SHA256SUMS` (`dist/` is git-ignored).
+writes `dist/omatree-0.1.1-1-x86_64.pkg.tar.zst`, a source snapshot
+`dist/omatree-0.1.1.tar.gz` and `dist/SHA256SUMS` (`dist/` is git-ignored).
 It snapshots the working tree, fills `packaging/arch/PKGBUILD.in` with the
 tarball and its SHA-256, and runs `makepkg`. The build uses `cargo fetch
 --locked` and `cargo build --release --locked --frozen`, so only what
@@ -111,7 +111,7 @@ The metainfo file also needs its first `<release>` (version and date).
 
     packaging/debian/build-package.sh
 
-builds `dist/omatree_0.1.0_amd64.deb` with the normal Debian tooling
+builds `dist/omatree_0.1.1_amd64.deb` with the normal Debian tooling
 (`dpkg-buildpackage`, debhelper 13) in a disposable **Debian 13** container (needs
 Docker or Podman; `packaging/debian/Dockerfile` pins the image by digest). The
 packaging is `packaging/debian/debian/`; the script copies it to the root of a
@@ -145,22 +145,22 @@ Debian's own Rust is too old; the Cargo download cache is kept outside the tree
 
 Test the finished file on clean systems (it is never rebuilt per distribution):
 
-    packaging/debian/test-install.sh dist/omatree_0.1.0_amd64.deb debian:13
-    packaging/debian/test-install.sh dist/omatree_0.1.0_amd64.deb ubuntu:26.04
+    packaging/debian/test-install.sh dist/omatree_0.1.1_amd64.deb debian:13
+    packaging/debian/test-install.sh dist/omatree_0.1.1_amd64.deb ubuntu:26.04
 
 `apt install` with `--no-install-recommends` (the Depends field alone must
 suffice), `dpkg -s`/`dpkg -L`, a headless run on a new notebook with no QML or
 plugin output, then `apt purge` and a check that no package file remains.
-Passing: Debian 13, Ubuntu 25.10, Ubuntu 26.04.
+Passing (with the 0.1.0 package; rerun for each release): Debian 13, Ubuntu 25.10, Ubuntu 26.04.
 
 ## AppImage
 
     packaging/appimage/build-package.sh
 
-builds `dist/OmaTree-0.1.0-x86_64.AppImage` in a disposable container
+builds `dist/OmaTree-0.1.1-x86_64.AppImage` in a disposable container
 (`packaging/appimage/Dockerfile`, digest-pinned). It builds OmaTree against an
 official **Qt 6.8.3** and bundles that Qt with linuxdeploy; `Exec=omatree %f`
-means `./OmaTree-0.1.0-x86_64.AppImage notebook.omatree` opens the notebook.
+means `./OmaTree-0.1.1-x86_64.AppImage notebook.omatree` opens the notebook.
 
 - **Build userspace: Ubuntu 20.04** (glibc 2.31). An AppImage cannot run on an
   older glibc than the one it was built against, so the oldest userspace that
@@ -218,27 +218,27 @@ means `./OmaTree-0.1.0-x86_64.AppImage notebook.omatree` opens the notebook.
 
 Test the finished file on clean systems (it is not rebuilt per distribution):
 
-    packaging/appimage/test-container.sh dist/OmaTree-0.1.0-x86_64.AppImage ubuntu:20.04
+    packaging/appimage/test-container.sh dist/OmaTree-0.1.1-x86_64.AppImage ubuntu:20.04
 
 Step one runs it in the bare image (which prints the host libraries it needs),
 step two installs the distribution's usual desktop libraries and requires a clean
-headless run with extract-and-run. Passing: Ubuntu 20.04, Debian 11, 12 and 13,
+headless run with extract-and-run. Passing (with the 0.1.0 AppImage; rerun for each release): Ubuntu 20.04, Debian 11, 12 and 13,
 Ubuntu 24.04 and 26.04.
 
 ## macOS (Apple Silicon)
 
     packaging/macos/build-dmg.sh
 
-writes `dist/OmaTree-0.1.0-arm64.dmg` (about 36 MB) and leaves an inspection copy
+writes `dist/OmaTree-0.1.1-arm64.dmg` (about 36 MB) and `dist/OmaTree-0.1.1-arm64.dmg.sha256` and leaves an inspection copy
 at `dist/macos/OmaTree.app` (about 86 MB). **arm64 only**: there is no universal
 or x86_64 build, and the script refuses to run on another architecture. The app
 needs **macOS 14 or newer**, which is what Qt 6.11.2 itself requires; the script
 reads that from the Qt it bundles and writes it to `LSMinimumSystemVersion`.
 
-**Status: built and checked, ad-hoc signed only, not notarized.** It is not ready
-to hand to the public until it is signed with a Developer ID and notarized (see
-below), and its Qt licence notices are added. The README's macOS status is
-deliberately unchanged.
+**Status: published as unsigned and not notarized (v0.1.1).** The app is ad-hoc
+signed only (arm64 will not run unsigned), so Gatekeeper blocks a downloaded copy
+until the user approves it in System Settings ▸ Privacy & Security ▸ Open Anyway;
+the README says so. Developer ID signing and notarization are still to do (below).
 
 ### Tools
 
@@ -257,7 +257,8 @@ is not needed. The script stops with a clear message if any is missing.
    attributes on every directory, and `codesign` refuses them.
 3. Writes `Info.plist` from `packaging/macos/Info.plist.in` and the icon.
 4. Runs `macdeployqt -qmldir=qml`, then **prunes** (`packaging/macos/prune.sh`).
-5. Makes the bundle self-contained (`make_relocatable`), signs it ad hoc, and runs
+5. Makes the bundle self-contained (`make_relocatable`), writes its third-party
+   notices (`licenses.py`), signs it ad hoc, and runs
    `packaging/macos/verify-app.sh` on it.
 6. Packs a plain HFS+ disk image: `OmaTree.app` and an `Applications` shortcut.
 
@@ -271,7 +272,7 @@ is not needed. The script stops with a clear message if any is missing.
 | `CFBundleName`, `CFBundleDisplayName` | OmaTree |
 | `CFBundleIdentifier` | `io.github.Dorotabro.OmaTree` |
 | `CFBundleExecutable` / `CFBundlePackageType` | `omatree` / `APPL` |
-| `CFBundleShortVersionString`, `CFBundleVersion` | 0.1.0 (a valid three-part version; no separate build number) |
+| `CFBundleShortVersionString`, `CFBundleVersion` | 0.1.1 (a valid three-part version; no separate build number) |
 | `LSMinimumSystemVersion` | 14.0 (from Qt) |
 | `CFBundleIconFile` | `OmaTree` (`OmaTree.icns`) |
 
@@ -334,6 +335,29 @@ some absolute install names; `make_relocatable` replaces them. Strings inside
 Qt's own binaries still contain the Homebrew prefix as compiled-in defaults: those
 are not dependencies, and `qt.conf` points Qt at the bundle.
 
+### Licences of what the app contains
+
+The app **contains** Qt and fifteen other libraries, so it carries their notices
+(`Contents/Resources/licenses/`). They are written by
+`packaging/macos/licenses.py` from the *pruned* bundle, not from a fixed list:
+every file in `Contents/Frameworks` is traced back to the Homebrew keg it was
+copied from, and its formula's version, licence, home page and source archive go
+into `THIRD_PARTY_NOTICES.md`, with the keg's licence files under
+`third-party/<library>/`. The script fails if a bundled file cannot be traced or
+a library has no licence file, and `verify-app.sh` checks the result again (every
+bundled library listed, nothing listed that is not bundled, every licence text
+present). It needs Homebrew (`brew`) and `python3`.
+
+Qt is used under the LGPL-3.0, dynamically linked: the notice says so, says how to
+replace the frameworks (and to re-sign the app afterwards), and links the
+corresponding source. The LGPL and GPL texts (`packaging/macos/licenses/`) are
+the unmodified FSF texts taken from Homebrew kegs. The Homebrew kegs of Qt carry
+no licence files of their own, so Qt's third-party code is covered by the formula
+licence expressions and a pointer to Qt's own documentation, not by copies of
+each text. The Rust crates and SQLite built into the executable are in
+`THIRD_PARTY.md` (included). The libraries' licences are as Homebrew's formulae
+declare them, reproduced as given; this is an inventory, not legal advice.
+
 ### Signing, Gatekeeper, notarization
 
 - **State: ad-hoc signed** (`codesign -dv`: `Signature=adhoc`, no team
@@ -357,7 +381,7 @@ are not dependencies, and `qt.conf` points Qt at the bundle.
 ### Testing a bundle
 
     packaging/macos/verify-app.sh dist/macos/OmaTree.app   # as above
-    hdiutil attach dist/OmaTree-0.1.0-arm64.dmg            # then copy to /Applications
+    hdiutil attach dist/OmaTree-0.1.1-arm64.dmg            # then copy to /Applications
     open /Applications/OmaTree.app                         # LaunchServices, no shell environment
     open notebook.omatree                                  # the Finder double-click path
 
@@ -368,7 +392,7 @@ script, but a synced folder may add them back.)
 
 ## Release builds
 
-    packaging/release-build.sh v0.1.0
+    packaging/release-build.sh v0.1.1
 
 checks the tag out into a clean temporary worktree, builds all three packages from
 it with the scripts above, and writes `dist/SHA256SUMS` for exactly those three
@@ -387,9 +411,9 @@ run `checksums.sh` last.) Nothing is signed yet.
 
 ## Verifying a package
 
-    packaging/verify-package.sh dist/omatree-0.1.0-1-x86_64.pkg.tar.zst
-    packaging/verify-package.sh dist/omatree_0.1.0_amd64.deb
-    packaging/verify-package.sh dist/OmaTree-0.1.0-x86_64.AppImage
+    packaging/verify-package.sh dist/omatree-0.1.1-1-x86_64.pkg.tar.zst
+    packaging/verify-package.sh dist/omatree_0.1.1_amd64.deb
+    packaging/verify-package.sh dist/OmaTree-0.1.1-x86_64.AppImage
 
 picks the verifier by file type (`arch/verify-arch.sh`, `debian/verify-deb.sh`,
 `appimage/verify-appimage.sh`); all of them share `packaging/linux/verify-common.sh`
@@ -399,7 +423,7 @@ the library policy, the licence files, and measures the ABI.
 
 Known validator output: `desktop-file-validate` is clean. `appstreamcli validate`
 reports one pedantic note, that developer information is missing (none is
-invented to silence it). The AppStream file carries the `0.1.0` release entry.
+invented to silence it). The AppStream file carries the `0.1.1` release entry (and the `0.1.0` one).
 
 ## Release-readiness commands
 

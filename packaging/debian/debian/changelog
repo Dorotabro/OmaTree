@@ -1,3 +1,12 @@
+omatree (0.1.1) unstable; urgency=low
+
+  * macOS support (Apple Silicon): no change for Linux packages except
+    that OmaTree's own dialog buttons are labelled in English whatever
+    the system language, and the Open/New/Save/Find shortcuts now come
+    from Qt's standard keys (still Ctrl+O, Ctrl+N, Ctrl+S, Ctrl+F).
+
+ -- OmaTree project <261649146+Dorotabro@users.noreply.github.com>  Tue, 06 Oct 2026 00:00:00 +0000
+
 omatree (0.1.0) unstable; urgency=low
 
   * Initial package of OmaTree 0.1.0.
