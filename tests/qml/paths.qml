@@ -15,7 +15,7 @@ Base {
             const wanted = typed + ".omatree";
 
             // What FileDialog.selectedFile is: a percent-encoded file: URL.
-            const target = notebook.saveAsTarget("file://" + encodeURI(typed));
+            const target = notebook.saveAsTarget(url(encodeURI(typed)));
             check(what + "Save As keeps the name and adds .omatree", target === wanted);
             check(what + "nothing there yet, so no overwrite question", !notebook.needsOverwriteConfirmation(target));
 
@@ -33,7 +33,7 @@ Base {
 
             notebook.newNotebook();
             check(what + "from another notebook, Save As to that file asks before replacing it", notebook.needsOverwriteConfirmation(target));
-            check(what + "reopen through the dialog's URL", notebook.openFile("file://" + encodeURI(wanted)) === "");
+            check(what + "reopen through the dialog's URL", notebook.openFile(url(encodeURI(wanted))) === "");
             check(what + "the autosaved text is there", notebook.body(find("Note")) === "autosaved " + i);
             notebook.newNotebook();
             check(what + "reopen through a command-line path", notebook.openPath(wanted) === "");

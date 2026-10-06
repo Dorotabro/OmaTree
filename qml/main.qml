@@ -462,7 +462,10 @@ ApplicationWindow {
     }
     // Command+W closes the window on macOS, through the same close handling
     // (unsaved changes included) as the window's own button. Elsewhere there
-    // is no such key in OmaTree.
+    // is no such key in OmaTree: on Linux the desktop closes windows, and on
+    // Windows the window closes with Alt+F4 or its close button (both end in
+    // `onClosing` below), while Ctrl+W, which there closes a tab or document
+    // inside a window, is left unbound.
     Shortcut {
         sequences: Keymap.closeWindow
         enabled: Keymap.mac && !root.modalOpen

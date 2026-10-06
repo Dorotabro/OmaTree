@@ -70,6 +70,19 @@ fn json_string(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+/// A path as the scenarios receive it. Windows accepts `/` everywhere, and QML
+/// builds its `file:` URLs and compares paths with it (`tests/qml/Base.qml`),
+/// so a Windows path is handed over with forward slashes. Elsewhere a
+/// backslash is an ordinary file name character and the path is left alone.
+fn portable(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text.into_owned()
+    }
+}
+
 /// Runs scenario `name` (`tests/qml/<name>.qml`) and returns its output.
 /// `extra` are further `"key": value` JSON members for the scenario.
 /// `state` is the XDG_STATE_HOME to use; the default is empty (no Omarchy).
@@ -93,7 +106,7 @@ fn run_in(
     let mut params = format!(
         "{{\"scenario\": {}, \"dir\": {}",
         json_string(name),
-        json_string(&work.to_string_lossy())
+        json_string(&portable(&work))
     );
     for (key, value) in extra {
         params.push_str(&format!(", {}: {}", json_string(key), value));
@@ -106,7 +119,8 @@ fn run_in(
     fs::create_dir_all(&home).unwrap();
     fs::create_dir_all(&default_state).unwrap();
 
-    let mut child = Command::new(std::env::current_exe().unwrap())
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
         .args([
             "--exact",
             "integration_tests::app_child",
@@ -115,11 +129,20 @@ fn run_in(
         ])
         .env_clear()
         .env("OMATREE_APP_CHILD", "1")
-        // Qt needs a library path and fonts, and nothing else of ours.
+        // Qt needs a library path and fonts, and nothing else of ours. On
+        // Windows it also needs the system directory (without SYSTEMROOT
+        // Windows cannot seed its random number generator, and Qt warns about
+        // it on stderr). Windows spells these names in any case.
         .envs(std::env::vars().filter(|(k, _)| {
             matches!(
-                k.as_str(),
-                "PATH" | "LD_LIBRARY_PATH" | "FONTCONFIG_FILE" | "FONTCONFIG_PATH"
+                k.to_ascii_uppercase().as_str(),
+                "PATH"
+                    | "LD_LIBRARY_PATH"
+                    | "FONTCONFIG_FILE"
+                    | "FONTCONFIG_PATH"
+                    | "SYSTEMROOT"
+                    | "SYSTEMDRIVE"
+                    | "WINDIR"
             )
         }))
         .env("HOME", &home)
@@ -136,9 +159,25 @@ fn run_in(
         .env("OMATREE_TEST_QML", qml.join("runner.qml"))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("could not start omatree");
+        .stderr(Stdio::piped());
+    if cfg!(windows) {
+        // Windows' own spelling of HOME and XDG_*, so that a process asking
+        // the environment (rather than the shell API) finds the sandbox.
+        command
+            .env("USERPROFILE", &home)
+            .env("APPDATA", home.join("config"))
+            .env("LOCALAPPDATA", home.join("cache"))
+            .env("TEMP", &home)
+            .env("TMP", &home);
+        // Qt's offscreen platform has no Windows font database of its own: it
+        // reads a font directory, by default one inside the Qt installation
+        // that does not exist, and warns about it. The system's fonts are what
+        // the real application draws with.
+        if let Some(root) = std::env::var_os("SystemRoot") {
+            command.env("QT_QPA_FONTDIR", Path::new(&root).join("Fonts"));
+        }
+    }
+    let mut child = command.spawn().expect("could not start omatree");
 
     let lines = Arc::new(Mutex::new(Vec::new()));
     let mut readers = Vec::new();
@@ -148,8 +187,12 @@ fn run_in(
     ] {
         let lines = Arc::clone(&lines);
         readers.push(thread::spawn(move || {
-            let mut text = String::new();
-            let _ = pipe.read_to_string(&mut text);
+            // Bytes, decoded leniently: on Windows Qt writes its console
+            // output in the ANSI code page, not UTF-8, and one accented letter
+            // must not make the whole stream unreadable.
+            let mut bytes = Vec::new();
+            let _ = pipe.read_to_end(&mut bytes);
+            let text = String::from_utf8_lossy(&bytes);
             lines
                 .lock()
                 .unwrap()
@@ -348,7 +391,7 @@ fn markdown_preview_loads_no_resources() {
         "resources",
         &[
             ("port", port.to_string()),
-            ("local", json_string(&local.to_string_lossy())),
+            ("local", json_string(&portable(&local))),
         ],
         None,
     );
@@ -392,7 +435,7 @@ fn theme_follows_an_isolated_palette() {
     let outcome = run_in(
         &sandbox,
         "theme",
-        &[("colors", json_string(&colors.to_string_lossy()))],
+        &[("colors", json_string(&portable(&colors)))],
         Some(&state),
     );
     assert_clean(&outcome);
@@ -553,7 +596,7 @@ fn spaced_and_unicode_paths_save_autosave_and_reopen() {
     }
     let list = dirs
         .iter()
-        .map(|d| json_string(&d.to_string_lossy()))
+        .map(|d| json_string(&portable(d)))
         .collect::<Vec<_>>()
         .join(", ");
     let outcome = run_in(&sandbox, "paths", &[("dirs", format!("[{list}]"))], None);

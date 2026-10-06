@@ -1,3 +1,9 @@
+// A Windows release build is a GUI program. Without this it is a console
+// program, and starting it from Explorer opens a console window beside the
+// application. (Debug builds, so `cargo run` and `cargo test`, keep the
+// console for their output.)
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 pub mod app;
 mod document;
 #[cfg(test)]
@@ -16,6 +22,8 @@ use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
 extern "C" {
     /// `cpp/app_identity.cpp`: sets the window icon from the compiled-in PNGs.
     fn omatree_install_window_icon();
+    /// `cpp/controls_style.cpp`: selects the Basic Qt Quick Controls style.
+    fn omatree_select_controls_style();
     /// `cpp/keyboard_policy.cpp`: lets Tab reach every control on macOS.
     fn omatree_apply_keyboard_policy();
     /// `cpp/file_open.cpp`: macOS Finder "open document" events.
@@ -32,12 +40,14 @@ const DESKTOP_FILE_NAME: &str = "io.github.Dorotabro.OmaTree";
 /// builds, where `OMATREE_TEST_QML` may name a file to start from instead.
 /// That is how the integration tests in `tests/` drive the real production
 /// components without editing them. A release build ignores the variable.
-fn entry_point() -> String {
+fn entry_point() -> QUrl {
     #[cfg(debug_assertions)]
     if let Some(path) = std::env::var_os("OMATREE_TEST_QML") {
-        return format!("file://{}", path.to_string_lossy());
+        // Qt builds the URL, so a drive letter, backslashes, spaces and
+        // non-ASCII letters all come out as a valid `file:` URL.
+        return QUrl::from_local_file(&QString::from(path.to_string_lossy().as_ref()));
     }
-    "qrc:/qt/qml/org/omatree/qml/main.qml".to_string()
+    QUrl::from("qrc:/qt/qml/org/omatree/qml/main.qml")
 }
 
 fn main() {
@@ -49,9 +59,9 @@ fn main() {
 pub fn run_app() {
     // The flat, palette-driven Basic style, so the semantic palette looks the
     // same everywhere. A style the user chose explicitly is left alone.
-    if std::env::var_os("QT_QUICK_CONTROLS_STYLE").is_none() {
-        std::env::set_var("QT_QUICK_CONTROLS_STYLE", "Basic");
-    }
+    // SAFETY: a plain C++ function with no arguments, called once on the main
+    // thread before any other thread or Qt object exists.
+    unsafe { omatree_select_controls_style() };
 
     let mut qt_app = QGuiApplication::new();
     // The application name is what the desktop calls it. (The display name is
@@ -73,7 +83,7 @@ pub fn run_app() {
     let mut engine = QQmlApplicationEngine::new();
 
     if let Some(engine) = engine.as_mut() {
-        engine.load(&QUrl::from(entry_point().as_str()));
+        engine.load(&entry_point());
     }
 
     if let Some(app) = qt_app.as_mut() {

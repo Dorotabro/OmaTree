@@ -24,6 +24,7 @@ fn main() {
     ])
     .cpp_file("cpp/markdown_render.cpp")
     .cpp_file("cpp/app_identity.cpp")
+    .cpp_file("cpp/controls_style.cpp")
     .cpp_file("cpp/keyboard_policy.cpp")
     .cpp_file("cpp/file_open.cpp")
     // The application icon, compiled into the executable (see
@@ -38,4 +39,25 @@ fn main() {
         ])),
     )
     .build();
+
+    embed_windows_manifest();
+}
+
+/// Windows (MSVC) only: embeds `windows/omatree.manifest`, which makes the
+/// process's ANSI code page UTF-8, so that a non-ASCII command-line path
+/// reaches Qt intact. Only the executable gets it (not the test programs).
+fn embed_windows_manifest() {
+    println!("cargo:rerun-if-changed=windows/omatree.manifest");
+    let target = |name: &str| std::env::var(name).unwrap_or_default();
+    if target("CARGO_CFG_TARGET_OS") != "windows" || target("CARGO_CFG_TARGET_ENV") != "msvc" {
+        return;
+    }
+    let manifest = std::path::Path::new(&target("CARGO_MANIFEST_DIR"))
+        .join("windows")
+        .join("omatree.manifest");
+    println!("cargo:rustc-link-arg-bins=/MANIFEST:EMBED");
+    println!(
+        "cargo:rustc-link-arg-bins=/MANIFESTINPUT:{}",
+        manifest.display()
+    );
 }

@@ -626,6 +626,15 @@ mod tests {
         }
     }
 
+    /// Takes the write permission away from `path`: the write bits on Unix,
+    /// the read-only attribute on Windows. (`TempFile` and `TempDir` give it
+    /// back before they delete.)
+    fn make_read_only(path: &Path) {
+        let mut perms = std::fs::metadata(path).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(path, perms).unwrap();
+    }
+
     fn titles(nb: &Notebook, parent: Option<NodeId>) -> Vec<String> {
         let nodes = match parent {
             None => nb.roots(),
@@ -770,18 +779,15 @@ mod tests {
         assert!(!doc.is_dirty(), "writing identical text is not a change");
     }
 
-    #[cfg(unix)]
     #[test]
     fn failed_save_leaves_dirty_set_and_file_intact() {
-        use std::os::unix::fs::PermissionsExt;
-
         let file = TempFile::new();
         {
             let mut doc = Document::open(file.path()).unwrap();
             doc.create_root("kept").unwrap();
             doc.save().unwrap();
         }
-        std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o444)).unwrap();
+        make_read_only(file.path());
         // Root bypasses file permissions, so the failure can't be provoked.
         if std::fs::OpenOptions::new()
             .write(true)
@@ -1006,11 +1012,8 @@ mod tests {
         assert_eq!(stored_titles(&target), ["new content"]);
     }
 
-    #[cfg(unix)]
     #[test]
     fn failed_overwrite_leaves_the_existing_target_valid_and_unchanged() {
-        use std::os::unix::fs::PermissionsExt;
-
         let dir = TempDir::new();
         let target = dir.join("locked.omatree");
         {
@@ -1018,7 +1021,7 @@ mod tests {
             other.create_root("precious").unwrap();
             other.save().unwrap();
         }
-        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o444)).unwrap();
+        make_read_only(&target);
         if std::fs::OpenOptions::new()
             .write(true)
             .open(&target)

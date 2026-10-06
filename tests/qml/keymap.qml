@@ -24,7 +24,7 @@ Base {
         const expected = [["Ctrl+N", "⌘N"], ["Ctrl+Shift+N", "⇧⌘N"], ["Ctrl+O", "⌘O"], ["Ctrl+S", "⌘S"], ["Ctrl+Shift+S", "⇧⌘S"], ["Ctrl+F", "⌘F"], ["Ctrl+E", "⌘E"]];
         for (const [linux, mac] of expected) {
             const found = findShortcut(linux);
-            check(linux + " is bound, and reads " + written(linux, mac), found !== null && found.nativeText === written(linux, mac) && found.enabled);
+            check(linux + " is bound, and reads " + written(linux, mac), found !== null && Keymap.text(found.sequences) === written(linux, mac) && found.enabled);
         }
         check("Keymap names the same keys", Keymap.text(Keymap.newNote) === written("Ctrl+N", "⌘N") && Keymap.text(Keymap.find) === written("Ctrl+F", "⌘F") && Keymap.text(Keymap.saveAs) === written("Ctrl+Shift+S", "⇧⌘S"));
 
@@ -56,7 +56,7 @@ Base {
         // question; no such key elsewhere.
         const closer = findShortcut("Ctrl+W");
         if (Qt.platform.os === "osx") {
-            check("Command+W is bound", closer !== null && closer.nativeText === "⌘W" && closer.enabled);
+            check("Command+W is bound", closer !== null && Keymap.text(closer.sequences) === "⌘W" && closer.enabled);
             check("F1 lists it", rows["Close the window"] === "⌘W");
             mk(null, "Unsaved", "x");
             const asked = findObj(app, o => o.hasOwnProperty("continuation"));
@@ -65,7 +65,7 @@ Base {
             asked.reject();
             until("and Cancel keeps the window and the notebook", () => !asked.visible && app.visible && notebook.dirty);
         } else {
-            check("no Close shortcut outside macOS", closer === null && rows["Close the window"] === undefined);
+            check("no Close shortcut outside macOS (Ctrl+W is unbound, also on Windows)", (closer === null || !closer.enabled) && rows["Close the window"] === undefined);
         }
 
         // OmaTree's own dialogs are English, whatever the system language.

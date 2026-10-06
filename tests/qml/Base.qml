@@ -181,8 +181,11 @@ TestCase {
     function selected() {
         return selection.currentIndex.valid ? notebook.data(selection.currentIndex, 0) : "";
     }
+    // The `file:` URL of `path` (written with `/`, as the harness hands it
+    // over). A POSIX path already starts with the slash that ends the empty
+    // host; a Windows one (`C:/...`) needs it added: `file:///C:/...`.
     function url(path) {
-        return "file://" + path;
+        return "file://" + (path.charAt(0) === "/" ? "" : "/") + path;
     }
     // A saved, file-backed copy of the current document.
     function saveAs(path) {
@@ -191,9 +194,11 @@ TestCase {
     // The application-wide `Shortcut` for `sequence`, written portably
     // ("Ctrl+N"): the one whose key the platform shows the same way, so
     // "Ctrl+N" finds the one bound to Command+N on macOS. Null if there is none.
+    // (Compared by how Keymap writes them, not by the Shortcut's own
+    // `nativeText`, which Qt 6.8 leaves empty for `sequences`.)
     function findShortcut(sequence) {
         const wanted = Keymap.text([sequence]);
-        return findObj(app, o => o.hasOwnProperty("nativeText") && o.hasOwnProperty("activated") && o.nativeText === wanted);
+        return findObj(app, o => o.hasOwnProperty("sequences") && o.hasOwnProperty("activated") && o.sequences.length > 0 && Keymap.text(o.sequences) === wanted);
     }
     // Application-wide shortcuts (the `Shortcut` items of main.qml): QtTest's
     // synthetic key events do not go through Qt's shortcut map, so this fires

@@ -40,10 +40,13 @@ QtObject {
         }
     }
 
-    // How the platform writes `sequences`.
+    // How the platform writes `sequences` (each has one entry; the first is
+    // written). The singular `sequence` is what is given to the printer: in
+    // Qt 6.8 `Shortcut.nativeText` follows that property only, and stays empty
+    // for `sequences`.
     function text(sequences) {
         const probe = printer.createObject(null, {
-            "sequences": sequences
+            "sequence": sequences[0]
         });
         const written = probe.nativeText;
         probe.destroy();

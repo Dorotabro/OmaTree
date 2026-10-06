@@ -152,6 +152,8 @@ You can optionally pass a `.omatree` file path to open an existing notebook dire
 
 On macOS, `brew install qt` provides Qt 6 and the same commands work. `packaging/macos/build-dmg.sh` builds the disk image.
 
+On Windows (development builds only; there is no installer yet), use the MSVC toolchain: Visual Studio Build Tools 2022 with the C++ workload, Rust's `x86_64-pc-windows-msvc` target, and a Qt 6 `msvc2022_64` kit (for example Qt 6.8.3 from `aqtinstall`). Run the commands from a shell where the MSVC environment is loaded (`vcvars64.bat`), with `QMAKE` pointing at the kit's `qmake.exe` and its `bin` directory on `PATH`. Shortcuts are the Ctrl ones listed under F1. The window closes with Alt+F4 or its close button, both asking about unsaved changes (Ctrl+W is deliberately not bound). Quote a notebook path that contains spaces: `omatree.exe "C:\Users\me\My Notes\poznámky.omatree"`.
+
 For development:
 
 ```bash
@@ -232,7 +234,7 @@ Linux
 
 macOS 14+, Apple Silicon      disk image (unsigned, not notarized)
 
-Windows                       planned
+Windows                       planned (builds and runs from source; no installer yet)
 ```
 
 Development happens primarily on Arch Linux / Omarchy.
