@@ -1,0 +1,7 @@
+kind = "app"
+categories = ["Office"]
+icon = "assets/logo/omatree-icon-256.png"
+
+[linux.x86_64]
+asset = "omatree-{version}-*-x86_64.pkg.tar.zst"
+exec = "usr/bin/omatree"
