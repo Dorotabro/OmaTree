@@ -44,7 +44,7 @@ Base {
         // Preview -> Escape -> tree, mode preserved.
         tree.forceActiveFocus();
         shortcut("Ctrl+E");
-        until("Preview is on and focused", () => editorPane.previewing && previewField() !== null && previewField().activeFocus);
+        until("Preview is on and has the keyboard", () => editorPane.previewing && previewField() !== null && app.activeFocusItem === previewKeys());
         keyClick(Qt.Key_Escape);
         until("Escape from the preview focuses the tree", () => tree.activeFocus);
         check("Preview is preserved", editorPane.previewing);

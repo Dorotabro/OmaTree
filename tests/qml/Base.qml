@@ -123,6 +123,11 @@ TestCase {
     function previewField() {
         return findObj(editorPane, o => o.hasOwnProperty("textFormat") && o.readOnly === true);
     }
+    // Whoever has the keyboard while Preview is shown: a plain item, never the
+    // text (see EditorPane.qml).
+    function previewKeys() {
+        return findObj(editorPane, o => o.objectName === "previewKeys");
+    }
     function dialogOf(predicate) {
         return findObj(app, predicate);
     }

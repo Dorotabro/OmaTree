@@ -56,9 +56,10 @@ Item {
         } else {
             refreshPreview();
             previewing = true;
-            // The preview takes the keyboard (the body it replaces had it), so
-            // Escape and the scrolling keys work there.
-            Qt.callLater(() => preview.forceActiveFocus());
+            // Preview takes the keyboard (the body it replaces had it), so
+            // Escape, the scrolling keys and every shortcut work there. It goes
+            // to `previewKeys`, not to the text: see there.
+            Qt.callLater(() => previewKeys.forceActiveFocus());
         }
     }
 
@@ -281,6 +282,10 @@ Item {
                 width: previewView.availableWidth
                 readOnly: true
                 selectByMouse: true
+                // A click selects text or follows a link but leaves the keyboard
+                // with `previewKeys`; the selection stays visible without focus.
+                activeFocusOnPress: false
+                persistentSelection: true
                 textFormat: TextEdit.RichText
                 wrapMode: TextEdit.Wrap
                 color: Theme.foreground
@@ -293,7 +298,6 @@ Item {
                 // Re-rendered when the text, the mode or the theme changes.
                 text: pane.previewing ? Markdown.render(pane.previewSource, pane.previewColors) : ""
                 onLinkActivated: link => pane.openLink(link)
-                Keys.onEscapePressed: pane.escapeRequested()
 
                 HoverHandler {
                     cursorShape: preview.hoveredLink !== "" ? Qt.PointingHandCursor : Qt.IBeamCursor
@@ -337,6 +341,47 @@ Item {
                         pane.notebook.setBody(pane.selection.currentIndex, text);
                 }
             }
+        }
+    }
+
+    // Who has the keyboard while Preview is shown. Deliberately not the text:
+    // a focused TextEdit takes the application-wide shortcuts (Ctrl+E, Ctrl+S,
+    // Ctrl+N, F1, ...) for itself, even when it is read-only, so Ctrl+E could
+    // not switch back to Edit (nor could any of the others be used) until
+    // Escape moved the focus away. A plain item lets them through. It does by
+    // hand what the keyboard did in the text: Escape, scrolling, select all
+    // and copy.
+    Item {
+        id: previewKeys
+
+        objectName: "previewKeys"
+
+        function scrollBy(distance) {
+            const flick = previewView.contentItem;
+            const most = Math.max(0, flick.contentHeight - flick.height);
+            flick.contentY = Math.max(0, Math.min(most, flick.contentY + distance));
+        }
+
+        Keys.onEscapePressed: pane.escapeRequested()
+        Keys.onUpPressed: scrollBy(-40)
+        Keys.onDownPressed: scrollBy(40)
+        Keys.onPressed: event => {
+            if (event.matches(StandardKey.SelectAll)) {
+                preview.selectAll();
+            } else if (event.matches(StandardKey.Copy)) {
+                preview.copy();
+            } else if (event.key === Qt.Key_PageUp) {
+                scrollBy(-previewView.height * 0.9);
+            } else if (event.key === Qt.Key_PageDown) {
+                scrollBy(previewView.height * 0.9);
+            } else if (event.key === Qt.Key_Home) {
+                scrollBy(-previewView.contentItem.contentHeight);
+            } else if (event.key === Qt.Key_End) {
+                scrollBy(previewView.contentItem.contentHeight);
+            } else {
+                return;
+            }
+            event.accepted = true;
         }
     }
 
