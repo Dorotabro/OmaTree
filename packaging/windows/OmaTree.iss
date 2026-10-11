@@ -2,8 +2,8 @@
 ;
 ; Not meant to be compiled by hand: build-installer.ps1 stages the application
 ; and passes everything that varies:
-;   /DAppVersion=0.1.1          from Cargo.toml (so a version bump needs no edit here)
-;   /DAppVersionNumeric=0.1.1.0 the same, as four numbers, for version resources
+;   /DAppVersion=0.1.2          from Cargo.toml (so a version bump needs no edit here)
+;   /DAppVersionNumeric=0.1.2.0 the same, as four numbers, for version resources
 ;   /DStageDir=...              the staged application tree
 ;   /DRepoDir=...               the repository root
 ;   /DOutputDir=...             where the setup program is written
@@ -59,8 +59,10 @@ DefaultDirName={autopf}\{#AppName}
 DisableProgramGroupPage=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; Windows 10 1809: what Qt 6.8 itself requires.
-MinVersion=10.0.17763
+; Windows 10 version 1903 (build 18362): the first with the UTF-8 active code page
+; that windows\omatree.manifest asks for (see docs/PACKAGING.md). Qt 6.8's own floor
+; is lower (1809), but that is not a supported target.
+MinVersion=10.0.18362
 
 OutputDir={#OutputDir}
 OutputBaseFilename={#AppName}-{#AppVersion}-x64-setup

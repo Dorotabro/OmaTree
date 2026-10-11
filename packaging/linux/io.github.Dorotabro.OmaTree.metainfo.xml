@@ -33,6 +33,14 @@
   </keywords>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.1.2" date="2026-10-11">
+      <description>
+        <p>Adds Windows support (x64 installer). Fixes Markdown Preview so that
+        it no longer swallows the application's keyboard shortcuts (Ctrl+E now
+        leaves Preview), and makes shortcut names follow the platform more
+        reliably.</p>
+      </description>
+    </release>
     <release version="0.1.1" date="2026-10-06">
       <description>
         <p>Adds macOS support for Apple Silicon (macOS 14 or newer): Command-key

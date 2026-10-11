@@ -3,7 +3,7 @@
 This is an inventory prepared for binary distribution. It records what OmaTree
 uses and what a package must do. It is **not** legal advice.
 Facts below come from the installed Qt files' SPDX headers and license texts, `Cargo.lock`/`cargo metadata`, and the crates' own sources, as
-of OmaTree 0.1.1 on the development machine (Arch Linux). The macOS app bundle is
+of OmaTree 0.1.2 (the dependency set is the same as in 0.1.1) on the development machine (Arch Linux). The macOS app bundle is
 covered at the end.
 
 OmaTree itself is `MIT OR Apache-2.0` (see `LICENSE-MIT`, `LICENSE-APACHE`).

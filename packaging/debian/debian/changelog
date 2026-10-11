@@ -1,3 +1,15 @@
+omatree (0.1.2) unstable; urgency=low
+
+  * Windows support (x64 installer); for Linux packages the changes are
+    the two fixes below.
+  * Markdown Preview no longer swallows the application's keyboard
+    shortcuts: Ctrl+E (and Ctrl+F, Ctrl+S, Ctrl+N, F1, F2, Alt+Up, ...)
+    now work while Preview is shown.
+  * Shortcut names shown in hints, menus and the F1 reference are derived
+    from the platform more reliably.
+
+ -- OmaTree project <261649146+Dorotabro@users.noreply.github.com>  Sun, 11 Oct 2026 00:00:00 +0000
+
 omatree (0.1.1) unstable; urgency=low
 
   * macOS support (Apple Silicon): no change for Linux packages except

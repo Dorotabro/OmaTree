@@ -6,11 +6,13 @@ The three Linux formats are built from the same sources and the same desktop met
 
 | Format | File | Qt | Built in |
 |---|---|---|---|
-| Arch / Omarchy | `omatree-0.1.1-1-x86_64.pkg.tar.zst` | system | the host (`makepkg`) |
-| Debian / Ubuntu | `omatree_0.1.1_amd64.deb` | system | Debian 13 container |
-| AppImage | `OmaTree-0.1.1-x86_64.AppImage` | **bundled** (6.8.3) | Ubuntu 20.04 container |
+| Arch / Omarchy | `omatree-0.1.2-1-x86_64.pkg.tar.zst` | system | the host (`makepkg`) |
+| Debian / Ubuntu | `omatree_0.1.2_amd64.deb` | system | Debian 13 container |
+| AppImage | `OmaTree-0.1.2-x86_64.AppImage` | **bundled** (6.8.3) | Ubuntu 20.04 container |
 
-All three are written to `dist/` and listed in `dist/SHA256SUMS`. Nothing is
+All three are written to `dist/`. A release has five files in all (these three, the
+macOS DMG and the Windows installer, built on three machines) and one `SHA256SUMS`
+listing exactly those five: see "Release builds" and "Checksums". Nothing is
 published, tagged or uploaded by any of these scripts.
 
 ## Identity
@@ -19,7 +21,7 @@ published, tagged or uploaded by any of these scripts.
 |---|---|
 | Display name | OmaTree |
 | Executable | `omatree` |
-| Version | 0.1.1 |
+| Version | 0.1.2 |
 | Application ID | `io.github.Dorotabro.OmaTree` |
 | Notebook extension | `.omatree` (a SQLite database inside) |
 | MIME type | `application/x-omatree` |
@@ -92,8 +94,8 @@ from OmaTree.
 
     packaging/arch/build-package.sh
 
-writes `dist/omatree-0.1.1-1-x86_64.pkg.tar.zst`, a source snapshot
-`dist/omatree-0.1.1.tar.gz` and `dist/SHA256SUMS` (`dist/` is git-ignored).
+writes `dist/omatree-0.1.2-1-x86_64.pkg.tar.zst`, a source snapshot
+`dist/omatree-0.1.2.tar.gz` and `dist/SHA256SUMS` (`dist/` is git-ignored).
 It snapshots the working tree, fills `packaging/arch/PKGBUILD.in` with the
 tarball and its SHA-256, and runs `makepkg`. The build uses `cargo fetch
 --locked` and `cargo build --release --locked --frozen`, so only what
@@ -112,7 +114,7 @@ The metainfo file also needs its first `<release>` (version and date).
 
     packaging/debian/build-package.sh
 
-builds `dist/omatree_0.1.1_amd64.deb` with the normal Debian tooling
+builds `dist/omatree_0.1.2_amd64.deb` with the normal Debian tooling
 (`dpkg-buildpackage`, debhelper 13) in a disposable **Debian 13** container (needs
 Docker or Podman; `packaging/debian/Dockerfile` pins the image by digest). The
 packaging is `packaging/debian/debian/`; the script copies it to the root of a
@@ -146,8 +148,8 @@ Debian's own Rust is too old; the Cargo download cache is kept outside the tree
 
 Test the finished file on clean systems (it is never rebuilt per distribution):
 
-    packaging/debian/test-install.sh dist/omatree_0.1.1_amd64.deb debian:13
-    packaging/debian/test-install.sh dist/omatree_0.1.1_amd64.deb ubuntu:26.04
+    packaging/debian/test-install.sh dist/omatree_0.1.2_amd64.deb debian:13
+    packaging/debian/test-install.sh dist/omatree_0.1.2_amd64.deb ubuntu:26.04
 
 `apt install` with `--no-install-recommends` (the Depends field alone must
 suffice), `dpkg -s`/`dpkg -L`, a headless run on a new notebook with no QML or
@@ -158,10 +160,10 @@ Passing (with the 0.1.0 package; rerun for each release): Debian 13, Ubuntu 25.1
 
     packaging/appimage/build-package.sh
 
-builds `dist/OmaTree-0.1.1-x86_64.AppImage` in a disposable container
+builds `dist/OmaTree-0.1.2-x86_64.AppImage` in a disposable container
 (`packaging/appimage/Dockerfile`, digest-pinned). It builds OmaTree against an
 official **Qt 6.8.3** and bundles that Qt with linuxdeploy; `Exec=omatree %f`
-means `./OmaTree-0.1.1-x86_64.AppImage notebook.omatree` opens the notebook.
+means `./OmaTree-0.1.2-x86_64.AppImage notebook.omatree` opens the notebook.
 
 - **Build userspace: Ubuntu 20.04** (glibc 2.31). An AppImage cannot run on an
   older glibc than the one it was built against, so the oldest userspace that
@@ -219,7 +221,7 @@ means `./OmaTree-0.1.1-x86_64.AppImage notebook.omatree` opens the notebook.
 
 Test the finished file on clean systems (it is not rebuilt per distribution):
 
-    packaging/appimage/test-container.sh dist/OmaTree-0.1.1-x86_64.AppImage ubuntu:20.04
+    packaging/appimage/test-container.sh dist/OmaTree-0.1.2-x86_64.AppImage ubuntu:20.04
 
 Step one runs it in the bare image (which prints the host libraries it needs),
 step two installs the distribution's usual desktop libraries and requires a clean
@@ -230,13 +232,13 @@ Ubuntu 24.04 and 26.04.
 
     packaging/macos/build-dmg.sh
 
-writes `dist/OmaTree-0.1.1-arm64.dmg` (about 36 MB) and `dist/OmaTree-0.1.1-arm64.dmg.sha256` and leaves an inspection copy
+writes `dist/OmaTree-0.1.2-arm64.dmg` (about 36 MB) and `dist/OmaTree-0.1.2-arm64.dmg.sha256` and leaves an inspection copy
 at `dist/macos/OmaTree.app` (about 86 MB). **arm64 only**: there is no universal
 or x86_64 build, and the script refuses to run on another architecture. The app
 needs **macOS 14 or newer**, which is what Qt 6.11.2 itself requires; the script
 reads that from the Qt it bundles and writes it to `LSMinimumSystemVersion`.
 
-**Status: published as unsigned and not notarized (v0.1.1).** The app is ad-hoc
+**Status: published as unsigned and not notarized (v0.1.1 and v0.1.2).** The app is ad-hoc
 signed only (arm64 will not run unsigned), so Gatekeeper blocks a downloaded copy
 until the user approves it in System Settings ▸ Privacy & Security ▸ Open Anyway;
 the README says so. Developer ID signing and notarization are still to do (below).
@@ -273,7 +275,7 @@ is not needed. The script stops with a clear message if any is missing.
 | `CFBundleName`, `CFBundleDisplayName` | OmaTree |
 | `CFBundleIdentifier` | `io.github.Dorotabro.OmaTree` |
 | `CFBundleExecutable` / `CFBundlePackageType` | `omatree` / `APPL` |
-| `CFBundleShortVersionString`, `CFBundleVersion` | 0.1.1 (a valid three-part version; no separate build number) |
+| `CFBundleShortVersionString`, `CFBundleVersion` | 0.1.2 (a valid three-part version; no separate build number) |
 | `LSMinimumSystemVersion` | 14.0 (from Qt) |
 | `CFBundleIconFile` | `OmaTree` (`OmaTree.icns`) |
 
@@ -382,7 +384,7 @@ declare them, reproduced as given; this is an inventory, not legal advice.
 ### Testing a bundle
 
     packaging/macos/verify-app.sh dist/macos/OmaTree.app   # as above
-    hdiutil attach dist/OmaTree-0.1.1-arm64.dmg            # then copy to /Applications
+    hdiutil attach dist/OmaTree-0.1.2-arm64.dmg            # then copy to /Applications
     open /Applications/OmaTree.app                         # LaunchServices, no shell environment
     open notebook.omatree                                  # the Finder double-click path
 
@@ -395,20 +397,21 @@ script, but a synced folder may add them back.)
 
     packaging\windows\build-installer.ps1
 
-writes `dist\OmaTree-0.1.1-x64-setup.exe` (about 13.4 MB; 47 MB installed) and
-`dist\OmaTree-0.1.1-x64-setup.exe.sha256` (`<hash>  <file>`, ready to be merged into a
+writes `dist\OmaTree-0.1.2-x64-setup.exe` (about 13.4 MB; 47 MB installed) and
+`dist\OmaTree-0.1.2-x64-setup.exe.sha256` (`<hash>  <file>`, ready to be merged into a
 release-level `SHA256SUMS`). **Unsigned.** The version in both names is read from
 `Cargo.toml`; a version bump needs no change in `packaging\windows\`.
 
-**Status: built and tested on one Windows 11 machine (see "Clean-machine verification"
-for what that does and does not prove). Not published; the README does not yet claim
-Windows support.**
+**Status: supported from v0.1.2 as an unsigned installer** (the README documents it,
+including the SmartScreen "Unknown publisher" first run). It was built and tested on one
+Windows 11 machine (see "Clean-machine verification" for what that does and does not
+prove); the v0.1.2 installer itself is built at release time, on the Windows machine.
 
 ### Tools
 
 | | Tested with |
 |---|---|
-| Windows | 10 1809 or later at run time (Qt 6.8's own floor); built on Windows 11 (10.0.26300) |
+| Windows | **Supported minimum: Windows 10 version 1903**, the first with the UTF-8 code-page manifest setting (`windows\omatree.manifest`; without it only non-ASCII command-line paths suffer). The installer enforces it (`MinVersion=10.0.18362` in `OmaTree.iss`; Qt 6.8's own floor, 1809, is lower but not a supported target). Built on Windows 11 (10.0.26300) |
 | Rust | 1.99.0, `x86_64-pc-windows-msvc` |
 | C++ | MSVC 19.44 (Visual Studio 2022 Build Tools 14.44, C++ x64 workload) and Windows SDK 10.0.26100 (`rc.exe`) |
 | Qt | 6.8.3 `msvc2022_64`, the official binaries, installed with `aqtinstall` 3.3.0 (`aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 --archives qtbase qtdeclarative qtshadertools qtsvg`); the kit must have `bin\windeployqt.exe` and its `sbom\` folder |
@@ -659,38 +662,78 @@ These need a Linux and macOS build and test run.
 
 ## Release builds
 
-    packaging/release-build.sh v0.1.1
+A release is built on **three machines**, each from the same tagged source, and has five
+files:
 
-checks the tag out into a clean temporary worktree, builds all three packages from
-it with the scripts above, and writes `dist/SHA256SUMS` for exactly those three
-files. Use it, not the day-to-day builds, for anything that is published. (The
-Arch build makes its source tarball from that checkout, with its real SHA-256.
-A PKGBUILD for a public source archive, as an AUR package would use, takes the
-archive URL and its checksum instead; see `PKGBUILD.in`.)
+| File | Built on | By |
+|---|---|---|
+| `omatree-<v>-1-x86_64.pkg.tar.zst` | Linux (Arch / Omarchy) | `packaging/arch/build-package.sh` |
+| `omatree_<v>_amd64.deb` | Linux (container) | `packaging/debian/build-package.sh` |
+| `OmaTree-<v>-x86_64.AppImage` | Linux (container) | `packaging/appimage/build-package.sh` |
+| `OmaTree-<v>-arm64.dmg` | Apple Silicon Mac | `packaging/macos/build-dmg.sh` |
+| `OmaTree-<v>-x64-setup.exe` | Windows x64 | `packaging\windows\build-installer.ps1` |
+
+On Linux, `packaging/release-build.sh v0.1.2` checks the tag out into a clean temporary
+worktree, builds the three Linux packages from it with the scripts above, and writes an
+interim `dist/SHA256SUMS` for exactly those three files. Use it, not the day-to-day
+builds, for anything that is published. (The Arch build makes its source tarball from that
+checkout, with its real SHA-256. A PKGBUILD for a public source archive, as an AUR package
+would use, takes the archive URL and its checksum instead; see `PKGBUILD.in`.) The Mac and
+Windows scripts build the working tree they are run in, so on those machines check the tag
+out first (`git switch --detach v0.1.2`, clean tree) before running them.
+
+### Release procedure
+
+1. Tag the verified source (the checks in the next section pass on all three machines).
+2. **Linux:** `packaging/release-build.sh v0.1.2`; then `packaging/verify-package.sh` on
+   each of the three files, and the clean-system tests under "Debian / Ubuntu package" and
+   "AppImage".
+3. **macOS:** from a clean checkout of the tag, `packaging/macos/build-dmg.sh`. It runs
+   `verify-app.sh` itself. Copy `dist/OmaTree-<v>-arm64.dmg` (and, optionally, its
+   `.sha256`) to the Linux machine's `dist/`.
+4. **Windows:** from a clean checkout of the tag, `packaging\windows\build-installer.ps1`.
+   It runs `verify-package.ps1` itself. Copy `dist\OmaTree-<v>-x64-setup.exe` (and,
+   optionally, its `.sha256`) to the Linux machine's `dist/`.
+5. **Linux:** `packaging/release-checksums.sh` (see below) writes the final `dist/SHA256SUMS`.
+6. Upload the five files and `SHA256SUMS`, and nothing else, to the release.
+
+Each machine verifies its own file before it is copied (steps 2 to 4). Nothing in these
+scripts tags, signs, publishes or uploads.
 
 ## Checksums
 
-    packaging/checksums.sh
+    packaging/release-checksums.sh [DIST_DIR]
 
-writes `dist/SHA256SUMS` for exactly the three packages above and verifies it.
-(`arch/build-package.sh` writes its own sums file too, with the source tarball;
-run `checksums.sh` last.) Nothing is signed yet.
+writes the published `dist/SHA256SUMS`: **exactly five lines**, one per release file
+(Arch package, `.deb`, AppImage, DMG, Windows installer, in that order), and verifies it.
+It stops if any of the five is missing from `dist/`. It never lists the source tarball
+(`omatree-<v>.tar.gz`) or the `.sha256` files that the Mac and Windows scripts write next
+to their output: those are per-file helpers and are not part of the release. If a
+`.sha256` is present beside its file, the script only uses it to check that the file was
+not damaged in the copy between machines (case-insensitive, so PowerShell's upper-case
+hex is fine). Nothing is signed yet.
+
+`packaging/checksums.sh` is the Linux-only interim step: it writes a `SHA256SUMS` for the
+three Linux packages (`release-build.sh` runs it). (`arch/build-package.sh` writes its own
+sums file too, with the source tarball.) The final file is always made last, by
+`release-checksums.sh`, on the machine that has all five files.
 
 ## Verifying a package
 
-    packaging/verify-package.sh dist/omatree-0.1.1-1-x86_64.pkg.tar.zst
-    packaging/verify-package.sh dist/omatree_0.1.1_amd64.deb
-    packaging/verify-package.sh dist/OmaTree-0.1.1-x86_64.AppImage
+    packaging/verify-package.sh dist/omatree-0.1.2-1-x86_64.pkg.tar.zst
+    packaging/verify-package.sh dist/omatree_0.1.2_amd64.deb
+    packaging/verify-package.sh dist/OmaTree-0.1.2-x86_64.AppImage
 
 picks the verifier by file type (`arch/verify-arch.sh`, `debian/verify-deb.sh`,
 `appimage/verify-appimage.sh`); all of them share `packaging/linux/verify-common.sh`
 for the desktop entry, AppStream, MIME, icon, build-path and headless-launch
-checks. The AppImage verifier also checks the bundled Qt, plugins and QML modules,
+checks, and that the newest AppStream release entry equals the version in `Cargo.toml`
+(as the Debian verifier does for the changelog). The AppImage verifier also checks the bundled Qt, plugins and QML modules,
 the library policy, the licence files, and measures the ABI.
 
 Known validator output: `desktop-file-validate` is clean. `appstreamcli validate`
 reports one pedantic note, that developer information is missing (none is
-invented to silence it). The AppStream file carries the `0.1.1` release entry (and the `0.1.0` one).
+invented to silence it). The AppStream file carries the `0.1.2` release entry (and the `0.1.1` and `0.1.0` ones).
 
 ## Release-readiness commands
 

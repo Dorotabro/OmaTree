@@ -22,7 +22,7 @@ See [`VISION.md`](VISION.md) for the design philosophy.
 
 ## Status
 
-This is **v0.1.1**. It adds macOS support (Apple Silicon); v0.1.0, the first public release, was Linux only.
+This is **v0.1.2**. It adds Windows support (x64) and fixes Markdown Preview so that it no longer swallows the application's keyboard shortcuts. v0.1.1 added macOS support (Apple Silicon); v0.1.0, the first public release, was Linux only.
 
 The notebook format is versioned but may still change between releases, so keep backups of notebooks that matter to you.
 
@@ -36,16 +36,29 @@ Release downloads are available from the [GitHub Releases page](https://github.c
 | Debian 13+, recent Ubuntu | native `.deb` | system Qt 6.8+ |
 | Other x86_64 Linux | AppImage | bundled Qt 6.8.3 |
 | macOS 14+, Apple Silicon | disk image (`.dmg`), **unsigned and not notarized** | bundled Qt 6.11.2 |
-| Windows | planned | |
+| Windows 10 (1903+) / 11, x64 | installer (`.exe`), **unsigned** | bundled Qt 6.8.3 |
 
-There are no Windows builds yet, and no release dates are promised. There is no build for Intel Macs.
+There is no build for Intel Macs and none for Windows on ARM.
+
+The v0.1.2 release contains these files (Linux and Windows are x86-64; the Mac build is arm64, Apple Silicon):
+
+| File | System |
+|---|---|
+| `omatree-0.1.2-1-x86_64.pkg.tar.zst` | Omarchy / Arch Linux, x86_64 |
+| `omatree_0.1.2_amd64.deb` | Debian / Ubuntu, amd64 |
+| `OmaTree-0.1.2-x86_64.AppImage` | other Linux, x86_64 |
+| `OmaTree-0.1.2-arm64.dmg` | macOS 14+, Apple Silicon (arm64) |
+| `OmaTree-0.1.2-x64-setup.exe` | Windows 10 (1903+) / 11, x64 |
+| `SHA256SUMS` | SHA-256 checksums of the five files above |
+
+To check a download, compare its SHA-256 with the line in `SHA256SUMS`: on Linux, `grep <file name> SHA256SUMS | sha256sum -c -`; on macOS, the `shasum` command shown below; on Windows, `Get-FileHash` as shown below.
 
 ### Omarchy / Arch Linux
 
 The native package uses the system Qt 6:
 
 ```bash
-sudo pacman -U ./omatree-0.1.1-1-x86_64.pkg.tar.zst
+sudo pacman -U ./omatree-0.1.2-1-x86_64.pkg.tar.zst
 ```
 
 Remove it with:
@@ -67,7 +80,7 @@ OmaTree needs a newer Qt than Debian 12 and Ubuntu 22.04/24.04 provide, so the `
 Install with `apt` so dependencies are resolved automatically:
 
 ```bash
-sudo apt install ./omatree_0.1.1_amd64.deb
+sudo apt install ./omatree_0.1.2_amd64.deb
 ```
 
 Remove it with:
@@ -83,8 +96,8 @@ On Debian 12, Ubuntu 22.04 or Ubuntu 24.04, use the AppImage instead.
 The AppImage bundles its own Qt runtime, so it does not depend on your system Qt version:
 
 ```bash
-chmod +x OmaTree-0.1.1-x86_64.AppImage
-./OmaTree-0.1.1-x86_64.AppImage
+chmod +x OmaTree-0.1.2-x86_64.AppImage
+./OmaTree-0.1.2-x86_64.AppImage
 ```
 
 You can also pass a `.omatree` file path to open it directly.
@@ -101,14 +114,14 @@ It has been tested on:
 Without FUSE, run it with:
 
 ```bash
-APPIMAGE_EXTRACT_AND_RUN=1 ./OmaTree-0.1.1-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./OmaTree-0.1.2-x86_64.AppImage
 ```
 
 The AppImage does not install itself. Desktop-menu and `.omatree` file association integration depends on your desktop or AppImage integration tool. The AppImage contains the desktop, icon and MIME metadata those tools can use.
 
 ### macOS (Apple Silicon)
 
-`OmaTree-0.1.1-arm64.dmg` is for Macs with Apple silicon (M1 or newer) running **macOS 14 Sonoma or later**. It contains `OmaTree.app` with its own Qt, so nothing else needs to be installed. Notebooks open from Finder (double-click or Open With), and the shortcuts use ⌘ (`F1` lists them).
+`OmaTree-0.1.2-arm64.dmg` is for Macs with Apple silicon (M1 or newer) running **macOS 14 Sonoma or later**. It contains `OmaTree.app` with its own Qt, so nothing else needs to be installed. Notebooks open from Finder (double-click or Open With), and the shortcuts use ⌘ (`F1` lists them).
 
 **The app is not signed with an Apple Developer ID and is not notarized by Apple.** macOS therefore blocks it the first time it is opened. This is expected; you approve it once:
 
@@ -119,10 +132,31 @@ The AppImage does not install itself. Desktop-menu and `.omatree` file associati
 macOS remembers the choice. If you would rather not use System Settings, `xattr -dr com.apple.quarantine /Applications/OmaTree.app` in Terminal removes the quarantine mark instead. Only do either if you got the file from the [Releases page](https://github.com/Dorotabro/OmaTree/releases) and its checksum matches:
 
 ```bash
-grep OmaTree-0.1.1-arm64.dmg SHA256SUMS | shasum -a 256 -c -
+grep OmaTree-0.1.2-arm64.dmg SHA256SUMS | shasum -a 256 -c -
 ```
 
 Remove OmaTree by dragging it to the Trash. Your notebooks are ordinary files and are not touched.
+
+### Windows (x64)
+
+`OmaTree-0.1.2-x64-setup.exe` is for 64-bit Windows 10 **version 1903 or later**, and Windows 11. It contains its own Qt, so nothing else needs to be installed. There is no build for Windows on ARM.
+
+Run the installer and follow the steps. It installs **for your user only** (under `%LOCALAPPDATA%\Programs\OmaTree`), so it does not need administrator rights and normally shows no UAC prompt. It adds OmaTree to the Start menu (a desktop shortcut is offered, unchecked) and associates `.omatree` files with OmaTree, so a double-click in Explorer opens the notebook. Remove it under **Settings → Apps → Installed apps**; your notebooks are ordinary files and are not touched.
+
+**The installer is not code-signed.** Windows SmartScreen may therefore show *Windows protected your PC* and name the publisher as *Unknown publisher* the first time you run a downloaded copy. This is expected for an unsigned program, not a sign that something is wrong with the file. If you got it from the [Releases page](https://github.com/Dorotabro/OmaTree/releases):
+
+1. Run `OmaTree-0.1.2-x64-setup.exe`.
+2. If SmartScreen blocks it, click **More info**.
+3. Check that the file name shown is `OmaTree-0.1.2-x64-setup.exe`.
+4. Click **Run anyway**, if you trust the release.
+
+You do not need to turn off SmartScreen or your antivirus for this. To check that the file is the one that was published, compare its SHA-256 with the line in `SHA256SUMS` before running it:
+
+```powershell
+Get-FileHash .\OmaTree-0.1.2-x64-setup.exe
+```
+
+The shortcuts are the Ctrl ones listed under `F1`. The window closes with Alt+F4 or its close button, both asking about unsaved changes.
 
 ## Build from source
 
@@ -152,7 +186,7 @@ You can optionally pass a `.omatree` file path to open an existing notebook dire
 
 On macOS, `brew install qt` provides Qt 6 and the same commands work. `packaging/macos/build-dmg.sh` builds the disk image.
 
-On Windows (development builds only; there is no installer yet), use the MSVC toolchain: Visual Studio Build Tools 2022 with the C++ workload, Rust's `x86_64-pc-windows-msvc` target, and a Qt 6 `msvc2022_64` kit (for example Qt 6.8.3 from `aqtinstall`). Run the commands from a shell where the MSVC environment is loaded (`vcvars64.bat`), with `QMAKE` pointing at the kit's `qmake.exe` and its `bin` directory on `PATH`. Shortcuts are the Ctrl ones listed under F1. The window closes with Alt+F4 or its close button, both asking about unsaved changes (Ctrl+W is deliberately not bound). Quote a notebook path that contains spaces: `omatree.exe "C:\Users\me\My Notes\poznámky.omatree"`.
+On Windows, use the MSVC toolchain: Visual Studio Build Tools 2022 with the C++ workload, Rust's `x86_64-pc-windows-msvc` target, and a Qt 6 `msvc2022_64` kit (for example Qt 6.8.3 from `aqtinstall`). Run the commands from a shell where the MSVC environment is loaded (`vcvars64.bat`), with `QMAKE` pointing at the kit's `qmake.exe` and its `bin` directory on `PATH`. `packaging\windows\build-installer.ps1` builds the installer. Ctrl+W is deliberately not bound on Windows. Quote a notebook path that contains spaces: `omatree.exe "C:\Users\me\My Notes\poznámky.omatree"`.
 
 For development:
 
@@ -234,12 +268,12 @@ Linux
 
 macOS 14+, Apple Silicon      disk image (unsigned, not notarized)
 
-Windows                       planned (builds and runs from source; no installer yet)
+Windows 10 (1903+) / 11, x64  installer (unsigned)
 ```
 
 Development happens primarily on Arch Linux / Omarchy.
 
-The macOS build is Apple Silicon only; there is no Intel (x86_64) build. Windows is intended eventually, and the stack is cross-platform, but no Windows builds are currently produced or tested.
+The macOS build is Apple Silicon only; there is no Intel (x86_64) build. The Windows build is x64 only; there is no ARM64 build. Windows 10 version 1903 is the minimum because the application asks Windows for a UTF-8 code page, so that notebook paths with accented or non-ASCII letters open correctly.
 
 ## Design philosophy
 

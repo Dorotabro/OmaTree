@@ -50,6 +50,12 @@ verify_metadata() {
     check "Icon is the application id" grep -qx "Icon=$id" "$root/usr/share/applications/$id.desktop"
     check "MimeType is application/x-omatree" grep -qx 'MimeType=application/x-omatree;' "$root/usr/share/applications/$id.desktop"
     if have appstreamcli; then check "appstreamcli validate" appstreamcli validate --no-net "$root/usr/share/metainfo/$id.metainfo.xml"; else skip "appstreamcli not installed"; fi
+    # The newest release entry (AppStream lists them newest first) is the
+    # version in Cargo.toml, which is the one authoritative version.
+    local cargo_ver meta_ver
+    cargo_ver=$(sed -n 's/^version = "\(.*\)"/\1/p' "$(dirname "${BASH_SOURCE[0]}")/../../Cargo.toml" | head -1)
+    meta_ver=$(xmllint --xpath 'string(/component/releases/release[1]/@version)' "$root/usr/share/metainfo/$id.metainfo.xml" 2>/dev/null)
+    check "newest AppStream release ($meta_ver) is the Cargo.toml version ($cargo_ver)" test -n "$cargo_ver" -a "$meta_ver" = "$cargo_ver"
     check "MIME XML is well formed" xmllint --noout "$root/usr/share/mime/packages/$id.xml"
     check "MIME has no magic matching" bash -c "! grep -q '<magic' '$root/usr/share/mime/packages/$id.xml'"
     if have update-mime-database; then

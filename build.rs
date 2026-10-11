@@ -62,7 +62,7 @@ fn embed_windows_resources() {
     let windows_dir = Path::new(&var("CARGO_MANIFEST_DIR")).join("windows");
     let out_dir = PathBuf::from(var("OUT_DIR"));
 
-    // The version, as the two forms a version resource needs: "0.1.1" and
+    // The version, as the two forms a version resource needs: "0.1.2" and
     // 0,1,1,0 (a numeric part without a pre-release suffix).
     let number = |name: &str| var(name).parse::<u16>().unwrap_or(0);
     let header = format!(
