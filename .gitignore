@@ -2,6 +2,7 @@
 /target
 /dist/
 /tickets/
+/archive/
 
 # Qt tooling
 .qmlls.ini
