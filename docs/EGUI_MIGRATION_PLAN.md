@@ -1,6 +1,6 @@
 # OmaTree: Qt/QML → egui migration plan
 
-Status: **assessment and plan only.** Nothing in either repository was changed except this file.
+Status: **plan, revised by ticket E0.** The maintainer's decisions are recorded in `docs/EGUI_DECISIONS.md` (D1–D9) and applied below; tickets, risks and the parity checklist were revised accordingly. This is the integration-branch (`egui-integration`) copy. No application code has changed; the Qt application is still the only implementation.
 
 Evidence conventions used throughout:
 
@@ -12,7 +12,18 @@ I did **not** build or run OmaTree's test suite (it needs the Qt toolchain, and 
 
 ---
 
-## 0. Decisions the maintainer must make first
+## 0. Decisions (resolved in E0)
+
+All three items below are now decided; see `docs/EGUI_DECISIONS.md`. The original text is kept for the reasoning.
+
+| Item | Outcome |
+|---|---|
+| Stack rule | D1: Qt is replaced by egui; the Qt app stays buildable until cut-over. `AGENTS.md`, `ARCHITECTURE.md`, `VISION.md` amended in E0. |
+| Code sharing | Library crate for the editor (D3). Path vs git dependency still open (E2/E4). |
+| Image scope | D8: notebook-owned attachments only; no remote or arbitrary filesystem images. |
+| Shortcuts / Preview | D4: no Edit/Preview toggle. D5: Ctrl+E is inline code. D6: Ctrl+Shift+S is Save As; strikethrough gets another binding or a slash command. |
+| Attachment ids | D7: random 128-bit, `assets/<32-hex-id>.<ext>`. |
+| Cleanup | D9: pruning and Compact Notebook are required (§5.4, E9). |
 
 1. **The stack rule.** `AGENTS.md` lists Qt 6 / QML / CXX-Qt as the approved stack and says not to replace it "without explicit instruction". [Confirmed] This task is that instruction, but `AGENTS.md`, `ARCHITECTURE.md` and `VISION.md` all describe Qt, and `ARCHITECTURE.md` says "the editor is a plain-text editor … Do not introduce a rich-text document model". The egui editor is a source-backed live-styled editor (still plain text underneath), so the intent holds, but the documents must be amended on the integration branch (ticket E0).
 2. **How the two repositories share code** (see §3.4). Recommendation: turn the spike into a library crate plus its existing demo binary, and have OmaTree depend on it by path during integration.
@@ -200,7 +211,7 @@ Two independent theme systems exist:
 1. It must render into a caller-provided `&mut Ui` instead of owning a `CentralPanel`.
 2. The text buffer and attachment store must be injected, with no file access.
 3. Widget `Id`s derived from an `id_salt` or note id, so two editors, or one editor over several notes, do not collide. (The spike uses `Id::unique(("task", start))` and `("image", start)` for sub-widgets: these are global and byte-offset-based, so they must include the editor id.)
-4. Keyboard shortcuts it consumes (Ctrl+E inline code, Ctrl+Shift+S strikethrough, Ctrl+Shift+E export, Ctrl+B/I, Ctrl+Enter) must not collide with OmaTree's (`Keymap.qml`: Ctrl+E is *Edit/Preview toggle*, Ctrl+Shift+S is *Save As*, Ctrl+N/Shift+N/O/S/F, Alt+Up/Down, F2, F1). **Confirmed conflicts: Ctrl+E and Ctrl+Shift+S.** These must be resolved by the product owner; the editor needs a configurable key map or a host-level "consume first" order.
+4. Keyboard shortcuts it consumes (Ctrl+E inline code, Ctrl+Shift+S strikethrough, Ctrl+Shift+E export, Ctrl+B/I, Ctrl+Enter) must not collide with OmaTree's (`Keymap.qml`: Ctrl+E is *Edit/Preview toggle*, Ctrl+Shift+S is *Save As*, Ctrl+N/Shift+N/O/S/F, Alt+Up/Down, F2, F1). **Confirmed conflicts: Ctrl+E and Ctrl+Shift+S. Resolved (D5, D6):** Ctrl+E is inline code and the Edit/Preview toggle is dropped; Ctrl+Shift+S is Save As and strikethrough moves to another shortcut or a slash command. The editor takes its bindings from the host (`EditorKeys`); the standalone editor may keep different ones.
 5. Focus handoff with the tree and title field (Escape returns to the tree, Enter in the title focuses the body).
 6. Caches (`spans`, `tables`, `images`) keyed by text content must survive or be cheaply rebuilt on note switch.
 
@@ -389,10 +400,14 @@ CREATE TABLE attachments (
 - `put` stores bytes in an in-memory `pending` map and returns the reference immediately; nothing touches the file. This keeps "all unsaved changes live in memory and are committed by one transaction" true for images, and keeps the *same connection* rule.
 - `Document::save*` writes pending attachments first, **in the same transaction** as `nodes`, `expanded_nodes` and the counter; failure rolls everything back and `pending` is kept, exactly like dirty flags are kept today.
 - `get`/`info`: pending first, then `SELECT … WHERE id = ?`. Never reads outside the DB; ids that don't match the 32-hex pattern are `Invalid`; unknown ids are `NotFound`.
-- **Garbage collection:** orphaned attachments (undone pastes, deleted notes whose Trash entry was purged by the 100/16 MiB limits) are deleted only by a full save, which already has the whole `Document` in hand: collect ids referenced from `nodes`, `trash_nodes`, `checkpoint_nodes` and `pending`; `DELETE FROM attachments WHERE id NOT IN …`. The referenced set is a plain-text scan, not a Markdown parse. Never GC on ordinary autosaves.
+- **Cleanup and compaction (D9, required; replaces the earlier "GC on full save" idea).** Nothing deletes an attachment during autosave, ordinary save, Save As, note switching, restore or close. Orphans accumulate until the user runs **Compact Notebook**:
+  - *Reference-aware pruning.* The referenced set is the union of ids found (plain-text scan of `assets/<32-hex>.` references, not a Markdown parse) in `nodes` bodies, `trash_nodes` bodies, `checkpoint_nodes` bodies and the pending map. Only attachments outside that set are prunable. It is computed from the whole stored state, never from visible or selected notes. An attachment that Trash or a retained checkpoint can restore is never removed; it becomes prunable only after that entry is gone (deleted from Trash, or dropped from the checkpoints by the 100 / 16 MiB limits).
+  - *Compact Notebook operation.* A deliberate command, never automatic. Step 1 is a dry run that reports: unreferenced attachments (count, bytes), attachments kept because Trash or checkpoints reference them (count, bytes), and the expected file-size change. Step 2 asks for confirmation. Step 3 prunes in one transaction using the checked-write guard (`ExternallyModified` aborts with nothing deleted). Step 4 reports the result: removed, kept, bytes freed.
+  - *Space reclamation is separate.* Deleting rows does not shrink the file. `VACUUM` (or an equivalent) is a second, separately reported step, offered after pruning and also usable on its own, with the file size before and after. It needs free disk about the size of the database and no other open connection; failure leaves the original file intact and is reported, not hidden. The exact strategy (`VACUUM`, `VACUUM INTO` plus replace, or incremental vacuum) is chosen in E9.
+  - *Reporting.* Counts and sizes in plain words, before and after.
 - **Save As:** `save_document_with_view` into a new file must also copy referenced attachments from the old store; if copying fails, the new file is removed (the existing behaviour for failed Save As).
 - **Recovery:** because blobs are committed with the notes that reference them in one transaction, a crash leaves either the old or the new file state. The conflict guard (`ExternallyModified`) applies to attachment writes for free, since they are part of the same checked transaction.
-- **Checkpoints** are *not* extended with blobs: they would blow the 16 MiB budget with one screenshot. Restoring a checkpoint whose body references an attachment that GC removed shows "image missing", the same as any missing reference; GC considers checkpoint bodies, so this only happens after the checkpoint itself has been dropped.
+- **Checkpoints** are *not* extended with blobs: they would blow the 16 MiB budget with one screenshot. Restoring a checkpoint whose body references an attachment shows the image, because pruning never removes an attachment a retained checkpoint references; "image missing" can only occur after the checkpoint itself has been dropped and the attachment pruned.
 
 ### 5.5 Exporting a note with its attachments
 
@@ -400,7 +415,7 @@ Unchanged exporters: `export::plan(markdown, store, name)` calls `attachments::r
 
 ### 5.6 Import/compat with existing Markdown
 
-Existing notes contain no image syntax handled by the app; Qt Preview strips images. In egui, an existing `![x](https://…)` stays source text with a "remote images are not loaded" placeholder; `![x](assets/…)` that does not resolve in the notebook shows as missing. **No file or network access ever.** `FsStore` must not be linked into the OmaTree app (it reads arbitrary relative paths next to a document file). This keeps the principle in `resources.qml`.
+Existing notes contain no image syntax handled by the app; Qt Preview strips images. In egui, an existing `![x](https://…)` stays source text with a "remote images are not loaded" placeholder; `![x](assets/…)` that does not resolve in the notebook shows as missing; any other relative path (`../x.png`, `/etc/…`) is not loaded either (D8). **No file or network access ever.** `FsStore` must not be linked into the OmaTree app (it reads arbitrary relative paths next to a document file). This carries the principle of `resources.qml` into egui; that test itself is Preview-specific and is retired with Preview (D4), replaced by an attachment-loading test (E10).
 
 ---
 
@@ -416,10 +431,11 @@ Rules for the whole sequence:
 
 **E0: Decision record and branch**
 - Objective: record the stack change and create the integration branch/worktree.
+- Status: **done in E0** (documentation only).
 - Affected: new branch; `AGENTS.md`, `ARCHITECTURE.md`, `VISION.md` (amended on the branch only); a short `docs/EGUI_DECISIONS.md` listing §0 answers.
 - Behaviour: none.
 - Tests: none. GUI: none.
-- Acceptance: maintainer answers §0 items 1–3 and the key-conflict question (§2.6).
+- Acceptance: maintainer answers §0 items and the key-conflict question (§2.6): given, see `docs/EGUI_DECISIONS.md`.
 - Risks: none.
 
 **E1: Extract `omatree-core` (Qt-free library crate)**
@@ -432,7 +448,7 @@ Rules for the whole sequence:
 - Risks: packaging scripts reference `target/release/omatree` and `Cargo.toml` metadata; `build.rs`/cxx-qt `.files([...])` paths change. Mitigation: keep the Qt crate's binary name and path stable.
 
 **E2: Embeddable editor in the spike repository**
-- Objective: split `EditorApp` into `EditorView` (library) and `EditorApp` (demo), per §2.7 and §3.2.
+- Objective: split `EditorApp` into `EditorView` (library) and `EditorApp` (demo), per §2.7 and §3.2. Also: key bindings come from an `EditorKeys` map supplied by the host (D5, D6): the OmaTree profile has Ctrl+E inline code, no Ctrl+Shift+S, and strikethrough on another binding or the slash command; the demo binary may keep its current bindings. (This ticket changes the standalone editor's repository; E0 does not.)
 - Affected (spike repo): `src/app.rs` split; new `lib.rs`; Cargo `[lib]`+`[[bin]]`; `EditorInput`/`EditorOutput`; widget ids salted by `NoteKey`.
 - Behaviour: standalone editor works exactly as before.
 - Tests: all 169 existing tests pass unmodified; new tests: two `EditorView`s in one `Context` do not share caret/undo; same view with two `NoteKey`s keeps independent undo/caret; sub-widget ids (task boxes, image controls) don't collide across notes.
@@ -473,7 +489,7 @@ Rules for the whole sequence:
 - Risks: the spike notes a glyph-gamma/atlas rebuild on theme change (it clears the table cache); egui system-theme reporting across platforms is **unverified**.
 
 **E7: Search, Trash, checkpoints, dialogs**
-- Objective: port `SearchPane`, `RecoveryDialog` (Trash and checkpoints tabs, keyboard-selectable), themed modal dialogs (unsaved changes, Move to Trash, errors, Save As overwrite, keyboard reference F1).
+- Objective: port `SearchPane`, `RecoveryDialog` (Trash and checkpoints tabs, keyboard-selectable), themed modal dialogs (unsaved changes, Move to Trash, errors, Save As overwrite, keyboard reference F1, listing the final egui bindings: Ctrl+E inline code, Ctrl+Shift+S Save As, and the strikethrough binding). The Trash and checkpoints views also show how many attachments each entry keeps alive, since they decide what Compact Notebook may remove (D9).
 - Tests: `search`, `searchheader`, `recovery`, `recoverykeys`, `dialogs` ported; restore flows call `forget_note` (§3.5).
 - GUI: restore a deleted subtree and a checkpoint while editing; verify undo does not resurrect old text.
 - Risks: dialog keyboard model (N / Y / Esc / arrows) is custom and must be reimplemented.
@@ -486,27 +502,27 @@ Rules for the whole sequence:
 - Risks: close interception under platform quit paths; dialog threading on macOS.
 
 **E9: Attachments in SQLite (core, schema v4)**
-- Objective: implement §5 in `omatree-core`: `attachments` table, lazy v4 migration, pending map, same-connection store, GC on full save, Save As copy, `NotebookAttachments: AttachmentStore`.
+- Objective: implement §5 in `omatree-core`: `attachments` table, lazy v4 migration, pending map, same-connection store, Save As copy, `NotebookAttachments: AttachmentStore`, **and the required cleanup and compaction (D9)**: a reference-aware prune and a deliberate Compact Notebook operation with dry-run report, confirmation and result report, with `VACUUM`-style space reclamation as a separate step. Ticket E9 is not complete without these.
 - Behaviour: per §5. v3 files without images are never upgraded.
-- Tests (all in core, no UI): put/get/info; invalid and unknown ids; save → reopen round-trip; v3 → v4 migration keeps all tables; migration failure leaves the old file intact (use the existing `install_write_guards`); a second connection committing causes `ExternallyModified` (and a paste does **not**); GC keeps referenced-from-trash/checkpoint blobs and removes orphans; Save As copies blobs; an old binary refusal for v4 (open with the Qt build's `Storage` still at 1..=3).
+- Tests (all in core, no UI): put/get/info; invalid and unknown ids; save → reopen round-trip; v3 → v4 migration keeps all tables; migration failure leaves the old file intact (use the existing `install_write_guards`); a second connection committing causes `ExternallyModified` (and a paste does **not**); Save As copies blobs; **cleanup and compaction:** blobs referenced only from active notes, only from a Trash entry, only from a retained checkpoint, and only from pending state all survive pruning; true orphans are removed; nothing is ever deleted by autosave, save, Save As, restore or close; pruning decided from the whole stored state gives the same result whichever note is selected; the dry-run report matches what pruning then does (counts and bytes); a failure part-way (injected with the write guards) rolls back with every attachment still present; an interrupted prune or vacuum leaves a valid notebook that opens; an external modification between dry run and confirmation aborts with nothing deleted (`ExternallyModified`); an image deleted with its note is shown again after Trash restore, and after checkpoint restore, following a prune; a notebook with no attachments is byte-unchanged by Compact; `VACUUM` is reported separately, with file size before and after, and a refusal (open connection, low disk) is reported without data loss; an old binary refusal for v4 (open with the Qt build's `Storage` still at 1..=3).
 - GUI: none beyond E10.
 - Acceptance: the schema change is invisible to notebooks without images; no write path uses a second connection.
-- Risks: this is the first schema change in the project after the recovery/view tables; GC is the only place that deletes user bytes: gate it behind a full save and test it hard.
+- Risks: this is the first schema change in the project after the recovery/view tables; pruning is the only place that deletes user bytes: it runs only from Compact Notebook, only on confirmation, only through the checked-write guard, and is tested hardest. `VACUUM` needs free disk and exclusive access; its failure modes need explicit handling.
 
 **E10: Images in the egui app**
 - Objective: wire `NotebookAttachments` into `EditorView`: paste, display, width annotation, slider, selection.
-- Tests: the spike's image tests with the SQLite store; undo of a paste leaves an orphan only until GC; a closed notebook does not leak textures (texture cache scoped by notebook).
-- GUI: paste a screenshot, resize, save, reopen, Save As, delete the note then restore from Trash (image returns).
+- Tests: the spike's image tests with the SQLite store; undo of a paste leaves an orphan that stays until Compact Notebook (no automatic removal); remote and non-attachment references are not loaded (D8); a closed notebook does not leak textures (texture cache scoped by notebook).
+- GUI: paste a screenshot, resize, save, reopen, Save As, delete the note then restore from Trash (image returns); a note with `![x](https://…)` and `![x](/etc/…)` shows no image and performs no network or file access.
 - Risks: PNG-only `image` feature set in the editor vs JPEG accepted by PDF (decide: enable `jpeg` in `image`, or restrict `put` to PNG and convert).
 
-**E11: Export and preview decision**
-- Objective: Markdown / folder / ZIP / PDF export of the active note via a host dialog with a native save dialog; decide whether Preview mode survives (the live-styled editor makes it largely redundant: confirm with the maintainer) and, if kept, implement it as the editor with concealment forced on and editing disabled rather than a second renderer.
+**E11: Export and Compact Notebook UI**
+- Objective: (a) Markdown / folder / ZIP / PDF export of the active note via a host dialog with a native save dialog. (b) The user-facing **Compact Notebook** command: dry-run report, confirmation, result report with attachment counts and file sizes, and the separate space-reclamation step, on top of the core operations from E9. There is no Preview mode to port (D4).
 - Tests: spike export tests re-run against the SQLite store; export of unsaved text; folder/ZIP byte-identity of the Markdown; PDF text extraction.
-- GUI: export a note with images, tables, Czech text to each format; open the PDF.
-- Risks: the +7 MB binary and ~135 extra `cargo tree` lines for PDF; consider a Cargo feature.
+- GUI: export a note with images, tables, Czech text to each format; open the PDF. Compact Notebook on a fixture copy with orphaned, Trash-referenced and checkpoint-referenced images: the report counts and sizes match the file afterwards; cancelling changes nothing; keyboard-only operation.
+- Risks: the +7 MB binary and ~135 extra `cargo tree` lines for PDF; consider a Cargo feature. The command must fit OmaTree's "no permanent toolbar" rule (menu or command, not a button strip).
 
 **E12: Parity hardening and packaging prototype**
-- Objective: run the full parity checklist (§8) on Linux (Wayland and X11), then Windows and macOS; accessibility and IME review; large-notebook performance; replace Qt packaging scripts with eframe equivalents on the branch (AppImage/deb/Arch/Windows installer/macOS bundle); update `THIRD_PARTY.md`.
+- Objective: confirm attachment cleanup and Compact Notebook were delivered and tested (E9, E11); run the full parity checklist (§8) on Linux (Wayland and X11), then Windows and macOS; accessibility and IME review; large-notebook performance; replace Qt packaging scripts with eframe equivalents on the branch (AppImage/deb/Arch/Windows installer/macOS bundle); update `THIRD_PARTY.md`.
 - Acceptance: every §8 row is PASS or has an accepted written deviation; the Qt version is still buildable.
 - Risks: see §7; macOS/Windows are untested ground for the editor.
 
@@ -529,10 +545,12 @@ Why E1: it is mechanical, has an objective pass condition (the existing ~250 pur
 | R1 | A second SQLite connection for attachments breaks saves (`data_version` guard) | certain if designed that way | High | One connection; store is a view on `Document` (§3.6, E9) |
 | R2 | Attachment table with a cascading FK is wiped by `DELETE FROM nodes` on every save | certain if designed that way | High | No FK to nodes (§5.3) |
 | R3 | Bumping `SCHEMA_VERSION` re-runs `CREATE TABLE expanded_nodes` on v3 files | certain without restructuring | High | Per-version migration steps (§5.3, E9) |
-| R4 | GC deletes an attachment still referenced from Trash/checkpoint or pending | medium | High (data loss) | Referenced set includes all bodies + pending; only on full save; tests (E9) |
+| R4 | Pruning deletes an attachment still referenced from Trash, a checkpoint, or pending state, or one decided from visible notes only | medium | High (data loss) | Referenced set is computed from the whole stored state; only Compact Notebook prunes; dry run, confirmation, checked-write guard, rollback tests (E9, E11) |
+| R20 | Orphaned attachments accumulate because nothing prunes automatically (D9) | high | Low–Medium | Compact Notebook reports them; the app can show counts; never auto-delete |
+| R21 | `VACUUM` fails or damages the user's file (low disk, open connection, interruption) | low–medium | High | Separate, confirmed step; original file intact on failure; interrupted-operation tests (E9) |
 | R5 | Undo/caret state applied to the wrong note's text | medium | High | Per-note ids; `forget_note`; invariant test (E3) |
 | R6 | Text/selection/undo semantic differences vs Qt `TextArea` (word/line movement, IME, dead keys, Czech compose, platform shortcuts) | medium | High | egui handles it in `TextEdit`; the spike did **not** test IME or accessibility; dedicated checklist rows (E12) |
-| R7 | Keyboard shortcut conflicts: Ctrl+E (Edit/Preview vs inline code), Ctrl+Shift+S (Save As vs strikethrough) | confirmed | Medium | Maintainer decision before E5; configurable `EditorKeys` |
+| R7 | Shortcut conflicts: Ctrl+E, Ctrl+Shift+S | resolved by D5, D6 | Low | `EditorKeys` supplied by host; strikethrough binding chosen in E2; F1 reference lists the real keys |
 | R8 | Hand-written tree view (drag-and-drop, keyboard, scrolling) is large and fragile | high | Medium | E5 scoped separately; port scenario tests; performance test with a large notebook |
 | R9 | The concealment technique (0.1 pt glyphs, one-frame selection lag) behaves differently on other platforms/GPUs | medium | Medium | spike validated only on Wayland (X11 inconclusive, macOS/Windows not tested); test matrix in E12 |
 | R10 | Large notes: per-frame re-layout, whole-text copy per changed frame | unknown | Medium | measure in E3; the spike did not measure large documents |
@@ -541,7 +559,7 @@ Why E1: it is mechanical, has an objective pass condition (the existing ~250 pur
 | R13 | Native file dialogs and theme-following (`rfd`, system theme) behave differently under Wayland portals | medium | Medium | E8/E6, platform checks |
 | R14 | Binary size and dependencies: spike adds ~19 MB → 26 MB release; PDF adds ~7 MB; eframe pulls winit/glow/accesskit | certain | Low–Medium | Cargo feature for PDF; Qt's own runtime is not shipped so net package size may fall (unmeasured) |
 | R15 | Two repositories drift while the integration is in progress | high | Medium | Library crate with path dependency (E2/E4); freeze spike features during the migration |
-| R16 | Principle conflict: "Preview never loads resources", "plain-text editor", "no networking" vs images and PDF | medium | Medium | §0.3 and §5.6; `FsStore` not linked; no network code |
+| R16 | Principle conflict: "never loads resources", "plain-text editor", "no networking" vs images and PDF | medium | Medium | D8, §5.6; `FsStore` not linked; no network code; attachment-loading tests (E10) |
 | R17 | Sharing the same `.omatree` between Qt and egui apps during the parallel period | medium | High | Lazy v4 migration (only when images are used); never test on the user's real notebook; copy fixtures |
 | R18 | egui API churn (the spike uses egui 0.37 internals such as `Undoer`, `TextEditState`) | medium | Medium | Pin versions; tests around undo boundaries stay |
 | R19 | Test debt: ~43 Rust tests and 24 QML scenarios have no egui equivalent yet | certain | Medium | each ticket ports named scenarios; §8 tracks it |
@@ -568,11 +586,13 @@ Each row is "Qt feature → the existing Qt test that defines it → the egui ti
 | Drag and drop move, cycle prevention, drop indicators | `TreePane.qml`, `notebook.rs` | E5 | not started |
 | Delete → Trash with confirmation; Trash and checkpoint restore | `recovery.qml`, `recoverykeys.qml` | E7 | not started |
 | Search: title first, body snippets, reveal the result | `search.qml`, `searchheader.qml` | E7 | not started |
-| Escape returns to the tree from title/body/preview; transient surfaces keep their own | `escape.qml` | E5/E7 | not started |
+| Escape returns to the tree from title/body; transient surfaces keep their own (the preview case is retired with Preview) | `escape.qml` | E5/E7 | not started |
 | Dialog keyboard (one focus, Enter presses it, N/Y/Esc) | `dialogs.qml` | E7 | not started |
 | F1 shortcut reference built from the real key map | `keymap.qml` | E7 | not started |
 | Omarchy palette live; system light/dark fallback; non-Linux has no Omarchy | `theme.qml`, `systemtheme.qml` | E6 | not started |
-| Markdown preview is a view and never writes; never loads resources; spacing | `preview.qml`, `resources.qml`, `spacing.qml` | E11 (decision) | not started |
+| ~~Edit/Preview toggle, preview spacing~~ | `preview.qml`, `spacing.qml` | **not carried over (D4)**: live rendering replaces it; raw Markdown stays reachable while editing | retired |
+| No remote or arbitrary-file image loading (was `resources.qml` for Preview) | `resources.qml` | E10 (new test) | not started |
+| **New:** attachment pruning never removes recoverable images; Compact Notebook dry run, confirmation, result report; separate space reclamation | §5.4, D9 | E9/E11 | not started |
 | macOS Finder "open with" goes through the unsaved-changes flow | `systemopen.qml` | E12 | not started |
 | Window icon, Wayland app id, Windows taskbar id | `cpp/app_identity.cpp` | E12 | not started |
 | Cross-platform keyboard: ⌘ on macOS, Tab reaches controls | `keyboard_policy.cpp`, `keymap.qml` | E12 | not started |
@@ -588,7 +608,7 @@ Each row is "Qt feature → the existing Qt test that defines it → the egui ti
 
 No hard blocker found. The core is cleanly separated from Qt, and the editor's rendering, editing, attachment and export modules do not depend on `EditorApp`. These items need an answer or a spike:
 
-1. **Shortcut ownership** (Ctrl+E, Ctrl+Shift+S) and whether Preview mode survives: product decisions, not technical ones.
+1. **Strikethrough binding** (shortcut vs slash command only) after D6. Shortcut ownership and Preview are otherwise decided (D4–D6).
 2. **Undo across note switches and external body replacement:** the design relies on egui's per-`Id` `TextEditState` and `Undoer` public API. It should work, but only a test in E3 proves it.
 3. **IME, accessibility, X11, Windows, macOS:** the spike has none of these verified (its own `FINDINGS.md`). They bound the final verdict and must not be assumed.
 4. **Tree view in egui:** drag-and-drop, keyboard, and scale are the biggest unbuilt piece of UI; third-party tree crates were not evaluated.
