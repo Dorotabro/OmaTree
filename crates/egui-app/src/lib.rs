@@ -9,8 +9,10 @@
 //! - The host owns the window, shortcuts that are about the document (Ctrl+S), status text and
 //!   the attachment backend (none yet: [`UnavailableStore`]).
 
+mod lifecycle;
 mod store;
 
+pub use lifecycle::{Dialog, AUTOSAVE_DELAY};
 pub use store::UnavailableStore;
 
 use eframe::egui::{self, Key, Modifiers};
@@ -46,6 +48,15 @@ pub struct Host {
     status: String,
     error: Option<String>,
     title: String,
+    dialog: Dialog,
+    dialog_fresh: bool,
+    /// The window may close (set by a successful Save or a confirmed Discard).
+    quit: bool,
+    /// A real edit reached the document since the autosave countdown was last (re)started.
+    edited: bool,
+    autosave_due: Option<f64>,
+    autosave_blocked: bool,
+    autosave_error: Option<String>,
 }
 
 fn key_of(notebook: u64, id: NodeId) -> NoteKey {
@@ -76,6 +87,13 @@ impl Host {
             status: String::new(),
             error: None,
             title: String::new(),
+            dialog: Dialog::None,
+            dialog_fresh: false,
+            quit: false,
+            edited: false,
+            autosave_due: None,
+            autosave_blocked: false,
+            autosave_error: None,
         }
     }
 
@@ -204,8 +222,9 @@ impl Host {
         {
             return;
         }
-        if let Err(e) = doc.set_body(id, &self.text) {
-            self.status = format!("Could not update the note: {e}");
+        match doc.set_body(id, &self.text) {
+            Ok(changed) => self.edited |= changed,
+            Err(e) => self.status = format!("Could not update the note: {e}"),
         }
     }
 
@@ -217,25 +236,17 @@ impl Host {
         self.load(id);
     }
 
-    /// Ctrl+S: write the notebook. A failure is reported and nothing is lost: the document stays
-    /// dirty and the buffer unchanged.
-    pub fn save(&mut self, ctx: &egui::Context) {
-        self.leave(ctx);
-        let Some(doc) = self.doc.as_mut() else { return };
-        self.status = match doc.save() {
-            Ok(()) => "Saved".to_owned(),
-            Err(e) => save_failure(&e),
-        };
-    }
-
     pub fn is_dirty(&self) -> bool {
         self.doc.as_ref().is_some_and(Document::is_dirty)
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        // Save As is reserved (Ctrl+Shift+S); it must never fall through to Save or formatting.
+        if self.dialog_open() {
+            return;
+        }
+        // Ctrl+Shift+S first: egui matches Ctrl+S even with Shift held.
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::S)) {
-            self.status = "Save As is not available yet.".to_owned();
+            self.start_save_as(ctx, false);
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::S)) {
             self.save(ctx);
@@ -304,7 +315,9 @@ impl Host {
         egui::Panel::bottom("status").show(root, |ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.weak("Images are not supported yet");
-                ui.weak(if dirty {
+                ui.weak(if dirty && self.autosave_error.is_some() {
+                    "Unsaved changes (autosave stopped)"
+                } else if dirty {
                     "Unsaved changes"
                 } else {
                     "No unsaved changes"
@@ -354,6 +367,7 @@ impl Host {
         if let Some(out) = out {
             self.after_editor(out);
         }
+        self.show_dialog(&ctx);
     }
 
     fn after_editor(&mut self, out: EditorOutput) {
@@ -371,10 +385,6 @@ fn file_name(path: &Path) -> String {
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
     )
-}
-
-fn save_failure(e: &DocumentError) -> String {
-    e.save_message()
 }
 
 /// The eframe application: a [`Host`] plus window set-up.
@@ -400,6 +410,10 @@ impl App {
 }
 
 impl eframe::App for App {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.host.logic(ctx);
+    }
+
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.host.ui(root);
     }

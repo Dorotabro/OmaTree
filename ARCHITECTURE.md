@@ -154,9 +154,10 @@ in `docs/EGUI_MIGRATION_PLAN.md`. This section only states the intended shape.
 ## Crates
 
 Status: `omatree-core` **exists** (ticket E1, `crates/core`); `omatree-egui` **exists as a
-minimal shell** (ticket E4, `crates/egui-app`); the editor library lives in the adjacent
-`omatree-egui-editor-library` repository and is consumed by path (see the E4 record in
-`docs/EGUI_MIGRATION_PLAN.md`).
+minimal shell** (tickets E4 and E4.1, `crates/egui-app`); the editor library lives in the
+`omatree-egui-editor-spike` repository (branch `editor-library`) and is consumed as a Git
+dependency pinned to an exact commit (see the E4.1 record in
+`docs/EGUI_MIGRATION_PLAN.md`, which also says how to update the pin).
 
     omatree-core     [implemented] Qt-free, egui-free: notebook, document, storage (SQLite),
                      recovery, search, theme palette, link safety
@@ -219,3 +220,17 @@ The standalone editor keeps a runnable demo binary built on the same library.
 - Ctrl+S saves; Ctrl+Shift+S is reserved for Save As and is consumed by the host so it
   never saves or formats; Ctrl+E is inline code.
 - Not yet: autosave, Save As, close guard, tree interaction, Search/Trash/Recovery, theme.
+
+## Lifecycle added in E4.1
+
+- `Host::logic` (called from `eframe::App::logic`, so it also runs while minimised) answers
+  every close request: a clean notebook closes; a dirty one gets `CancelClose` and a modal
+  Save / Discard (confirmed twice) / Cancel. A Save that fails keeps the window open and
+  dirty and offers Save As. Repeated requests never bypass the question.
+- Save is `Document::save`; Save As (Ctrl+Shift+S) is an in-app path dialog over
+  `Document::save_as` with overwrite confirmation; a native file dialog is left to E8.
+- Autosave follows the Qt timer (1 s after the last real edit, existing notebooks only,
+  first failure reported once) and additionally stops after an external-modification
+  conflict until the user resolves it.
+- The editor library is pinned by commit in `crates/egui-app/Cargo.toml` and `Cargo.lock`;
+  no sibling checkout is required.

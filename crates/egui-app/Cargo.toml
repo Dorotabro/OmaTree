@@ -17,10 +17,10 @@ path = "src/main.rs"
 
 [dependencies]
 omatree-core = { path = "../core" }
-# The editor library lives in a separate repository. For local integration it is taken from the
-# adjacent checkout (see docs/EGUI_MIGRATION_PLAN.md, "E4 implementation record", for the layout
-# requirement and the plan for reproducible builds). The package is named after the spike; its
-# library target is `omatree_editor`.
-omatree_editor = { package = "omatree-egui-editor-spike", path = "../../../omatree-egui-editor-library" }
+# The editor library lives in its own repository and is pinned to an exact commit (the tip of its
+# `editor-library` branch that contains E2, E3 and E3.1). The package keeps the spike's name; its
+# library target is `omatree_editor`. To update the pin see docs/EGUI_MIGRATION_PLAN.md,
+# "E4.1 implementation record".
+omatree_editor = { package = "omatree-egui-editor-spike", git = "https://github.com/Dorotabro/omatree-egui-editor-spike.git", rev = "30a95dd43064232dc1ac04315c8020e2307a223c" }
 # Same egui/eframe line and feature set as the editor repository's own binary.
 eframe = { version = "0.37", default-features = false, features = ["clipboard", "links", "default_fonts", "system_fonts", "glow", "wayland", "x11"] }

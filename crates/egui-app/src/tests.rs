@@ -63,6 +63,10 @@ struct H {
     ctx: egui::Context,
     host: Host,
     t: f64,
+    /// eframe feeds a host-sent `ViewportCommand::Close` back as a close request next frame.
+    reinject_close: bool,
+    /// A close request was not cancelled: the window would be gone.
+    closed: bool,
 }
 
 impl H {
@@ -71,6 +75,8 @@ impl H {
             ctx: egui::Context::default(),
             host: Host::new(),
             t: 0.0,
+            reinject_close: false,
+            closed: false,
         };
         assert!(h.host.open(&h.ctx.clone(), path), "{}", h.host.status());
         h.settle();
@@ -83,19 +89,71 @@ impl H {
         }
     }
 
-    fn frame(&mut self, mut events: Vec<Event>, m: Modifiers) {
+    fn frame(&mut self, events: Vec<Event>, m: Modifiers) {
+        let close = std::mem::take(&mut self.reinject_close);
+        self.frame_inner(events, m, close);
+    }
+
+    fn frame_inner(&mut self, mut events: Vec<Event>, m: Modifiers, close: bool) {
         events.insert(0, Event::ModifiersChanged(m));
         self.t += 0.05;
-        let input = RawInput {
+        let mut input = RawInput {
             time: Some(self.t),
             events,
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 700.0))),
             focused: true,
             ..Default::default()
         };
+        if close {
+            input
+                .viewports
+                .entry(egui::ViewportId::ROOT)
+                .or_default()
+                .events
+                .push(egui::ViewportEvent::Close);
+        }
         let host = &mut self.host;
-        let mut out = self.ctx.run_ui(input, |ui| host.ui(ui));
+        let mut out = self.ctx.run_ui(input, |ui| {
+            host.logic(ui.ctx());
+            host.ui(ui);
+        });
+        let cmds = &out.viewport_output[&egui::ViewportId::ROOT].commands;
+        if close && !cmds.contains(&egui::ViewportCommand::CancelClose) {
+            self.closed = true;
+        }
+        if cmds.contains(&egui::ViewportCommand::Close) {
+            self.reinject_close = true;
+        }
         out.textures_delta.clear();
+    }
+
+    /// The window's close button / Alt+F4 / compositor close. Returns whether the window closed.
+    fn request_close(&mut self) -> bool {
+        self.frame_inner(vec![], Modifiers::NONE, true);
+        // Frames the host's own answer needs (a `Close` it sends comes back once).
+        for _ in 0..3 {
+            self.frame(vec![], Modifiers::NONE);
+        }
+        self.closed
+    }
+
+    /// Let `secs` of (egui) time pass in a few frames.
+    fn advance(&mut self, secs: f64) {
+        self.t += secs;
+        for _ in 0..2 {
+            self.frame(vec![], Modifiers::NONE);
+        }
+    }
+
+    fn press(&mut self, key: Key) {
+        self.key(key, Modifiers::NONE);
+    }
+
+    fn dirty_edit(&mut self, title: &str, add: &str) {
+        self.select(title);
+        let end = self.host.buffer().len();
+        self.set_caret(end, end);
+        self.type_text(add);
     }
 
     fn key(&mut self, key: Key, m: Modifiers) {
@@ -419,7 +477,13 @@ fn missing_invalid_and_unsupported_files_are_refused_clearly_and_never_modified(
         "unsupported file untouched"
     );
     // The window still renders an explanation instead of an editor.
-    let mut h = H { ctx, host, t: 0.0 };
+    let mut h = H {
+        ctx,
+        host,
+        t: 0.0,
+        reinject_close: false,
+        closed: false,
+    };
     h.settle();
 }
 
@@ -486,7 +550,7 @@ fn a_save_that_cannot_write_is_reported_and_the_edit_stays_dirty() {
 }
 
 #[test]
-fn ctrl_shift_s_is_reserved_and_neither_saves_nor_formats() {
+fn ctrl_shift_s_opens_save_as_and_neither_saves_nor_formats() {
     let d = dir("saveas");
     let p = d.join("n.omatree");
     make_fixture(&p);
@@ -497,9 +561,18 @@ fn ctrl_shift_s_is_reserved_and_neither_saves_nor_formats() {
     h.set_caret(0, 1);
     let before = h.host.buffer().to_owned();
     h.key(Key::S, CTRL | Modifiers::SHIFT);
-    assert!(h.host.status().contains("Save As"));
+    assert!(matches!(h.host.dialog(), Dialog::SaveAs { .. }));
     assert_eq!(h.host.buffer(), before, "no strikethrough markers");
     assert!(h.host.is_dirty(), "did not save");
+    h.type_text("zzz");
+    assert_eq!(
+        h.host.buffer(),
+        before,
+        "typing goes to the dialog, not the note"
+    );
+    h.press(Key::Escape);
+    assert_eq!(*h.host.dialog(), Dialog::None, "Escape cancels");
+    assert_eq!(h.host.buffer(), before);
 }
 
 #[test]
@@ -697,3 +770,5 @@ fn timings() {
     let save = ms(&mut h, &mut |h| h.host.save(&h.ctx.clone()));
     println!("save (set_body write-through already done): {save:.1} ms");
 }
+
+mod lifecycle_tests;
