@@ -153,8 +153,10 @@ in `docs/EGUI_MIGRATION_PLAN.md`. This section only states the intended shape.
 
 ## Crates
 
-Status: `omatree-core` **exists** (ticket E1, `crates/core`); the other three are
-planned.
+Status: `omatree-core` **exists** (ticket E1, `crates/core`); `omatree-egui` **exists as a
+minimal shell** (ticket E4, `crates/egui-app`); the editor library lives in the adjacent
+`omatree-egui-editor-library` repository and is consumed by path (see the E4 record in
+`docs/EGUI_MIGRATION_PLAN.md`).
 
     omatree-core     [implemented] Qt-free, egui-free: notebook, document, storage (SQLite),
                      recovery, search, theme palette, link safety
@@ -162,7 +164,8 @@ planned.
                      live-rendered source-backed editing, attachments trait, export, PDF
     omatree (Qt)     [implemented] the current application at the repository root;
                      depends on omatree-core; behaviour unchanged
-    omatree-egui     the new application: egui host over core + editor
+    omatree-egui     [E4: minimal] the new application: egui host over core + editor;
+                     opens a notebook, flat indented note list, one EditorView, Ctrl+S
 
 The standalone editor keeps a runnable demo binary built on the same library.
 
@@ -199,3 +202,20 @@ The standalone editor keeps a runnable demo binary built on the same library.
 - Theme: the existing semantic palette (Omarchy, else system light/dark) drives the
   egui visuals.
 - Export (Markdown folder, ZIP, PDF) reads only the attachment store.
+## Implemented in E4 (egui shell)
+
+    omatree-egui (crates/egui-app)  Host: Document, rows, selected node, one text buffer,
+                                    status, UnavailableStore, EditorKeys::omatree()
+        ├── omatree-core            Document is the owner of every body; write-through via
+        │                           Document::set_body on changed frames, before switching
+        │                           notes and before saving
+        └── omatree_editor          EditorView keyed by NoteKey { notebook counter, node id }
+
+- The host lends one `String` (the selected note) to the editor; caret, selection and undo
+  live in egui memory per `NoteKey`. Opening a notebook bumps the counter and forgets the
+  old notebook's state.
+- Attachments are unavailable until E9: `UnavailableStore` refuses every put and get, so
+  no reference is created and no file or URL is ever loaded.
+- Ctrl+S saves; Ctrl+Shift+S is reserved for Save As and is consumed by the host so it
+  never saves or formats; Ctrl+E is inline code.
+- Not yet: autosave, Save As, close guard, tree interaction, Search/Trash/Recovery, theme.

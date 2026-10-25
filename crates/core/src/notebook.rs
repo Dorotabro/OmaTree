@@ -421,7 +421,7 @@ impl Notebook {
 
     /// Every node in the order the tree is shown: each note, then its
     /// children (in sibling order), depth first. One pass over the notes.
-    pub(crate) fn depth_first(&self) -> Vec<&Node> {
+    pub fn depth_first(&self) -> Vec<&Node> {
         let mut children: BTreeMap<Option<NodeId>, Vec<&Node>> = BTreeMap::new();
         for node in self.nodes.values() {
             children.entry(node.parent_id).or_default().push(node);

@@ -1,0 +1,26 @@
+[package]
+name = "omatree-egui"
+version = "0.1.2"
+edition = "2021"
+description = "OmaTree's egui/eframe application shell (migration ticket E4). No Qt."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Dorotabro/OmaTree"
+publish = false
+
+[lib]
+name = "omatree_egui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "omatree-egui"
+path = "src/main.rs"
+
+[dependencies]
+omatree-core = { path = "../core" }
+# The editor library lives in a separate repository. For local integration it is taken from the
+# adjacent checkout (see docs/EGUI_MIGRATION_PLAN.md, "E4 implementation record", for the layout
+# requirement and the plan for reproducible builds). The package is named after the spike; its
+# library target is `omatree_editor`.
+omatree_editor = { package = "omatree-egui-editor-spike", path = "../../../omatree-egui-editor-library" }
+# Same egui/eframe line and feature set as the editor repository's own binary.
+eframe = { version = "0.37", default-features = false, features = ["clipboard", "links", "default_fonts", "system_fonts", "glow", "wayland", "x11"] }

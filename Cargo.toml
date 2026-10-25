@@ -8,7 +8,7 @@ repository = "https://github.com/Dorotabro/OmaTree"
 publish = false
 
 [workspace]
-members = [".", "crates/core"]
+members = [".", "crates/core", "crates/egui-app"]
 default-members = [".", "crates/core"]
 
 [dependencies]
