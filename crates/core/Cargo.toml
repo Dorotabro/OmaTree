@@ -1,0 +1,12 @@
+[package]
+name = "omatree-core"
+version = "0.1.2"
+edition = "2021"
+description = "OmaTree's notebook model, SQLite persistence, recovery, search and theme palette. No UI toolkit."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Dorotabro/OmaTree"
+publish = false
+
+[dependencies]
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+toml = { version = "1.1.6", default-features = false, features = ["parse", "serde"] }

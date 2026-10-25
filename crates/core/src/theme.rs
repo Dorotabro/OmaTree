@@ -123,23 +123,12 @@ impl Palette {
     }
 }
 
-/// The operating system's colour scheme as Qt reports it.
+/// The operating system's colour scheme, as the UI layer reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scheme {
     Light,
     Dark,
     Unknown,
-}
-
-impl Scheme {
-    /// From `Qt::ColorScheme` (0 unknown, 1 light, 2 dark).
-    pub fn from_qt(value: i32) -> Scheme {
-        match value {
-            1 => Scheme::Light,
-            2 => Scheme::Dark,
-            _ => Scheme::Unknown,
-        }
-    }
 }
 
 /// The palette to show: a valid Omarchy palette wins; otherwise the built-in
@@ -541,40 +530,6 @@ mod tests {
     }
 
     #[test]
-    fn qml_contains_no_literal_ui_colours() {
-        // All colour decisions flow from the semantic Theme. A literal
-        // #rgb / #rrggbb / #aarrggbb string in any QML file is a regression.
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("qml");
-        let mut checked = 0;
-        for entry in std::fs::read_dir(dir).unwrap() {
-            let path = entry.unwrap().path();
-            if path.extension().is_none_or(|e| e != "qml") {
-                continue;
-            }
-            checked += 1;
-            let text = std::fs::read_to_string(&path).unwrap();
-            for (n, line) in text.lines().enumerate() {
-                let code = line.split("//").next().unwrap_or("");
-                let mut rest = code;
-                while let Some(at) = rest.find('#') {
-                    let digits: String = rest[at + 1..]
-                        .chars()
-                        .take_while(|c| c.is_ascii_hexdigit())
-                        .collect();
-                    assert!(
-                        !matches!(digits.len(), 3 | 4 | 6 | 8),
-                        "{}:{} has a literal colour: {line}",
-                        path.display(),
-                        n + 1
-                    );
-                    rest = &rest[at + 1..];
-                }
-            }
-        }
-        assert!(checked >= 6, "looked at {checked} QML files");
-    }
-
-    #[test]
     fn colour_parsing_is_strict_about_the_format() {
         assert_eq!(Rgb::parse("#7aa2f7"), Some(Rgb(0x7a, 0xa2, 0xf7)));
         assert_eq!(Rgb::parse("  #7AA2F7 "), Some(Rgb(0x7a, 0xa2, 0xf7)));
@@ -756,10 +711,6 @@ mod tests {
             Palette::DARK,
             "deterministic fallback"
         );
-        assert_eq!(Scheme::from_qt(1), Scheme::Light);
-        assert_eq!(Scheme::from_qt(2), Scheme::Dark);
-        assert_eq!(Scheme::from_qt(0), Scheme::Unknown);
-        assert_eq!(Scheme::from_qt(99), Scheme::Unknown);
     }
 
     #[test]

@@ -16,7 +16,10 @@ It is deliberately small and may evolve.
 
 ### Core
 
-Rust
+Rust. Since ticket E1 the Qt-free domain code lives in the library crate
+`omatree-core` (`crates/core`): `notebook`, `document`, `storage`, `recovery`,
+`search`, `theme` (palette) and `link`. The Qt application at the repository
+root depends on it. `cargo test -p omatree-core` needs no Qt.
 
 Responsibilities include:
 
@@ -150,11 +153,15 @@ in `docs/EGUI_MIGRATION_PLAN.md`. This section only states the intended shape.
 
 ## Crates
 
-    omatree-core     Qt-free, egui-free: notebook, document, storage (SQLite), recovery,
-                     search, theme palette, link safety
+Status: `omatree-core` **exists** (ticket E1, `crates/core`); the other three are
+planned.
+
+    omatree-core     [implemented] Qt-free, egui-free: notebook, document, storage (SQLite),
+                     recovery, search, theme palette, link safety
     omatree-editor   egui Markdown editor library (from the standalone editor):
                      live-rendered source-backed editing, attachments trait, export, PDF
-    omatree (Qt)     the current application, depends on omatree-core; unchanged behaviour
+    omatree (Qt)     [implemented] the current application at the repository root;
+                     depends on omatree-core; behaviour unchanged
     omatree-egui     the new application: egui host over core + editor
 
 The standalone editor keeps a runnable demo binary built on the same library.

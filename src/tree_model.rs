@@ -12,10 +12,10 @@ use cxx_qt_lib::{QList, QModelIndex, QString, QUrl, QVariant};
 
 use std::path::Path;
 
-use crate::document::{with_default_extension, Document};
-use crate::notebook::{NodeId, Notebook, NotebookError};
-use crate::recovery::RecoveryError;
-use crate::search::{self, SearchResult};
+use omatree_core::document::{with_default_extension, Document};
+use omatree_core::notebook::{NodeId, Notebook, NotebookError};
+use omatree_core::recovery::RecoveryError;
+use omatree_core::search::{self, SearchResult};
 
 #[cxx_qt::bridge]
 pub mod qobject {
@@ -773,7 +773,7 @@ impl qobject::NotebookModel {
         count_to_i32(self.rust().document.recovery().trash().len())
     }
 
-    fn trash_entry(&self, index: i32) -> Option<&crate::recovery::TrashEntry> {
+    fn trash_entry(&self, index: i32) -> Option<&omatree_core::recovery::TrashEntry> {
         let trash = self.rust().document.recovery().trash();
         nth_newest(trash.len(), index).map(|i| &trash[i])
     }
@@ -824,7 +824,7 @@ impl qobject::NotebookModel {
         count_to_i32(self.rust().document.recovery().checkpoints().len())
     }
 
-    fn checkpoint_entry(&self, index: i32) -> Option<&crate::recovery::Checkpoint> {
+    fn checkpoint_entry(&self, index: i32) -> Option<&omatree_core::recovery::Checkpoint> {
         let list = self.rust().document.recovery().checkpoints();
         nth_newest(list.len(), index).map(|i| &list[i])
     }
@@ -1111,7 +1111,7 @@ impl qobject::NotebookModel {
     fn finish_open(
         self: Pin<&mut Self>,
         path: &str,
-        result: Result<Document, crate::document::DocumentError>,
+        result: Result<Document, omatree_core::document::DocumentError>,
     ) -> QString {
         match result {
             Err(e) => {

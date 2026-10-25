@@ -12,8 +12,11 @@ impl NodeId {
         self.0
     }
 
-    /// For rebuilding persisted ids; fresh ids only come from `Notebook`.
-    pub(crate) fn from_raw(raw: u64) -> Self {
+    /// For rebuilding persisted ids, and for adapters that carry an id through
+    /// a foreign handle. The result is an unvalidated name, not proof that a
+    /// node exists: look it up with `Notebook::get` before use. Fresh ids only
+    /// come from `Notebook`.
+    pub fn from_raw(raw: u64) -> Self {
         NodeId(raw)
     }
 }
@@ -83,7 +86,7 @@ pub(crate) fn normalize_title(title: &str) -> String {
 /// A validated, non-trivial move: where the node is now and where it ends up.
 /// Positions are final sibling indexes, never Qt destination rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct MovePlan {
+pub struct MovePlan {
     pub old_parent: Option<NodeId>,
     pub old_position: usize,
     pub new_parent: Option<NodeId>,
@@ -323,7 +326,7 @@ impl Notebook {
     /// both must exist, the move must not create a cycle, and a new parent
     /// must not already have a child with an equivalent title. (The same
     /// parent is always fine: that is only a reorder.)
-    pub(crate) fn can_reparent(&self, id: NodeId, new_parent: Option<NodeId>) -> bool {
+    pub fn can_reparent(&self, id: NodeId, new_parent: Option<NodeId>) -> bool {
         self.plan_move(id, new_parent, usize::MAX).is_ok()
     }
 
@@ -374,7 +377,7 @@ impl Notebook {
     /// top level) at final sibling index `new_position`. Ids and contents are
     /// untouched and sibling positions stay contiguous. Returns whether the
     /// tree changed; on any error nothing changes.
-    pub(crate) fn move_node(
+    pub fn move_node(
         &mut self,
         id: NodeId,
         new_parent: Option<NodeId>,
@@ -505,7 +508,7 @@ impl Notebook {
 
     /// How many (parent, title) groups hold more than one equivalent sibling.
     /// Zero for any notebook that only ever saw the uniqueness rule.
-    pub(crate) fn sibling_title_conflicts(&self) -> usize {
+    pub fn sibling_title_conflicts(&self) -> usize {
         let mut seen: BTreeMap<(Option<NodeId>, String), usize> = BTreeMap::new();
         for node in self.nodes.values() {
             *seen

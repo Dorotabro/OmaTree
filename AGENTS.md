@@ -146,8 +146,11 @@ For Rust code, normally:
 If something cannot be completed, report the problem rather than silently changing the architecture.
 
 For the Qt application the checks above are unchanged and still required while it
-exists. For egui crates run the same four commands for the affected crates (and
-`cargo test` for the Qt-free core must not need Qt installed once it is extracted).
+exists. The workspace's `default-members` include the Qt package and `crates/core`, so the
+commands above cover both. For the Qt-free core alone run `cargo clippy -p omatree-core
+--all-targets -- -D warnings`, `cargo test -p omatree-core` and `cargo build -p omatree-core`;
+they must not need Qt installed. For new egui crates run the same four commands for the
+affected crates.
 
 Mark GUI behaviour that was not actually exercised as **not tested**; never infer a pass
 from compilation.

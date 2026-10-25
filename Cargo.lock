@@ -407,6 +407,14 @@ dependencies = [
  "cxx-qt",
  "cxx-qt-build",
  "cxx-qt-lib",
+ "omatree-core",
+ "rusqlite",
+]
+
+[[package]]
+name = "omatree-core"
+version = "0.1.2"
+dependencies = [
  "rusqlite",
  "toml",
 ]

@@ -475,7 +475,7 @@ impl Document {
 
     /// Validates a move without changing anything; `None` means it would
     /// change nothing. See `Notebook::plan_move` for the position rules.
-    pub(crate) fn plan_move(
+    pub fn plan_move(
         &self,
         id: NodeId,
         new_parent: Option<NodeId>,

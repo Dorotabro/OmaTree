@@ -7,12 +7,18 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/Dorotabro/OmaTree"
 publish = false
 
+[workspace]
+members = [".", "crates/core"]
+default-members = [".", "crates/core"]
+
 [dependencies]
+omatree-core = { path = "crates/core" }
 cxx = "1.0"
 cxx-qt = "0.10"
 cxx-qt-lib = { version = "0.10", features = ["qt_gui", "qt_qml"] }
+
+[dev-dependencies]
 rusqlite = { version = "0.40.2", features = ["bundled"] }
-toml = { version = "1.1.6", default-features = false, features = ["parse", "serde"] }
 
 [build-dependencies]
 cxx-qt-build = { version = "0.10", features = ["link_qt_object_files"] }

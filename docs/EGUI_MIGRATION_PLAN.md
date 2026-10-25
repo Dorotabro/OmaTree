@@ -439,6 +439,7 @@ Rules for the whole sequence:
 - Risks: none.
 
 **E1: Extract `omatree-core` (Qt-free library crate)**
+- **Status: implemented and verified on `egui-integration` (not committed).** See "E1 implementation record" below this ticket list. Deviations from the original ticket text are listed there.
 - Objective: separate `notebook`, `document`, `storage`, `recovery`, `search`, `theme` and the pure `is_safe_external_link` into a workspace crate used by the Qt app.
 - Affected: Cargo workspace; module moves; visibility (`pub(crate)` → `pub` for the ~39 items counted in §1.2 that `tree_model.rs`/tests touch: `plan_move`, `plan_trash_restore`, `Checkpoint`, `TrashEntry`, etc.); `theme.rs::Scheme::from_qt` moved to `theme_model.rs`; `integration_tests.rs` stays with the Qt crate.
 - Behaviour: none; identical app.
@@ -529,6 +530,49 @@ Rules for the whole sequence:
 **E13: Cut-over decision (maintainer's)**
 - Objective: tag, switch the default build/package to egui, move the Qt app to `legacy/` or remove it in a follow-up. Only after E12.
 - Not to be done automatically.
+
+### E1 implementation record (what was actually done)
+
+**Layout.** The repository root stays the Qt package `omatree` (same `[package]`, same `build.rs`, same `target/release/omatree`, same `Cargo.lock` location) and also becomes the workspace root: `[workspace] members = [".", "crates/core"]`, `default-members = [".", "crates/core"]`. The new library is `crates/core` (`omatree-core`, direct dependencies `rusqlite` (bundled) and `toml` only). *Deviation from §3.1:* the Qt app was **not** moved to `crates/qt-app`; every packaging script reads the root `Cargo.toml` version, builds with `cargo build --release --locked` at the root and stages `target/release/omatree`, and the Arch/deb/AppImage builders take their source from `git ls-files`. Keeping the root as the Qt package changes none of that. `default-members` keeps the documented bare `cargo fmt/clippy/test` covering the core as well.
+
+**Moved to `omatree-core` (git sees them as renames; `storage.rs`, `recovery.rs`, `search.rs` and `document.rs` are byte-identical apart from one visibility keyword in `document.rs`):** `notebook`, `document`, `storage`, `recovery`, `search`, `theme`, plus a new `link` module holding `is_safe_external_link` and its two tests, which were split out of `markdown.rs`. The Qt `markdown.rs` keeps only the CXX-Qt bridge and calls `omatree_core::link::is_safe_external_link`.
+
+**Stayed in the Qt crate:** `main.rs`, `app.rs`, `tree_model.rs`, `theme_model.rs`, `markdown.rs` (bridge), `integration_tests.rs`, `build.rs`, `qml/`, `cpp/`, `tests/qml/`, `packaging/`.
+
+**Qt-specific logic moved out of the core:** `Scheme::from_qt` became the private function `scheme_from_qt` in `theme_model.rs`, with the same mapping (1 light, 2 dark, anything else unknown). Its assertions moved to a new test there. The core's `Scheme` enum stays (a plain light/dark/unknown value) and its doc comment no longer mentions Qt. The test `qml_contains_no_literal_ui_colours` reads `qml/*.qml`, so it moved to the Qt crate's `theme_model.rs` unchanged.
+
+**Public surface added (everything else stayed `pub(crate)` or private; no new mutable access to notebook internals):**
+
+| Item | Why the Qt adapter needs it |
+|---|---|
+| `NodeId::from_raw` | `tree_model.rs` carries a `NodeId` through `QModelIndex`'s internal id and re-validates it with `Notebook::get` on every use; doc comment now says it is an unvalidated name |
+| `Document::plan_move`, `MovePlan` (struct, fields already `pub`) | the drag-and-drop move path |
+| `Notebook::can_reparent` | `can_drop` |
+| `Notebook::sibling_title_conflicts` | the duplicate-title warning |
+| `Notebook::move_node` | a Qt-crate unit test builds notebooks directly; the method is a validated operation (cycle check, contiguous positions), so it does not bypass invariants |
+| modules `document`, `link`, `notebook`, `recovery`, `search`, `storage`, `theme` | Rust visibility of the paths the bridges name (`omatree_core::recovery::TrashEntry` etc.) |
+
+Not made public: `Node::from_parts`, `Notebook::from_nodes*`, `snapshot_nodes`, `subtree`, `restore_*`, `Checkpoint::of/from_stored`, `Recovery::from_parts/push_trash/take_trash/add_checkpoint`, the storage test helpers, and `set_body` remains the only way to change a body.
+
+**Qt crate dependencies:** `toml` removed (no longer used there); `rusqlite` moved to `[dev-dependencies]` (only `integration_tests.rs` opens notebooks directly); `omatree-core` added. `Cargo.lock` gained one `omatree-core` package entry and the dependency edges that moved; no crate version changed.
+
+#### Verification evidence (this machine: Arch/Omarchy, Qt 6.12.0, Hyprland/Wayland, release build)
+
+| Check | Baseline (before E1, same tree) | After E1 |
+|---|---|---|
+| `cargo fmt --all -- --check` | pass | pass |
+| `cargo clippy --all-targets -- -D warnings` | pass | pass (and `cargo clippy -p omatree-core --all-targets -- -D warnings` passes) |
+| `cargo test` | 294 passed, 1 ignored, 0 failed | core 253 passed + 1 ignored; Qt crate 42 passed; total 295 passed + 1 ignored, 0 failed |
+| `cargo build --release` / `--locked` | pass | pass, binary `target/release/omatree` (6.52 MB before, 6.56 MB after) |
+| `cargo build -p omatree-core`, `cargo test -p omatree-core` | n/a | pass; **also pass in an environment with `PATH` reduced to cargo/rustc/rustdoc, the C compiler and linker, and no `qmake6`/Qt tools** (`env -i`, separate target dir). `cargo tree -p omatree-core` has 25 lines (rusqlite, toml and their dependencies) and no Qt, cxx, egui or eframe crate |
+
+*Test accounting.* The baseline listed 295 tests (294 + 1 ignored). After the change there are 296 listed: the same 295, plus one new test (`theme_model::tests::qt_colour_scheme_values_map_to_schemes`). Two `markdown::tests` moved to `link::tests`, and `theme::tests::qml_contains_no_literal_ui_colours` moved to `theme_model::tests`; a diff of the sorted test lists shows no other change. The 24 QML scenarios run inside the Qt crate's `integration_tests` and passed. The ignored test is `document::tests::checkpoint_benchmark`, which I also ran explicitly (`-- --ignored`, release-free debug build, 33 s): pass.
+
+*GUI smoke test* (release binary, `HOME` pointed at an empty directory, a hand-built v3 notebook copy in the scratchpad; scripted `wtype`/`ydotool`, `grim` screenshots): opened by command-line path and showed the tree; selected "Ideas" and edited it (typed Czech text with diacritics), saved with Ctrl+S (the text was in the file); searched "gamma" and opened the result; moved the note to Trash through the confirmation dialog; opened File ▸ Recovery… and restored it (the note returned under its parent, the Trash entry count dropped, checkpoints were taken); no output on stderr. The identical script was then run with the baseline binary (the pre-E1 build, copied aside) on a second copy of the same fixture. The logical dumps of both notebooks (all tables, `user_version`, schema SQL) are identical except for the Unix timestamps of the two checkpoints created during the run. The Qt app wrote `user_version` 3 and unchanged table definitions.
+
+*Packaging.* `packaging/linux/stage.sh` with its default binary path (`target/release/omatree`) stages `usr/bin/omatree` correctly. All packaging scripts read the root `Cargo.toml`, build at the root and take sources from `git ls-files` (so `crates/` is included once tracked). **Not run:** the Arch, deb, AppImage, macOS and Windows package builds and their `verify-*` scripts (containers, macOS and Windows hosts needed). That the new files are tracked before such a build is a requirement; nothing is committed yet.
+
+**Not verified / residual:** Windows and macOS builds of the workspace; the full package builds above; `cargo build --release` of the core alone is not part of the packaging flow. The core is compiled once per profile (shared by both default members), so build time is unchanged.
 
 ### Recommendation: first ticket
 
