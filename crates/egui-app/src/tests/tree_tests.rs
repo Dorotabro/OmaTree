@@ -7,7 +7,7 @@ use super::*;
 use std::time::Duration;
 
 /// A (A1 (A1a (Leaf)), A2), B (B1), and a lone C.
-fn make_deep(path: &Path) {
+pub(super) fn make_deep(path: &Path) {
     let mut doc = Document::open(path).unwrap();
     let a = doc.create_root("A").unwrap();
     let a1 = doc.create_child(a, "A1").unwrap();
@@ -32,7 +32,7 @@ fn make_deep(path: &Path) {
     doc.save().unwrap();
 }
 
-fn deep(name: &str) -> (PathBuf, PathBuf) {
+pub(super) fn deep(name: &str) -> (PathBuf, PathBuf) {
     let d = dir(name);
     let p = d.join("n.omatree");
     make_deep(&p);
@@ -40,7 +40,7 @@ fn deep(name: &str) -> (PathBuf, PathBuf) {
 }
 
 /// "A(A1(A1a(Leaf)),A2)|B(B1)|C": the real hierarchy, whatever is open.
-fn shape(doc: &Document) -> String {
+pub(super) fn shape(doc: &Document) -> String {
     fn walk(doc: &Document, id: NodeId) -> String {
         let nb = doc.notebook();
         let title = nb.get(id).unwrap().title().to_owned();
@@ -66,26 +66,26 @@ fn shape(doc: &Document) -> String {
 
 impl H {
     /// Opened the way the app opens: the tree has the keyboard.
-    fn open_tree(path: &Path) -> Self {
+    pub(super) fn open_tree(path: &Path) -> Self {
         let mut h = H::open(path);
         h.host.focus(Focus::Tree);
         h.settle();
         h
     }
 
-    fn vis(&self) -> Vec<String> {
+    pub(super) fn vis(&self) -> Vec<String> {
         let t = self.host.tree();
         (0..t.len_visible())
             .map(|i| t.visible_row(i).title.clone())
             .collect()
     }
 
-    fn sel(&self) -> String {
+    pub(super) fn sel(&self) -> String {
         let id = self.host.selected().expect("a selection");
         self.host.tree().row(id).unwrap().title.clone()
     }
 
-    fn has_focus(&self, f: Focus) -> bool {
+    pub(super) fn has_focus(&self, f: Focus) -> bool {
         let id = match f {
             Focus::Tree => Host::tree_id(),
             Focus::Title => self.host.title_id(),
@@ -96,18 +96,18 @@ impl H {
         self.ctx.memory(|m| m.has_focus(id))
     }
 
-    fn expanded(&self, title: &str) -> bool {
+    pub(super) fn expanded(&self, title: &str) -> bool {
         self.host.document().unwrap().is_expanded(self.id(title))
     }
 
-    fn go(&mut self, title: &str) {
+    pub(super) fn go(&mut self, title: &str) {
         let id = self.id(title);
         assert!(self.host.select(&self.ctx.clone(), id), "select {title}");
         self.host.focus(Focus::Tree);
         self.settle();
     }
 
-    fn collapse_all(&mut self) {
+    pub(super) fn collapse_all(&mut self) {
         self.host.set_all_expanded(&self.ctx.clone(), false);
         self.settle();
     }

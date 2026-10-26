@@ -306,6 +306,49 @@ impl Host {
         }
     }
 
+    // --- Drag and drop ---------------------------------------------------------------------------
+
+    /// The drag is over. Notes that hovering opened are closed again, so a drag that moved
+    /// nothing leaves the recorded expansion as it was (hover-opening is transient).
+    pub(crate) fn end_drag(&mut self, opened: Vec<NodeId>) {
+        self.drag = None;
+        if let Some(doc) = self.doc.as_mut() {
+            for id in opened {
+                doc.set_expanded(id, false);
+            }
+        }
+        self.refresh_visible();
+    }
+
+    /// A completed drop on a target the notebook accepted: the one place a drag changes the notebook.
+    /// The moved note is selected and revealed (opening the way to it, as Qt does); everything
+    /// stays keyed by note id, so its text, caret and undo history are untouched.
+    pub(crate) fn drop_note(
+        &mut self,
+        ctx: &egui::Context,
+        id: NodeId,
+        parent: Option<NodeId>,
+        position: usize,
+    ) {
+        if !self.tree.contains(id) || !self.commit_title(ctx) {
+            return;
+        }
+        self.leave(ctx);
+        let Some(doc) = self.doc.as_mut() else { return };
+        match doc.move_node(id, parent, position) {
+            Ok(changed) => {
+                self.edited |= changed;
+                self.rebuild_tree();
+                if changed {
+                    self.select(ctx, id);
+                    self.reveal(id);
+                    self.set_focus(Focus::Tree);
+                }
+            }
+            Err(e) => self.status = format!("Could not move the note: {e}"),
+        }
+    }
+
     // --- Delete ------------------------------------------------------------------------------
 
     /// Delete / the menu: ask first.

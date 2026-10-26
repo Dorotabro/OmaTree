@@ -781,4 +781,5 @@ fn timings() {
 
 mod lifecycle_tests;
 
+mod drag_tests;
 mod tree_tests;

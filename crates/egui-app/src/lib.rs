@@ -9,6 +9,7 @@
 //! - The host owns the window, shortcuts that are about the document (Ctrl+S), status text and
 //!   the attachment backend (none yet: [`UnavailableStore`]).
 
+mod drag;
 mod lifecycle;
 mod ops;
 mod store;
@@ -55,6 +56,10 @@ pub struct Host {
     menu_request: bool,
     menu_pos: Option<egui::Pos2>,
     page_rows: usize,
+    /// A drag from a tree row in progress (the notebook is untouched until it is dropped).
+    drag: Option<drag::Drag>,
+    /// Where the tree's rows were last drawn: content origin and visible viewport (screen space).
+    tree_geom: (egui::Pos2, egui::Rect),
     status: String,
     error: Option<String>,
     title: String,
@@ -102,6 +107,8 @@ impl Host {
             menu_request: false,
             menu_pos: None,
             page_rows: 10,
+            drag: None,
+            tree_geom: (egui::Pos2::ZERO, egui::Rect::NOTHING),
             status: String::new(),
             error: None,
             title: String::new(),

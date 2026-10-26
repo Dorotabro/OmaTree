@@ -5,12 +5,20 @@
 //! while the tree has the keyboard, which keeps them away from text being edited; the commands
 //! that are application-wide (new note, rename, move) are handled in `Host::handle_shortcuts`.
 
+use super::drag::{self, Drag, Kind, Target, Verdict};
 use super::*;
 use egui::{Color32, FontId, Key, Pos2, Rect, Sense, Shape, Stroke, Vec2};
 
-const ROW_H: f32 = 26.0;
+pub(crate) const ROW_H: f32 = 26.0;
 const INDENT: f32 = 16.0;
 const LEFT: f32 = 8.0;
+/// A pointer resting this long on a collapsed note while dragging opens it.
+const HOVER_OPEN: f64 = 0.6;
+/// Dragging within this distance of the top or bottom of the tree scrolls it, up to `SCROLL_MAX`.
+const SCROLL_EDGE: f32 = 28.0;
+const SCROLL_MAX: f32 = 1500.0;
+/// How far the pointer must move from where it was pressed for a press to become a drag.
+const DRAG_START: f32 = 6.0;
 
 /// What a click, key or menu entry asked for; applied after drawing, when the tree is not borrowed.
 enum Cmd {
@@ -28,6 +36,10 @@ enum Cmd {
     NewChild,
     ExpandAll(bool),
     ExpandSubtree(NodeId, bool),
+    /// The drag ended (dropped, cancelled or lost): close what hovering opened.
+    EndDrag(Vec<NodeId>),
+    DragOpen(NodeId),
+    Drop(NodeId, Option<NodeId>, usize),
 }
 
 fn with_alpha(c: Color32, a: f32) -> Color32 {
@@ -95,7 +107,11 @@ impl Host {
         {
             egui::Popup::close_all(&ctx);
         }
-        if has_focus && !self.dialog_open() && !egui::Popup::is_any_open(&ctx) {
+        if has_focus
+            && !self.dialog_open()
+            && !egui::Popup::is_any_open(&ctx)
+            && self.drag.is_none()
+        {
             self.tree_keys(&ctx, cmds);
         }
         let want_menu = std::mem::take(&mut self.menu_request);
@@ -105,6 +121,7 @@ impl Host {
             .and_then(|id| self.tree.visible_position(id));
         let focus_now = self.wants_focus(Focus::Tree);
 
+        let view = ui.available_rect_before_wrap();
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show_viewport(ui, |ui, viewport| {
@@ -114,6 +131,8 @@ impl Host {
                     Vec2::new(width, (n as f32 * ROW_H).max(viewport.height())),
                     Sense::hover(),
                 );
+                self.tree_geom = (area.min, view);
+                self.drag_frame(ui, &ctx, view, area.min, cmds);
                 // The focusable surface, below the rows; empty space shows the tree-wide menu.
                 let surface = ui.interact(area, tree_id, Sense::click());
                 if surface.clicked() {
@@ -152,13 +171,34 @@ impl Host {
                         Vec2::new(width, ROW_H),
                     );
                     let current = self.selected == Some(r.id);
+                    let text_color = if self.drag.as_ref().is_some_and(|d| d.id == r.id) {
+                        with_alpha(text_color, 0.5)
+                    } else {
+                        text_color
+                    };
                     let open =
                         r.has_children && self.doc.as_ref().is_some_and(|d| d.is_expanded(r.id));
                     let resp = ui.interact(
                         rect,
-                        egui::Id::unique(("omatree-row", r.id.get())),
-                        Sense::click(),
+                        ui.make_persistent_id(("omatree-row", r.id.get())),
+                        Sense::click_and_drag(),
                     );
+                    // Only a drag that began on a row (past egui's click distance) is a tree drag.
+                    // (A press held in place also counts as a drag to egui; it is not one here.)
+                    let moved = ctx.input(|i| {
+                        i.pointer
+                            .press_origin()
+                            .zip(i.pointer.latest_pos())
+                            .is_some_and(|(a, b)| a.distance(b) >= DRAG_START)
+                    });
+                    if resp.drag_started_by(egui::PointerButton::Primary)
+                        && moved
+                        && self.drag.is_none()
+                        && !self.dialog_open()
+                    {
+                        self.drag = Some(Drag::new(&self.tree, r.id));
+                        ctx.memory_mut(|m| m.request_focus(tree_id));
+                    }
                     let marker_left = rect.left() + LEFT + r.depth as f32 * INDENT;
                     let marker = Rect::from_min_size(
                         Pos2::new(marker_left, rect.top()),
@@ -299,6 +339,44 @@ impl Host {
                     }
                     popup.show(|ui| menu_entries(ui, Some(r.id), r.has_children, cmds));
                 }
+                if let Some(t) = self.drag.as_ref().and_then(|d| d.target) {
+                    let accent_line = |y: f32, colour: Color32| {
+                        painter.rect_filled(
+                            Rect::from_min_size(
+                                Pos2::new(area.left(), y - 1.0),
+                                Vec2::new(width, 2.0),
+                            ),
+                            0.0,
+                            colour,
+                        );
+                    };
+                    let row_top = area.min.y + t.row as f32 * ROW_H;
+                    let outline = |colour: Color32| {
+                        painter.rect_stroke(
+                            Rect::from_min_size(
+                                Pos2::new(area.left(), row_top),
+                                Vec2::new(width, ROW_H),
+                            )
+                            .shrink(1.0),
+                            0.0,
+                            Stroke::new(2.0, colour),
+                            egui::StrokeKind::Inside,
+                        );
+                    };
+                    let danger = visuals.error_fg_color;
+                    match (t.verdict, t.kind) {
+                        // Nothing would change: nothing is shown.
+                        (Verdict::NoOp, _) => {}
+                        (Verdict::Refused, Kind::End) => accent_line(row_top, danger),
+                        (Verdict::Refused, _) => outline(danger),
+                        (Verdict::Move { .. }, Kind::Child) => outline(accent),
+                        (Verdict::Move { .. }, Kind::Before) => accent_line(row_top, accent),
+                        (Verdict::Move { .. }, Kind::After) => {
+                            accent_line(row_top + ROW_H, accent);
+                        }
+                        (Verdict::Move { .. }, Kind::End) => accent_line(row_top, accent),
+                    }
+                }
                 if let Some(i) = scroll_to {
                     let rect = Rect::from_min_size(
                         area.min + Vec2::new(0.0, i as f32 * ROW_H),
@@ -307,6 +385,97 @@ impl Host {
                     ui.scroll_to_rect(rect, None);
                 }
             });
+    }
+
+    /// One frame of a drag: cancel on Escape, follow the pointer to a target, scroll near the
+    /// edges, open a collapsed note the pointer rests on, and finish when the button is released.
+    /// Nothing here touches the notebook; structural changes are returned as commands.
+    fn drag_frame(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        view: Rect,
+        origin: Pos2,
+        cmds: &mut Vec<Cmd>,
+    ) {
+        let Some(mut drag) = self.drag.take() else {
+            return;
+        };
+        let (released, down, pos, now, dt, escape) = ctx.input_mut(|i| {
+            (
+                i.pointer.primary_released(),
+                i.pointer.primary_down(),
+                i.pointer.latest_pos(),
+                i.time,
+                i.unstable_dt.min(0.1),
+                i.consume_key(egui::Modifiers::NONE, Key::Escape),
+            )
+        });
+        if escape {
+            drag.cancelled = true;
+        }
+        if drag.cancelled {
+            drag.target = None;
+            drag.hover = None;
+        } else {
+            let pos = pos.filter(|p| view.contains(*p));
+            drag.target = match (pos, self.doc.as_ref()) {
+                (Some(p), Some(doc)) => {
+                    drag::locate(&self.tree, doc, drag.id, p.y - origin.y, ROW_H, drag.target)
+                }
+                _ => None,
+            };
+            if let Some(p) = pos {
+                let speed =
+                    drag::scroll_speed(p.y, view.top(), view.bottom(), SCROLL_EDGE, SCROLL_MAX);
+                if speed != 0.0 {
+                    ui.scroll_with_delta(Vec2::new(0.0, -speed * dt));
+                }
+            }
+            // A collapsed note the pointer rests on (its middle zone) opens after a pause.
+            let resting = drag.target.and_then(|t| match (t.kind, t.over) {
+                (Kind::Child, Some(o))
+                    if !drag.subtree.contains(&o)
+                        && self.tree.row(o).is_some_and(|r| r.has_children)
+                        && !self.doc.as_ref().is_some_and(|d| d.is_expanded(o)) =>
+                {
+                    Some(o)
+                }
+                _ => None,
+            });
+            drag.hover = match (resting, drag.hover) {
+                (Some(o), Some((h, since))) if o == h => {
+                    if now - since >= HOVER_OPEN {
+                        cmds.push(Cmd::DragOpen(o));
+                        None
+                    } else {
+                        Some((h, since))
+                    }
+                }
+                (Some(o), _) => Some((o, now)),
+                (None, _) => None,
+            };
+        }
+        ctx.request_repaint();
+        let refused = drag.target.is_some_and(|t| t.verdict == Verdict::Refused);
+        ctx.set_cursor_icon(if refused {
+            egui::CursorIcon::NotAllowed
+        } else {
+            egui::CursorIcon::Grabbing
+        });
+        if released || !down {
+            let landing = drag.target.filter(|_| released && !drag.cancelled);
+            cmds.push(Cmd::EndDrag(std::mem::take(&mut drag.opened)));
+            if let Some(Target {
+                verdict: Verdict::Move { parent, position },
+                ..
+            }) = landing
+            {
+                cmds.push(Cmd::Drop(drag.id, parent, position));
+            }
+            return;
+        }
+        self.drag = Some(drag);
     }
 
     /// Keys that act on the tree while it has the keyboard (the same set as the Qt TreeView and
@@ -394,6 +563,14 @@ impl Host {
                 Cmd::NewChild => self.create_child(ctx),
                 Cmd::ExpandAll(open) => self.set_all_expanded(ctx, open),
                 Cmd::ExpandSubtree(id, open) => self.set_subtree_expanded(ctx, id, open),
+                Cmd::EndDrag(opened) => self.end_drag(opened),
+                Cmd::DragOpen(id) => {
+                    self.set_expanded(ctx, id, true);
+                    if let Some(d) = self.drag.as_mut() {
+                        d.opened.push(id);
+                    }
+                }
+                Cmd::Drop(id, parent, position) => self.drop_note(ctx, id, parent, position),
             }
         }
     }
