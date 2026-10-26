@@ -67,6 +67,8 @@ struct H {
     reinject_close: bool,
     /// A close request was not cancelled: the window would be gone.
     closed: bool,
+    /// The repaint delay the last frame asked for (an idle app asks for none).
+    repaint: std::time::Duration,
 }
 
 impl H {
@@ -77,8 +79,11 @@ impl H {
             t: 0.0,
             reinject_close: false,
             closed: false,
+            repaint: std::time::Duration::MAX,
         };
         assert!(h.host.open(&h.ctx.clone(), path), "{}", h.host.status());
+        // The app starts with the tree focused; most tests type, so they start in the editor.
+        h.host.focus(Focus::Editor);
         h.settle();
         h
     }
@@ -117,6 +122,7 @@ impl H {
             host.logic(ui.ctx());
             host.ui(ui);
         });
+        self.repaint = out.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
         let cmds = &out.viewport_output[&egui::ViewportId::ROOT].commands;
         if close && !cmds.contains(&egui::ViewportCommand::CancelClose) {
             self.closed = true;
@@ -176,6 +182,7 @@ impl H {
     fn select(&mut self, title: &str) {
         let id = self.id(title);
         self.host.select(&self.ctx.clone(), id);
+        self.host.focus(Focus::Editor);
         self.settle();
     }
 
@@ -483,6 +490,7 @@ fn missing_invalid_and_unsupported_files_are_refused_clearly_and_never_modified(
         t: 0.0,
         reinject_close: false,
         closed: false,
+        repaint: std::time::Duration::MAX,
     };
     h.settle();
 }
@@ -772,3 +780,5 @@ fn timings() {
 }
 
 mod lifecycle_tests;
+
+mod tree_tests;

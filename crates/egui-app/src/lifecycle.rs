@@ -37,6 +37,10 @@ pub enum Dialog {
         path: PathBuf,
         close_after: bool,
     },
+    /// Move this note and everything below it to Trash?
+    ConfirmDelete(NodeId),
+    /// Something was refused (a rename); shown until acknowledged.
+    Error(String),
 }
 
 pub(crate) fn is_conflict(e: &DocumentError) -> bool {
@@ -71,7 +75,6 @@ impl Host {
         let now = ctx.input(|i| i.time);
         if std::mem::take(&mut self.edited) {
             self.autosave_due = Some(now + AUTOSAVE_DELAY);
-            ctx.request_repaint_after(std::time::Duration::from_secs_f64(AUTOSAVE_DELAY + 0.05));
         }
         if ctx.input(|i| i.viewport().close_requested()) && !self.request_close(ctx) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -80,6 +83,10 @@ impl Host {
             if now >= due {
                 self.autosave_due = None;
                 self.autosave(ctx);
+            } else {
+                // Every frame's repaint request replaces the one before it, so the wake-up for
+                // the countdown is asked for again on each frame until it fires.
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(due - now + 0.02));
             }
         }
     }
@@ -90,8 +97,18 @@ impl Host {
         if self.quit {
             return true;
         }
+        // A title still being typed is part of what is saved (or asked about).
+        if !self.commit_title(ctx) {
+            return false;
+        }
         self.leave(ctx);
         if !self.is_dirty() {
+            // Nothing to ask. Which notes are open in the tree is view state: it is written with
+            // any save that happens, so give it one best-effort chance (a failure, for example a
+            // conflict, must not keep the window open for something that is not content).
+            if let Some(doc) = self.doc.as_mut() {
+                let _ = doc.save();
+            }
             self.quit = true;
             return true;
         }
@@ -101,9 +118,19 @@ impl Host {
         false
     }
 
-    fn open_dialog(&mut self, ctx: &egui::Context, d: Dialog) {
-        // Nothing typed behind the modal may reach the note.
+    pub(crate) fn open_dialog(&mut self, ctx: &egui::Context, d: Dialog) {
+        // Nothing typed behind the modal may reach the note; focus returns to where it was.
         if let Some(id) = ctx.memory(|m| m.focused()) {
+            if id == Host::tree_id() {
+                self.focus_back = Focus::Tree;
+            } else if id == self.title_id() {
+                self.focus_back = Focus::Title;
+            } else if self
+                .selected
+                .is_some_and(|n| id == key_of(self.notebook, n).widget_id())
+            {
+                self.focus_back = Focus::Editor;
+            }
             ctx.memory_mut(|m| m.surrender_focus(id));
         }
         self.set_dialog(d);
@@ -116,7 +143,7 @@ impl Host {
 
     fn close_dialog(&mut self) {
         self.dialog = Dialog::None;
-        self.focus_next = true;
+        self.set_focus(self.focus_back);
         if self.is_dirty() && !self.autosave_blocked && self.autosave_due.is_none() {
             self.edited = true; // resume the autosave countdown
         }
@@ -155,6 +182,9 @@ impl Host {
     /// Ctrl+S: write the notebook. A failure is reported and nothing is lost: the document stays
     /// dirty and the buffer unchanged.
     pub fn save(&mut self, ctx: &egui::Context) {
+        if !self.commit_title(ctx) {
+            return;
+        }
         match self.persist(ctx) {
             Ok(()) => {
                 self.saved();
@@ -220,6 +250,9 @@ impl Host {
     // --- Save As -------------------------------------------------------------------------------
 
     pub fn start_save_as(&mut self, ctx: &egui::Context, close_after: bool) {
+        if !self.commit_title(ctx) {
+            return;
+        }
         self.leave(ctx);
         if self.doc.is_none() {
             return;
@@ -346,6 +379,8 @@ impl Host {
             Cancel,
             Submit(String),
             Overwrite,
+            Delete(NodeId),
+            Acknowledge,
         }
         let name = self
             .doc
@@ -441,6 +476,64 @@ impl Host {
                     answer = Answer::Cancel;
                 }
             }
+            Dialog::ConfirmDelete(id) => {
+                let text = self
+                    .doc
+                    .as_ref()
+                    .and_then(|d| d.notebook().get(id))
+                    .map(|n| {
+                        let branch = self.tree.row(id).is_some_and(|r| r.has_children);
+                        if branch {
+                            format!(
+                                "Move \u{201c}{}\u{201d} and everything beneath it to Trash?",
+                                n.title()
+                            )
+                        } else {
+                            format!("Move \u{201c}{}\u{201d} to Trash?", n.title())
+                        }
+                    });
+                let m = egui::Modal::new(egui::Id::unique("dlg-delete")).show(ctx, |ui| {
+                    ui.set_width(340.0);
+                    ui.heading("Move to Trash");
+                    ui.label(text.unwrap_or_default());
+                    ui.horizontal(|ui| {
+                        // The safe answer has the focus.
+                        let no = ui.button("No");
+                        if first_frame {
+                            no.request_focus();
+                        }
+                        if no.clicked() {
+                            answer = Answer::Cancel;
+                        }
+                        if ui
+                            .button(egui::RichText::new("Yes").color(ui.visuals().error_fg_color))
+                            .clicked()
+                        {
+                            answer = Answer::Delete(id);
+                        }
+                    });
+                });
+                if m.should_close() {
+                    answer = Answer::Cancel;
+                }
+            }
+            Dialog::Error(message) => {
+                let m = egui::Modal::new(egui::Id::unique("dlg-error")).show(ctx, |ui| {
+                    ui.set_width(340.0);
+                    ui.heading("OmaTree");
+                    ui.label(&message);
+                    let ok = ui.button("OK");
+                    if first_frame {
+                        ok.request_focus();
+                    }
+                    if ok.clicked() {
+                        answer = Answer::Acknowledge;
+                    }
+                });
+                if m.should_close() {
+                    answer = Answer::Acknowledge;
+                }
+            }
             Dialog::Overwrite { path, .. } => {
                 let m = egui::Modal::new(egui::Id::unique("dlg-overwrite")).show(ctx, |ui| {
                     ui.set_width(340.0);
@@ -479,6 +572,8 @@ impl Host {
                 self.submit_save_as(ctx);
             }
             Answer::Overwrite => self.confirm_overwrite(ctx),
+            Answer::Delete(id) => self.confirm_delete(ctx, id),
+            Answer::Acknowledge => self.cancel_dialog(),
         }
     }
 }

@@ -234,3 +234,18 @@ The standalone editor keeps a runnable demo binary built on the same library.
   conflict until the user resolves it.
 - The editor library is pinned by commit in `crates/egui-app/Cargo.toml` and `Cargo.lock`;
   no sibling checkout is required.
+
+## Tree and note operations added in E5a
+
+- `Tree` (derived from `Document`, rebuilt only when structure or a title changes) holds every
+  note in order and the list of visible rows; `Document` stays the owner of hierarchy and of
+  which notes are open. Rows are painted by hand and only the viewport is touched.
+- The tree is one focusable widget; its keys (arrows, Ctrl+arrows, Enter, Delete, Page keys,
+  Shift+F10) act only while it has the keyboard. Ctrl+N, Ctrl+Shift+N, F2 and Alt+Up/Down are
+  application-wide.
+- The note title is an editable field committed against its own note before that note is left;
+  a refused title blocks the move, creation, save and close.
+- Create, rename, move and delete use `Document` methods; deleting flushes the editor first and
+  forgets editor state (caret, selection, undo) of every deleted note.
+- Expansion is view state (never dirties); content changes start the autosave countdown, and
+  `Host::logic` re-requests a repaint on every frame while it runs.

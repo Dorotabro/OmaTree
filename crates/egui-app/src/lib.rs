@@ -10,10 +10,15 @@
 //!   the attachment backend (none yet: [`UnavailableStore`]).
 
 mod lifecycle;
+mod ops;
 mod store;
+mod tree;
+mod tree_ui;
 
 pub use lifecycle::{Dialog, AUTOSAVE_DELAY};
+pub use ops::Focus;
 pub use store::UnavailableStore;
+pub use tree::{Row, Tree};
 
 use eframe::egui::{self, Key, Modifiers};
 use omatree_core::document::{Document, DocumentError};
@@ -22,20 +27,13 @@ use omatree_editor::theme::Palette;
 use omatree_editor::{EditorInput, EditorKeys, EditorOutput, EditorView, FocusRequest, NoteKey};
 use std::path::{Path, PathBuf};
 
-/// What the left pane shows for one note.
-pub struct Row {
-    pub id: NodeId,
-    pub depth: usize,
-    pub title: String,
-}
-
 /// Window-independent application state, so tests can drive it frame by frame.
 pub struct Host {
     doc: Option<Document>,
     path: Option<PathBuf>,
     /// Changes whenever a notebook is opened, so state of an earlier notebook can never match.
     notebook: u64,
-    rows: Vec<Row>,
+    tree: Tree,
     selected: Option<NodeId>,
     /// The selected note's Markdown, edited in place by the editor.
     text: String,
@@ -44,7 +42,19 @@ pub struct Host {
     palette: Palette,
     keys: EditorKeys,
     bold: Option<egui::FontFamily>,
-    focus_next: bool,
+    /// Where the keyboard should go on the next frame (a one-shot request).
+    focus: Option<Focus>,
+    focus_tries: u8,
+    /// Where it was when a dialog opened, and where it returns.
+    focus_back: Focus,
+    /// The title field's text and the title it was filled from (pending when they differ).
+    title_text: String,
+    loaded_title: String,
+    scroll_to: Option<NodeId>,
+    /// Open the keyboard context menu on the selected row.
+    menu_request: bool,
+    menu_pos: Option<egui::Pos2>,
+    page_rows: usize,
     status: String,
     error: Option<String>,
     title: String,
@@ -75,7 +85,7 @@ impl Host {
             doc: None,
             path: None,
             notebook: 0,
-            rows: Vec::new(),
+            tree: Tree::default(),
             selected: None,
             text: String::new(),
             view: EditorView::new(),
@@ -83,7 +93,15 @@ impl Host {
             palette: Palette::fallback(),
             keys: EditorKeys::omatree(),
             bold: None,
-            focus_next: false,
+            focus: None,
+            focus_tries: 0,
+            focus_back: Focus::Tree,
+            title_text: String::new(),
+            loaded_title: String::new(),
+            scroll_to: None,
+            menu_request: false,
+            menu_pos: None,
+            page_rows: 10,
             status: String::new(),
             error: None,
             title: String::new(),
@@ -109,8 +127,23 @@ impl Host {
         self.doc.as_ref()
     }
 
+    /// Every note in tree order (visible or not).
     pub fn rows(&self) -> &[Row] {
-        &self.rows
+        self.tree.rows()
+    }
+
+    pub fn tree(&self) -> &Tree {
+        &self.tree
+    }
+
+    /// The title field's current text (what is typed, committed or not).
+    pub fn title_text(&self) -> &str {
+        &self.title_text
+    }
+
+    /// Where the keyboard goes on the next frame, if something asked for it.
+    pub fn pending_focus(&self) -> Option<Focus> {
+        self.focus
     }
 
     pub fn selected(&self) -> Option<NodeId> {
@@ -148,12 +181,16 @@ impl Host {
                 self.path = Some(path.to_path_buf());
                 self.error = None;
                 self.status = format!("Opened {}", file_name(path));
-                self.rebuild_rows();
+                self.tree = self.doc.as_ref().map(Tree::build).unwrap_or_default();
                 self.selected = None;
                 self.text.clear();
-                if let Some(first) = self.rows.first().map(|r| r.id) {
+                self.title_text.clear();
+                self.loaded_title.clear();
+                self.dialog = Dialog::None;
+                if let Some(first) = self.tree.rows().first().map(|r| r.id) {
                     self.load(first);
                 }
+                self.set_focus(Focus::Tree);
                 true
             }
             Err(e) => {
@@ -167,24 +204,9 @@ impl Host {
         }
     }
 
-    fn rebuild_rows(&mut self) {
-        self.rows.clear();
-        let Some(doc) = &self.doc else { return };
-        let mut depth_of = std::collections::HashMap::new();
-        for n in doc.notebook().depth_first() {
-            let depth = n.parent_id().map_or(0, |p| depth_of[&p] + 1);
-            depth_of.insert(n.id(), depth);
-            self.rows.push(Row {
-                id: n.id(),
-                depth,
-                title: n.title().to_owned(),
-            });
-        }
-    }
-
     /// Forget editor state (caret, selection, undo, images) of the notebook being replaced.
     fn forget_all(&mut self, ctx: &egui::Context) {
-        for r in &self.rows {
+        for r in self.tree.rows() {
             self.view.forget_note(ctx, key_of(self.notebook, r.id));
         }
         self.view.forget_images(self.notebook);
@@ -198,7 +220,12 @@ impl Host {
             .map(|n| n.body().to_owned())
             .unwrap_or_default();
         self.selected = Some(id);
-        self.focus_next = true;
+        self.loaded_title = self
+            .tree
+            .row(id)
+            .map(|r| r.title.clone())
+            .unwrap_or_default();
+        self.title_text = self.loaded_title.clone();
     }
 
     /// Finish what the editor still holds for the selected note (a pending image width) and make
@@ -228,14 +255,6 @@ impl Host {
         }
     }
 
-    pub fn select(&mut self, ctx: &egui::Context, id: NodeId) {
-        if self.selected == Some(id) || !self.rows.iter().any(|r| r.id == id) {
-            return;
-        }
-        self.leave(ctx);
-        self.load(id);
-    }
-
     pub fn is_dirty(&self) -> bool {
         self.doc.as_ref().is_some_and(Document::is_dirty)
     }
@@ -250,6 +269,23 @@ impl Host {
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::S)) {
             self.save(ctx);
+        }
+        // Application-wide note commands (as the Qt app's `Shortcut`s): they work from the tree,
+        // the title and the editor alike. Shift variants first: egui ignores an extra Shift.
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::N)) {
+            self.create_child(ctx);
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::N)) {
+            self.create_root(ctx);
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::ALT, Key::ArrowUp)) {
+            self.move_selected(ctx, -1);
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::ALT, Key::ArrowDown)) {
+            self.move_selected(ctx, 1);
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F2)) && self.selected.is_some() {
+            self.set_focus(Focus::Title);
         }
     }
 
@@ -283,33 +319,9 @@ impl Host {
             return;
         }
 
-        let mut clicked = None;
         egui::Panel::left("notes")
-            .default_size(240.0)
-            .show(root, |ui| {
-                let row_h = ui.spacing().interact_size.y;
-                egui::ScrollArea::vertical().auto_shrink(false).show_rows(
-                    ui,
-                    row_h,
-                    self.rows.len(),
-                    |ui, range| {
-                        for r in &self.rows[range] {
-                            ui.horizontal(|ui| {
-                                ui.add_space(r.depth as f32 * 14.0);
-                                if ui
-                                    .selectable_label(self.selected == Some(r.id), &r.title)
-                                    .clicked()
-                                {
-                                    clicked = Some(r.id);
-                                }
-                            });
-                        }
-                    },
-                );
-            });
-        if let Some(id) = clicked {
-            self.select(&ctx, id);
-        }
+            .default_size(260.0)
+            .show(root, |ui| self.tree_pane(ui));
 
         let dirty = self.is_dirty();
         egui::Panel::bottom("status").show(root, |ui| {
@@ -328,18 +340,11 @@ impl Host {
             });
         });
 
-        if let Some(r) = self
-            .selected
-            .and_then(|id| self.rows.iter().find(|r| r.id == id))
-        {
-            egui::Panel::top("note-title").show(root, |ui| {
-                ui.add_space(4.0);
-                ui.label(egui::RichText::new(&r.title).strong().size(18.0));
-                ui.add_space(4.0);
-            });
+        if self.selected.is_some() {
+            egui::Panel::top("note-title").show(root, |ui| self.title_field(ui));
         }
 
-        let focus = if std::mem::take(&mut self.focus_next) {
+        let focus = if self.wants_focus(Focus::Editor) {
             FocusRequest::Request
         } else {
             FocusRequest::None
@@ -349,7 +354,10 @@ impl Host {
         let out = egui::CentralPanel::default()
             .frame(frame)
             .show(root, |ui| {
-                let id = self.selected?;
+                let Some(id) = self.selected else {
+                    ui.weak("Select or create a note");
+                    return None;
+                };
                 Some(self.view.show(
                     ui,
                     EditorInput {
@@ -365,14 +373,25 @@ impl Host {
             })
             .inner;
         if let Some(out) = out {
-            self.after_editor(out);
+            self.after_editor(&ctx, out);
         }
         self.show_dialog(&ctx);
+        if self.edited {
+            // `logic` starts the autosave countdown on the next frame; make sure there is one.
+            ctx.request_repaint();
+        }
     }
 
-    fn after_editor(&mut self, out: EditorOutput) {
+    fn after_editor(&mut self, _ctx: &egui::Context, out: EditorOutput) {
         if out.changed {
             self.sync();
+        }
+        if out.has_focus {
+            self.focus_reached(Focus::Editor);
+        }
+        // Escape in the editor goes back to the selected note in the tree.
+        if out.escape && self.selected.is_some() {
+            self.set_focus(Focus::Tree);
         }
         if let Some(s) = out.status {
             self.status = s;

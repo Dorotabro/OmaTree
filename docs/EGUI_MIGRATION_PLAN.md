@@ -476,6 +476,7 @@ Rules for the whole sequence:
 - Risks: first time the shared `Document` is driven from egui; copy fixture, never the user's real notebook.
 
 **E5: Tree pane parity**
+- **Status:** split into E5a (hierarchy, keyboard, node operations, persisted expansion: **implemented**, see "E5a implementation record") and E5b (drag-and-drop: **not started**).
 - Objective: replace `TreePane.qml`: expand/collapse (persisted via `Document::set_expanded`), selection, keyboard navigation (Up/Down/Left/Right/Ctrl+Left/Right/Enter/F2/Delete/Alt+Up/Down), guide lines, context menu (Shift+F10/Menu key), create root/child, rename (with the existing refusal messages), delete → Trash with the confirmation dialog, move up/down, drag-and-drop with `can_drop`/`drop_node` and drop indicators.
 - Implementation notes: a hand-written flat, virtualised list over `depth_first` + expanded set is recommended; egui has no stock hierarchical tree view with drag-drop and this repo's rules are bespoke. Evaluating third-party tree crates is optional and **unverified** against egui 0.37.
 - Tests: port `expansion`, `moveexpanded`, `newnote`, `titles`, `titleclose`, `keyboard`, `escape` scenarios as Rust tests over the egui host harness.
@@ -690,6 +691,56 @@ Automated only: Discard-then-*Keep editing* by mouse, the Cancel button by mouse
 #### Remaining for E8 and later
 
 Native file dialogs (Open, Save As) and New/untitled notebooks; command-line-less start (an empty window with Open); Open replacing the current notebook with the same unsaved-changes guard; Qt's silent flush-on-close for file-backed notebooks (E4.1 always asks when dirty, as specified); recovery dialogs; theme-aware dialogs (E6) and the keyboard reference (E7); close handling for platform quit paths other than the viewport close (macOS Cmd+Q from the menu, session end); the unsaved-changes dialog when switching or replacing notebooks; a conflict flow beyond Save As (reload from disk). Dependency: the editor pin must be bumped by hand for editor changes (above).
+
+### E5a implementation record (hierarchical tree and keyboard)
+
+**Status: implemented and verified on `egui-integration` (not committed).** Drag-and-drop (E5b), Search, the Recovery dialog and the keyboard-shortcut reference are not part of it.
+
+**Structure** (`crates/egui-app/src/`): `tree.rs` (the note tree as the shell shows it: every note in depth-first order with depth, parent, has-children, last-sibling and guide bits, plus the list of *visible* rows; rebuilt from `Document` only on a structure or title change, the visible list only when that or the expanded set changes), `ops.rs` (selection, expansion, create, rename, move, delete), `tree_ui.rs` (hand-painted, virtualised rows; keys; context menu; the editable title), `lifecycle.rs` (two new dialogs: Move to Trash, and an error message), `lib.rs`. No core change beyond E4's `depth_first` visibility. A frame never walks the notebook: only the rows in the viewport are touched (an idle frame with 6,300 notes, all open, measured 0.12 ms headless in release).
+
+**What `Document` still owns.** Hierarchy, titles, bodies, the expanded set (`is_expanded`, `set_expanded`, `set_subtree_expanded`, `set_all_expanded`, `expand_ancestors`), Trash and checkpoints (`delete`, `move_node`), and the dirty rules. The host calls `create_default_root/child`, `rename`, `move_node`, `delete`; it never edits the hierarchy itself. The tree rows are a derived cache.
+
+**Behaviour (parity reference: `TreePane.qml`, `main.qml`, the QML scenarios, and the running Qt app for keys the QML does not define).**
+
+| Key / action | egui | Qt parity |
+|---|---|---|
+| Up / Down | previous / next *visible* row, no wrap; tree keeps the keyboard | same (verified in the Qt app) |
+| Left / Right | collapse an open branch / open a closed one; otherwise nothing (Left does not move to the parent, Right does not descend) | same (verified in the Qt app) |
+| Ctrl+Right / Ctrl+Left | open / close the whole subtree | same |
+| PageUp / PageDown | by a page of rows, stopping at the ends | same effect (Qt's page size differs slightly) |
+| Home / End | not handled | same (the Qt TreeView did nothing) |
+| Enter | focus the body | same |
+| Escape | nothing in the tree; from the title or body: commit (title) and back to the tree | same |
+| F2 | focus the title with all of it selected | same |
+| Delete | ask "Move to Trash?" (No is the default; Escape cancels) | same |
+| Ctrl+N / Ctrl+Shift+N | new top-level note / child of the current one, title focused and selected; refused while a pending title is invalid | same |
+| Alt+Up / Alt+Down | one place among siblings, selection kept, open state travels with the note | same (works from tree, title and body) |
+| Shift+F10 | context menu under the current row | same; the Menu key is **not available**: egui 0.37 has no key for it |
+| Context menu (right-click, selects the row first; empty space: tree-wide entries) | New note, New child, Expand/Collapse subtree, Expand/Collapse all, Move to Trash | same entries; keys inside the menu are **Tab / Shift+Tab and Enter** (arrow keys do not navigate egui menus) |
+| Click row / marker | select / also toggle (Ctrl+click on the marker: subtree) | same; a double click does not toggle |
+
+Tree keys act only while the tree has the keyboard (checked by tests: Down, Delete, Left, Ctrl+Right in the editor or the title never touch the tree). The application-wide commands (Ctrl+N, Ctrl+Shift+N, F2, Alt+Up/Down, Ctrl+S, Ctrl+Shift+S) work from anywhere and stand down while a dialog is open.
+
+**Title editing.** The title above the note is a text field, written to the notebook only when committed: Enter (then on to the body), Escape (then back to the tree), leaving the field, or any action that leaves the note (select, create, save, Save As, close). A refused title (empty: "A note needs a name."; a sibling already has it: `A note named "X" already exists here.`, the Qt wording) shows an OK dialog, keeps the typed text, blocks the selection change / creation / save / close, and returns the keyboard to the field.
+
+**Selection and focus.** Selecting by click, key or creation reveals the note (its ancestors open, remembered by the document); the selected row scrolls into view. The tree has the keyboard on open and after a delete; Enter goes to the editor, a new note or F2 to the title. A dialog returns the keyboard to where it was.
+
+**Collapse and selection.** When a collapse hides the selected note, the nearest visible ancestor becomes current (as `keepSelectionVisible`), after the pending title has been committed; if that commit is refused the collapse does not happen.
+
+**Delete.** The editor buffer is flushed first (Trash holds the latest text); a title typed for the note is dropped; `Document::delete` takes the checkpoint and the Trash entry; caret, selection and undo of **every** deleted note are forgotten (`forget_note`), so no undo step can reach another note. Afterwards the parent is selected as in Qt; **intentional difference:** for a top-level note, where Qt selects nothing, the next (else previous) top-level note is selected.
+
+**Dirty and persistence.** Expansion is view state (`!is_dirty()`; written by any save, including Ctrl+S on a clean notebook). Create, rename, move and delete are content changes and start the 1 s autosave countdown (a move or delete also marks the recovery state, so the next save is the full one). **Intentional difference:** a *clean* close also writes pending expansion (best effort; a failure does not keep the window open) so the open/closed state is not lost; the Qt app drops it unless some save happens.
+
+**Fixed along the way (an E4.1 gap).** Autosave fired only while something else (typing, caret blink) caused frames: eframe replaces the previous repaint request with each frame's, so with the tree focused the countdown never ended. `Host::logic` now re-requests the wake-up on every frame while the countdown runs (test and GUI-verified: a rename followed by idling autosaves).
+
+**Verification.** `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass; `cargo test --workspace`: Qt 42 (includes the 24 QML scenarios), core 253 + 1 ignored, egui-app 61 + 3 ignored (the 34 earlier tests unchanged except that the harness focuses the editor after a selection, because the tree now keeps the keyboard); `cargo build --release --workspace` passes. 27 new tests (`tests/tree_tests.rs`): hierarchy rows and guide bits; expansion scenario of `expansion.qml`; persistence across Ctrl+S and reopen; expansion never autosaves and a clean close keeps it; Up/Down incl. hidden descendants and no wrap; Left/Right/Ctrl+arrows; hidden-selection to ancestor; reveal on select; Enter/Escape focus; tree keys not firing while typing (editor and title); PageUp/PageDown; Ctrl+N and Ctrl+Shift+N; F2 and every way a title commits; refused titles (conflict, empty) blocking selection, creation and close with the Qt messages; pending title in save and close; Alt+Up/Down incl. boundaries, checkpoints and persistence; delete asks first (Escape, No, Enter decline), child, subtree, top-level neighbour selection, flush before delete, editor state forgotten, Ctrl+Z after delete; Ctrl+Z isolation across keyboard note switches; keyboard context menu is actually drawn and Escape closes it; autosave after structure edits; a 6,300-note tree; the wake-up request. Mutation checks: removing the per-frame repaint request fails its test.
+
+*GUI (native Wayland, release binaries, `wtype`/`ydotool`, `grim`; nested fixture A(A1(A1a(Leaf)),A2), B(B1), C):* Qt keyboard behaviour probed first in the running Qt app (Right, Left, Down, PageUp, Home); egui: keyboard-only expansion (Right, Ctrl+Right), Down through nested rows, Left on a leaf (no-op), Ctrl+Left; guides and bold selected row; mouse: marker click (expands and selects B), row click, right-click menu (selects, correct entries); Shift+F10 menu under the row, Escape closes, Tab+Enter runs an item; Ctrl+N (title selected, typed name, Enter moves to the body); Ctrl+Shift+N child; refused rename (`A2`) with the error dialog, OK returns to the title, corrected name accepted; Alt+Up moved the note; Delete dialog (No default, Tab to Yes), parent selected, tree focused; save with Ctrl+S, native close, reopen: hierarchy and expansion intact, `expanded_nodes` rows as expected; the same file in the Qt release app: identical hierarchy and expansion, file left byte-identical; editing two notes with Escape/Down/Enter and Ctrl+Z undoing only the note shown (the other note's text kept); F2 title edit committed by clicking another row; idle autosave after a rename (status "Autosaved"); E4.1 features re-checked on this build: dirty close shows Save/Discard/Cancel, Ctrl+Shift+S opens Save As, autosave of typing.
+**Not GUI-tested:** drag-and-drop (not implemented); PageUp/PageDown, Alt+Down/Up *at the boundaries* and rename-by-blur with the mouse (automated only); the context menu *Expand all / Collapse all / Move to Trash* items by mouse (automated through the same commands); a notebook with thousands of notes in the real window (headless only); X11, macOS, Windows, IME.
+
+**Differences from Qt, all deliberate or forced by egui 0.37:** no Menu key (Shift+F10 only); menu navigation by Tab rather than arrows; top-level delete selects a neighbour; clean close persists expansion; no Edit/Preview mode (D4), so Enter simply focuses the editor; no `+ delete`/`edit`/`preview` header buttons; no search field or Recovery entry in the footer yet (E7); double-click does not toggle; the tree shows the title in the note's header as an editable field (as Qt) but there is no pointer-hover reveal.
+
+**Remaining for E5b:** drag-and-drop with `can_drop` / drop indicators (before / after / child / end, refused-drop outline), auto-expand and scroll while dragging, selection and reveal after a drop, the `moveexpanded.qml` cross-parent scenario through the pointer, and its GUI verification. Other follow-ups: arrow-key navigation inside the context menu if egui gains it; the Menu key if egui adds `Key::ContextMenu`.
 
 ### Recommendation: first ticket
 
