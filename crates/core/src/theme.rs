@@ -43,6 +43,10 @@ impl Rgb {
 /// The semantic roles every OmaTree-owned UI element draws from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Palette {
+    /// Whether this is a dark palette: the theme's explicit `mode` when it has one, otherwise
+    /// the brightness of its background. Toolkits that need to pick a base style (egui's
+    /// light/dark visuals) read this rather than guessing from colours.
+    pub dark: bool,
     pub background: Rgb,
     pub surface: Rgb,
     pub surface_raised: Rgb,
@@ -67,6 +71,7 @@ impl Palette {
     /// OmaTree Dark. The only place these values are written down, together
     /// with `LIGHT`.
     pub const DARK: Palette = Palette {
+        dark: true,
         background: Rgb::hex(0x252A33),
         surface: Rgb::hex(0x2D3440),
         surface_raised: Rgb::hex(0x37404D),
@@ -85,6 +90,7 @@ impl Palette {
 
     /// OmaTree Light.
     pub const LIGHT: Palette = Palette {
+        dark: false,
         background: Rgb::hex(0xF2F4F7),
         surface: Rgb::hex(0xE7EBF0),
         surface_raised: Rgb::hex(0xDCE2E8),
@@ -241,6 +247,7 @@ pub fn parse_omarchy(text: &str) -> Result<Palette, OmarchyError> {
         .find_map(|k| lookup(k));
 
     Ok(Palette {
+        dark,
         background,
         foreground,
         surface: pick(&["dark_background", "darker_background"], base.surface),
@@ -693,6 +700,28 @@ mod tests {
     }
 
     // ---- provider selection ----
+
+    #[test]
+    fn the_palette_records_whether_it_is_dark_with_the_explicit_mode_first() {
+        assert_eq!((Palette::DARK.dark, Palette::LIGHT.dark), (true, false));
+        let with = |mode: &str, background: &str| {
+            parse_omarchy(&format!(
+                "mode = \"{mode}\"\nbackground = \"{background}\"\nforeground = \"#808080\"\n"
+            ))
+            .unwrap()
+        };
+        // An explicit mode beats the brightness of the background, in both directions.
+        assert!(!with("light", "#303030").dark);
+        assert!(with("dark", "#f0f0f0").dark);
+        // Without a (usable) mode the background decides.
+        let bare = |background: &str| {
+            parse_omarchy(&format!(
+                "background = \"{background}\"\nforeground = \"#808080\"\n"
+            ))
+            .unwrap()
+        };
+        assert!(bare("#101010").dark && !bare("#f0f0f0").dark);
+    }
 
     #[test]
     fn a_valid_omarchy_palette_beats_the_system_scheme() {

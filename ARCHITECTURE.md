@@ -249,3 +249,10 @@ The standalone editor keeps a runnable demo binary built on the same library.
   forgets editor state (caret, selection, undo) of every deleted note.
 - Expansion is view state (never dirties); content changes start the autosave countdown, and
   `Host::logic` re-requests a repaint on every frame while it runs.
+
+## Theme pipeline (E6a)
+
+`omatree_core::theme` is the only authority on colours (Omarchy discovery, parsing, confirmation,
+fallbacks). The egui host's `theme.rs` translates the resulting `Palette` into egui visuals and
+the editor's palette, once per change; the editor never reads files or the environment, and the
+host never watches a second source. See `docs/EGUI_MIGRATION_PLAN.md`, "E6a implementation record".

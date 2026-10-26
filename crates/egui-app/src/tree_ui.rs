@@ -91,12 +91,15 @@ impl Host {
         let ctx = ui.ctx().clone();
         let tree_id = Host::tree_id();
         let n = self.tree.len_visible();
-        let visuals = ui.visuals().clone();
-        let text_color = visuals.text_color();
-        let muted = visuals.weak_text_color();
-        let accent = visuals.hyperlink_color;
-        let guide = visuals.widgets.noninteractive.bg_stroke.color;
-        let selection = visuals.selection.bg_fill;
+        // Every colour here is a semantic role of the one palette (see `theme.rs`).
+        let pal = *self.theme.palette();
+        let text_color = theme::colour(pal.foreground);
+        let muted = theme::colour(pal.muted_foreground);
+        let accent = theme::colour(pal.accent);
+        let guide = theme::colour(pal.border);
+        let selection = theme::colour(pal.selection);
+        let hover_fill = theme::colour(pal.surface_raised);
+        let danger = theme::colour(pal.danger);
         let has_focus = ctx.memory(|m| m.has_focus(tree_id));
         let font = FontId::proportional(14.5);
         let bold = self.bold.clone().map(|f| FontId::new(14.5, f));
@@ -214,7 +217,7 @@ impl Host {
                             bar,
                         );
                     } else if resp.hovered() {
-                        painter.rect_filled(rect, 0.0, with_alpha(visuals.faint_bg_color, 0.8));
+                        painter.rect_filled(rect, 0.0, with_alpha(hover_fill, 0.8));
                     }
 
                     // Guides: continuing ancestor lines, then this note's elbow.
@@ -363,7 +366,6 @@ impl Host {
                             egui::StrokeKind::Inside,
                         );
                     };
-                    let danger = visuals.error_fg_color;
                     match (t.verdict, t.kind) {
                         // Nothing would change: nothing is shown.
                         (Verdict::NoOp, _) => {}

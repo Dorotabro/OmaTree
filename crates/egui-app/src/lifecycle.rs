@@ -72,6 +72,7 @@ impl Host {
 
     /// Per-frame work that must also run while the window is hidden: close requests and autosave.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        self.theme.update(ctx);
         let now = ctx.input(|i| i.time);
         if std::mem::take(&mut self.edited) {
             self.autosave_due = Some(now + AUTOSAVE_DELAY);
@@ -505,8 +506,14 @@ impl Host {
                         if no.clicked() {
                             answer = Answer::Cancel;
                         }
+                        // The destructive answer: the palette's danger fill and its foreground.
+                        let danger = theme::colour(self.theme.palette().danger);
+                        let on_danger = theme::colour(self.theme.palette().danger_foreground);
                         if ui
-                            .button(egui::RichText::new("Yes").color(ui.visuals().error_fg_color))
+                            .add(
+                                egui::Button::new(egui::RichText::new("Yes").color(on_danger))
+                                    .fill(danger),
+                            )
                             .clicked()
                         {
                             answer = Answer::Delete(id);

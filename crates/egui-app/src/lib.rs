@@ -13,6 +13,7 @@ mod drag;
 mod lifecycle;
 mod ops;
 mod store;
+mod theme;
 mod tree;
 mod tree_ui;
 
@@ -27,6 +28,7 @@ use omatree_core::notebook::NodeId;
 use omatree_editor::theme::Palette;
 use omatree_editor::{EditorInput, EditorKeys, EditorOutput, EditorView, FocusRequest, NoteKey};
 use std::path::{Path, PathBuf};
+use theme::ThemeState;
 
 /// Window-independent application state, so tests can drive it frame by frame.
 pub struct Host {
@@ -40,7 +42,8 @@ pub struct Host {
     text: String,
     view: EditorView,
     store: UnavailableStore,
-    palette: Palette,
+    /// The one theme pipeline: core palette -> egui visuals and the editor's palette.
+    theme: ThemeState,
     keys: EditorKeys,
     bold: Option<egui::FontFamily>,
     /// Where the keyboard should go on the next frame (a one-shot request).
@@ -95,7 +98,7 @@ impl Host {
             text: String::new(),
             view: EditorView::new(),
             store: UnavailableStore,
-            palette: Palette::fallback(),
+            theme: ThemeState::new(None),
             keys: EditorKeys::omatree(),
             bold: None,
             focus: None,
@@ -126,8 +129,30 @@ impl Host {
         self.bold = bold;
     }
 
+    /// The palette the editor is given (derived from the core palette).
     pub fn palette(&self) -> &Palette {
-        &self.palette
+        self.theme.editor()
+    }
+
+    /// The semantic palette everything is drawn from.
+    pub fn theme_palette(&self) -> &omatree_core::theme::Palette {
+        self.theme.palette()
+    }
+
+    /// How many times a palette has been installed into egui.
+    pub fn theme_applications(&self) -> u64 {
+        self.theme.applications()
+    }
+
+    /// Whether a valid Omarchy palette is in use (rather than the built-in ones).
+    pub fn using_omarchy(&self) -> bool {
+        self.theme.using_omarchy()
+    }
+
+    /// Follow this Omarchy colours file (or none) instead of the built-in palettes only. A host
+    /// does this once at start-up with `omatree_core::theme::default_omarchy_colors_path()`.
+    pub fn follow_omarchy(&mut self, path: Option<PathBuf>) {
+        self.theme = ThemeState::new(path);
     }
 
     pub fn document(&self) -> Option<&Document> {
@@ -326,26 +351,34 @@ impl Host {
             return;
         }
 
+        let surface_fill = theme::colour(self.theme.palette().surface);
+        let surface = |ctx: &egui::Context| {
+            egui::Frame::side_top_panel(&ctx.global_style()).fill(surface_fill)
+        };
         egui::Panel::left("notes")
             .default_size(260.0)
+            .frame(surface(&ctx))
             .show(root, |ui| self.tree_pane(ui));
 
         let dirty = self.is_dirty();
-        egui::Panel::bottom("status").show(root, |ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.weak("Images are not supported yet");
-                ui.weak(if dirty && self.autosave_error.is_some() {
-                    "Unsaved changes (autosave stopped)"
-                } else if dirty {
-                    "Unsaved changes"
-                } else {
-                    "No unsaved changes"
-                });
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.add(egui::Label::new(&self.status).truncate());
+        let status_frame = surface(&ctx);
+        egui::Panel::bottom("status")
+            .frame(status_frame)
+            .show(root, |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.weak("Images are not supported yet");
+                    ui.weak(if dirty && self.autosave_error.is_some() {
+                        "Unsaved changes (autosave stopped)"
+                    } else if dirty {
+                        "Unsaved changes"
+                    } else {
+                        "No unsaved changes"
+                    });
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add(egui::Label::new(&self.status).truncate());
+                    });
                 });
             });
-        });
 
         if self.selected.is_some() {
             egui::Panel::top("note-title").show(root, |ui| self.title_field(ui));
@@ -371,7 +404,7 @@ impl Host {
                         key: key_of(self.notebook, id),
                         text: &mut self.text,
                         attachments: &self.store,
-                        palette: &self.palette,
+                        palette: self.theme.editor(),
                         keys: &self.keys,
                         bold: self.bold.as_ref(),
                         focus,
@@ -422,7 +455,8 @@ impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, path: Option<PathBuf>) -> Self {
         let mut host = Host::new();
         host.set_bold(omatree_editor::fonts::install_bold(&cc.egui_ctx));
-        host.palette().apply(&cc.egui_ctx);
+        host.follow_omarchy(omatree_core::theme::default_omarchy_colors_path());
+        host.theme.update(&cc.egui_ctx);
         match path {
             Some(p) => {
                 if !host.open(&cc.egui_ctx, &p) {

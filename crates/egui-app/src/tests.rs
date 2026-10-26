@@ -69,6 +69,8 @@ struct H {
     closed: bool,
     /// The repaint delay the last frame asked for (an idle app asks for none).
     repaint: std::time::Duration,
+    /// What the operating system says its colour scheme is (none: not reported).
+    system: Option<egui::Theme>,
 }
 
 impl H {
@@ -80,6 +82,7 @@ impl H {
             reinject_close: false,
             closed: false,
             repaint: std::time::Duration::MAX,
+            system: None,
         };
         assert!(h.host.open(&h.ctx.clone(), path), "{}", h.host.status());
         // The app starts with the tree focused; most tests type, so they start in the editor.
@@ -107,6 +110,7 @@ impl H {
             events,
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 700.0))),
             focused: true,
+            system_theme: self.system,
             ..Default::default()
         };
         if close {
@@ -491,6 +495,7 @@ fn missing_invalid_and_unsupported_files_are_refused_clearly_and_never_modified(
         reinject_close: false,
         closed: false,
         repaint: std::time::Duration::MAX,
+        system: None,
     };
     h.settle();
 }
@@ -782,4 +787,5 @@ fn timings() {
 mod lifecycle_tests;
 
 mod drag_tests;
+mod theme_tests;
 mod tree_tests;
