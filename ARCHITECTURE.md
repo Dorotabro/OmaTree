@@ -256,3 +256,11 @@ The standalone editor keeps a runnable demo binary built on the same library.
 fallbacks). The egui host's `theme.rs` translates the resulting `Palette` into egui visuals and
 the editor's palette, once per change; the editor never reads files or the environment, and the
 host never watches a second source. See `docs/EGUI_MIGRATION_PLAN.md`, "E6a implementation record".
+
+## Chrome spacing and derived colours (E6b)
+
+The egui host's measurements live in one file, `crates/egui-app/src/layout.rs` (the shared 16-point
+axis that equals the editor's own document padding, bar and row heights, pane limits). Presentation
+colours that are not a palette role as such (selected/hover fills, guides, a label that reads on the
+danger fill, text pulled to a legibility floor) are derived once per palette change by
+`theme::Chrome` from the E6a palette; nothing in the host holds a theme-specific colour.

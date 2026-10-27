@@ -10,6 +10,7 @@
 //!   the attachment backend (none yet: [`UnavailableStore`]).
 
 mod drag;
+mod layout;
 mod lifecycle;
 mod ops;
 mod store;
@@ -54,6 +55,13 @@ pub struct Host {
     /// The title field's text and the title it was filled from (pending when they differ).
     title_text: String,
     loaded_title: String,
+    /// Why the pending title was refused, shown beside the field until it is edited or accepted.
+    title_error: Option<String>,
+    /// The open note's Markdown mentions an image (`![`); only then is the image notice shown.
+    note_has_image: bool,
+    /// What the status bar last showed and since when, so ordinary feedback can fade away.
+    status_seen: (String, bool),
+    status_since: f64,
     scroll_to: Option<NodeId>,
     /// Open the keyboard context menu on the selected row.
     menu_request: bool,
@@ -106,6 +114,10 @@ impl Host {
             focus_back: Focus::Tree,
             title_text: String::new(),
             loaded_title: String::new(),
+            title_error: None,
+            note_has_image: false,
+            status_seen: (String::new(), false),
+            status_since: 0.0,
             scroll_to: None,
             menu_request: false,
             menu_pos: None,
@@ -258,6 +270,8 @@ impl Host {
             .map(|r| r.title.clone())
             .unwrap_or_default();
         self.title_text = self.loaded_title.clone();
+        self.title_error = None;
+        self.note_has_image = self.text.contains("![");
     }
 
     /// Finish what the editor still holds for the selected note (a pending image width) and make
@@ -351,37 +365,34 @@ impl Host {
             return;
         }
 
+        let ch = *self.theme.chrome();
         let surface_fill = theme::colour(self.theme.palette().surface);
-        let surface = |ctx: &egui::Context| {
-            egui::Frame::side_top_panel(&ctx.global_style()).fill(surface_fill)
-        };
+        // The tree pane has no inset: its rows run edge to edge, so the selection band does too.
+        let window = ctx.content_rect().width();
+        let max_tree = (window * layout::TREE_MAX_SHARE).max(layout::TREE_MIN);
+        let start =
+            (window * layout::TREE_START_SHARE).clamp(layout::TREE_MIN, layout::TREE_DEFAULT);
         egui::Panel::left("notes")
-            .default_size(260.0)
-            .frame(surface(&ctx))
+            .default_size(start)
+            .size_range(layout::TREE_MIN..=max_tree)
+            .frame(egui::Frame::NONE.fill(surface_fill))
             .show(root, |ui| self.tree_pane(ui));
 
-        let dirty = self.is_dirty();
-        let status_frame = surface(&ctx);
+        let bar = egui::Frame::NONE
+            .inner_margin(egui::Margin::symmetric(layout::GUTTER as i8, 0))
+            .fill(surface_fill);
         egui::Panel::bottom("status")
-            .frame(status_frame)
-            .show(root, |ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.weak("Images are not supported yet");
-                    ui.weak(if dirty && self.autosave_error.is_some() {
-                        "Unsaved changes (autosave stopped)"
-                    } else if dirty {
-                        "Unsaved changes"
-                    } else {
-                        "No unsaved changes"
-                    });
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.add(egui::Label::new(&self.status).truncate());
-                    });
-                });
-            });
+            .frame(bar)
+            .exact_size(layout::BAR_H)
+            .show_separator_line(false)
+            .show(root, |ui| self.status_bar(ui, &ch));
 
         if self.selected.is_some() {
-            egui::Panel::top("note-title").show(root, |ui| self.title_field(ui));
+            let frame = egui::Frame::NONE.fill(ctx.global_style().visuals.panel_fill);
+            egui::Panel::top("note-title")
+                .frame(frame)
+                .show_separator_line(false)
+                .show(root, |ui| self.title_field(ui));
         }
 
         let focus = if self.wants_focus(Focus::Editor) {
@@ -422,9 +433,111 @@ impl Host {
         }
     }
 
+    /// Whether the status message reports something that went wrong.
+    fn status_is_problem(&self) -> bool {
+        let s = self.status.as_str();
+        let is = |m: Option<&str>| m == Some(s);
+        is(self.autosave_error.as_deref())
+            || is(self.title_error.as_deref())
+            || is(self.error.as_deref())
+            || matches!(&self.dialog, Dialog::SaveAs { error: Some(e), .. } if e == s)
+            || s.starts_with("Could not")
+            || s.starts_with("Not opened")
+            || s.contains(" failed")
+    }
+
+    /// The bottom bar: what just happened on the left (one or two lines, the whole text in a
+    /// tooltip), the document's state on the right. A clean document says nothing; the image
+    /// notice appears only for a note that mentions an image, and only where there is room.
+    fn status_bar(&mut self, ui: &mut egui::Ui, ch: &theme::Chrome) {
+        tree_ui::paint_hairline(ui, ch.hairline, layout::GUTTER);
+        let dirty = self.is_dirty();
+        let stopped = dirty && self.autosave_error.is_some();
+        // A refused title is already shown beside the field; do not say it twice.
+        let echo = self.title_error.as_deref() == Some(self.status.as_str())
+            && self.title_text.trim() != self.loaded_title;
+        let problem = self.status_is_problem();
+        // Feedback about an action is about the moment: it fades after a few seconds (longer for
+        // a failure). A change of message or of the document's saved state starts the clock again.
+        let now = ui.input(|i| i.time);
+        if self.status_seen.0 != self.status || self.status_seen.1 != dirty {
+            self.status_seen.0.clone_from(&self.status);
+            self.status_seen.1 = dirty;
+            self.status_since = now;
+        }
+        let ttl = if problem {
+            layout::PROBLEM_SECS
+        } else {
+            layout::FEEDBACK_SECS
+        };
+        let fresh = now - self.status_since < ttl;
+        if fresh && !self.status.is_empty() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs_f64(
+                    (ttl - (now - self.status_since)).max(0.0) + 0.05,
+                ));
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if dirty {
+                let (text, colour) = if stopped {
+                    ("\u{25cf} Autosave stopped", ch.danger_text)
+                } else {
+                    ("\u{25cf} Unsaved changes", ch.warning_text)
+                };
+                let label = ui.label(egui::RichText::new(text).size(12.5).color(colour));
+                if stopped {
+                    if let Some(e) = &self.autosave_error {
+                        label.on_hover_text(e);
+                    }
+                }
+            }
+            if self.note_has_image && ui.available_width() > 420.0 {
+                ui.label(
+                    egui::RichText::new("Images are not supported yet")
+                        .size(12.5)
+                        .color(ch.muted),
+                );
+            }
+            if echo || !fresh || self.status.is_empty() {
+                return;
+            }
+            // The message takes what the right-hand state leaves, wrapped by hand: one or two
+            // lines, cut with an ellipsis, centred in the bar.
+            let (rect, r) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width().max(10.0), layout::BAR_H),
+                egui::Sense::hover(),
+            );
+            let colour = if problem {
+                ch.danger_text
+            } else {
+                ch.secondary
+            };
+            let mut job = egui::text::LayoutJob::single_section(
+                self.status.clone(),
+                egui::TextFormat::simple(egui::FontId::proportional(12.5), colour),
+            );
+            job.wrap = egui::text::TextWrapping {
+                max_width: rect.width(),
+                max_rows: 2,
+                break_anywhere: true,
+                overflow_character: Some('\u{2026}'),
+            };
+            let painter = ui.painter_at(rect);
+            let galley = painter.layout_job(job);
+            let at = egui::pos2(rect.left(), rect.center().y - galley.size().y / 2.0);
+            let cut = galley.elided;
+            painter.galley(at, galley, colour);
+            // The whole text for anything that did not fit.
+            if cut {
+                r.on_hover_text(&self.status);
+            }
+        });
+    }
+
     fn after_editor(&mut self, _ctx: &egui::Context, out: EditorOutput) {
         if out.changed {
             self.sync();
+            self.note_has_image = self.text.contains("![");
         }
         if out.has_focus {
             self.focus_reached(Focus::Editor);

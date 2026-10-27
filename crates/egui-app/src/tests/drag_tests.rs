@@ -5,11 +5,11 @@
 
 use super::drag::{Kind, Target, Verdict};
 use super::tree_tests::{deep, make_deep, shape};
-use super::tree_ui::ROW_H;
 use super::*;
+use crate::layout::ROW_H;
 use std::time::Duration;
 
-fn button(pos: Pos2, pressed: bool) -> Event {
+pub(super) fn button(pos: Pos2, pressed: bool) -> Event {
     Event::PointerButton {
         pos,
         button: egui::PointerButton::Primary,
@@ -19,13 +19,13 @@ fn button(pos: Pos2, pressed: bool) -> Event {
 }
 
 impl H {
-    fn expand_all(&mut self) {
+    pub(super) fn expand_all(&mut self) {
         self.host.set_all_expanded(&self.ctx.clone(), true);
         self.settle();
     }
 
     /// The pointer position over visible row `title`, at `frac` of its height.
-    fn at(&self, title: &str, frac: f32) -> Pos2 {
+    pub(super) fn at(&self, title: &str, frac: f32) -> Pos2 {
         let (origin, _) = self.host.tree_geom;
         let row = self
             .host
@@ -35,18 +35,18 @@ impl H {
         Pos2::new(origin.x + 80.0, origin.y + (row as f32 + frac) * ROW_H)
     }
 
-    fn moved(&mut self, to: Pos2) {
+    pub(super) fn moved(&mut self, to: Pos2) {
         self.frame(vec![Event::PointerMoved(to)], Modifiers::NONE);
     }
 
-    fn press_at(&mut self, p: Pos2) {
+    pub(super) fn press_at(&mut self, p: Pos2) {
         self.frame(
             vec![Event::PointerMoved(p), button(p, true)],
             Modifiers::NONE,
         );
     }
 
-    fn release_at(&mut self, p: Pos2) {
+    pub(super) fn release_at(&mut self, p: Pos2) {
         self.frame(
             vec![Event::PointerMoved(p), button(p, false)],
             Modifiers::NONE,
@@ -55,7 +55,7 @@ impl H {
     }
 
     /// Press on `title` and move to `to` in a few steps, button still down.
-    fn pick_up(&mut self, title: &str, to: Pos2) {
+    pub(super) fn pick_up(&mut self, title: &str, to: Pos2) {
         let from = self.at(title, 0.5);
         self.moved(from);
         self.press_at(from);
@@ -68,32 +68,32 @@ impl H {
     }
 
     /// A whole drag and drop.
-    fn drag(&mut self, title: &str, to: Pos2) {
+    pub(super) fn drag(&mut self, title: &str, to: Pos2) {
         self.pick_up(title, to);
         self.release_at(to);
     }
 
-    fn target(&self) -> Option<Target> {
+    pub(super) fn target(&self) -> Option<Target> {
         self.host.drag.as_ref().and_then(|d| d.target)
     }
 
-    fn shape(&self) -> String {
+    pub(super) fn shape(&self) -> String {
         shape(self.host.document().unwrap())
     }
 
-    fn dirty(&self) -> bool {
+    pub(super) fn dirty(&self) -> bool {
         self.host.is_dirty()
     }
 }
 
-fn open_deep(name: &str) -> (PathBuf, PathBuf, H) {
+pub(super) fn open_deep(name: &str) -> (PathBuf, PathBuf, H) {
     let (d, p) = deep(name);
     let mut h = H::open_tree(&p);
     h.expand_all();
     (d, p, h)
 }
 
-const ALL: &str = "A(A1(A1a(Leaf)),A2)|B(B1)|C";
+pub(super) const ALL: &str = "A(A1(A1a(Leaf)),A2)|B(B1)|C";
 
 // --- Starting a drag -------------------------------------------------------------------------
 

@@ -9,9 +9,10 @@ use super::drag::{self, Drag, Kind, Target, Verdict};
 use super::*;
 use egui::{Color32, FontId, Key, Pos2, Rect, Sense, Shape, Stroke, Vec2};
 
-pub(crate) const ROW_H: f32 = 26.0;
-const INDENT: f32 = 16.0;
-const LEFT: f32 = 8.0;
+use super::layout::{
+    BAR_H, GUTTER, INDENT, PAD, ROW_H, TITLE_NOTE_H, TITLE_PX, TITLE_TOP, TREE_LEFT as LEFT,
+    TREE_TOP,
+};
 /// A pointer resting this long on a collapsed note while dragging opens it.
 const HOVER_OPEN: f64 = 0.6;
 /// Dragging within this distance of the top or bottom of the tree scrolls it, up to `SCROLL_MAX`.
@@ -51,37 +52,45 @@ impl Host {
         let ctx = ui.ctx().clone();
         let mut cmds: Vec<Cmd> = Vec::new();
 
-        // The command strip: quiet, fixed commands (as the Qt footer).
-        egui::Panel::bottom("tree-footer").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                if ui
-                    .small_button("+ note")
-                    .on_hover_text("New note   Ctrl+N")
-                    .clicked()
-                {
-                    cmds.push(Cmd::NewRoot);
-                }
-                let child = ui
-                    .add_enabled(
-                        self.selected.is_some(),
-                        egui::Button::new("+ child").small(),
-                    )
-                    .on_hover_text("New child note   Ctrl+Shift+N");
-                if child.clicked() {
-                    cmds.push(Cmd::NewChild);
-                }
+        // The command strip: quiet, fixed commands (as the Qt footer). Flat text actions that only
+        // show a fill under the pointer or the keyboard, on the same bar height as the status bar.
+        let chrome = *self.theme.chrome();
+        let bar = egui::Frame::NONE
+            .inner_margin(egui::Margin::symmetric(PAD as i8 - 2, 0))
+            .fill(theme::colour(self.theme.palette().surface));
+        egui::Panel::bottom("tree-footer")
+            .frame(bar)
+            .exact_size(BAR_H)
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                paint_hairline(ui, chrome.hairline, PAD - 2.0);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    if flat_action(ui, "+ note", true, &chrome)
+                        .on_hover_text("New note   Ctrl+N")
+                        .clicked()
+                    {
+                        cmds.push(Cmd::NewRoot);
+                    }
+                    if flat_action(ui, "+ child", self.selected.is_some(), &chrome)
+                        .on_hover_text("New child note   Ctrl+Shift+N")
+                        .clicked()
+                    {
+                        cmds.push(Cmd::NewChild);
+                    }
+                });
             });
-        });
 
         if self.tree.rows().is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(24.0);
                 ui.weak("No notes yet");
-                if ui.small_button("+ create the first note").clicked() {
+                if flat_action(ui, "+ create the first note", true, &chrome).clicked() {
                     cmds.push(Cmd::NewRoot);
                 }
             });
         } else {
+            ui.add_space(TREE_TOP);
             self.tree_rows(ui, &mut cmds);
         }
         self.apply(&ctx, cmds);
@@ -91,15 +100,10 @@ impl Host {
         let ctx = ui.ctx().clone();
         let tree_id = Host::tree_id();
         let n = self.tree.len_visible();
-        // Every colour here is a semantic role of the one palette (see `theme.rs`).
-        let pal = *self.theme.palette();
-        let text_color = theme::colour(pal.foreground);
-        let muted = theme::colour(pal.muted_foreground);
-        let accent = theme::colour(pal.accent);
-        let guide = theme::colour(pal.border);
-        let selection = theme::colour(pal.selection);
-        let hover_fill = theme::colour(pal.surface_raised);
-        let danger = theme::colour(pal.danger);
+        // Every colour here is derived from the one palette (see `theme::Chrome`).
+        let ch = *self.theme.chrome();
+        let (text_color, muted, accent, guide) = (ch.text, ch.muted, ch.accent, ch.guide);
+        let danger = ch.danger_text;
         let has_focus = ctx.memory(|m| m.has_focus(tree_id));
         let font = FontId::proportional(14.5);
         let bold = self.bold.clone().map(|f| FontId::new(14.5, f));
@@ -161,7 +165,7 @@ impl Host {
                     });
                 }
                 surface.context_menu(|ui| {
-                    menu_entries(ui, None, false, cmds);
+                    menu_entries(ui, None, false, &ch, cmds);
                 });
 
                 let first = (viewport.min.y / ROW_H).floor().max(0.0) as usize;
@@ -174,6 +178,11 @@ impl Host {
                         Vec2::new(width, ROW_H),
                     );
                     let current = self.selected == Some(r.id);
+                    let text_color = if current {
+                        ch.selected_text
+                    } else {
+                        text_color
+                    };
                     let text_color = if self.drag.as_ref().is_some_and(|d| d.id == r.id) {
                         with_alpha(text_color, 0.5)
                     } else {
@@ -209,15 +218,19 @@ impl Host {
                     );
 
                     if current {
-                        painter.rect_filled(rect, 0.0, with_alpha(selection, 0.55));
-                        let bar = if has_focus { accent } else { guide };
+                        let (fill, bar) = if has_focus {
+                            (ch.selected_focus, accent)
+                        } else {
+                            (ch.selected_blur, muted)
+                        };
+                        painter.rect_filled(rect, 0.0, fill);
                         painter.rect_filled(
-                            Rect::from_min_size(rect.min, Vec2::new(3.0, ROW_H)),
+                            Rect::from_min_size(rect.min, Vec2::new(2.0, ROW_H)),
                             0.0,
                             bar,
                         );
                     } else if resp.hovered() {
-                        painter.rect_filled(rect, 0.0, with_alpha(hover_fill, 0.8));
+                        painter.rect_filled(rect, 0.0, ch.hover_fill);
                     }
 
                     // Guides: continuing ancestor lines, then this note's elbow.
@@ -301,6 +314,9 @@ impl Host {
                         overflow_character: Some('\u{2026}'),
                     };
                     let galley = painter.layout_job(job);
+                    if galley.elided && resp.hovered() && self.drag.is_none() {
+                        resp.show_tooltip_text(&r.title);
+                    }
                     painter.galley(
                         Pos2::new(text_left, rect.center().y - galley.size().y / 2.0),
                         galley,
@@ -340,7 +356,7 @@ impl Host {
                             _ => self.menu_pos = None,
                         }
                     }
-                    popup.show(|ui| menu_entries(ui, Some(r.id), r.has_children, cmds));
+                    popup.show(|ui| menu_entries(ui, Some(r.id), r.has_children, &ch, cmds));
                 }
                 if let Some(t) = self.drag.as_ref().and_then(|d| d.target) {
                     let accent_line = |y: f32, colour: Color32| {
@@ -596,24 +612,68 @@ impl Host {
             )));
             st.store(&ctx, id);
         }
+        let ch = *self.theme.chrome();
+        let font = self.bold.clone().map_or_else(
+            || FontId::proportional(TITLE_PX),
+            |f| FontId::new(TITLE_PX, f),
+        );
         let mut resp = None;
         let enabled = !self.dialog_open();
-        ui.add_space(4.0);
+        ui.add_space(TITLE_TOP);
         ui.add_enabled_ui(enabled, |ui| {
-            resp = Some(
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.title_text)
-                        .id(id)
-                        .frame(egui::Frame::NONE)
-                        .font(FontId::proportional(22.0))
-                        .hint_text("Title")
-                        .desired_width(f32::INFINITY)
-                        .margin(egui::Margin::symmetric(16, 2)),
-                ),
-            );
+            // The inset is a frame around the field: a text edit without its own frame ignores
+            // its margin, and this is what puts the first letter on the editor's axis.
+            egui::Frame::NONE
+                .inner_margin(egui::Margin::symmetric(GUTTER as i8, 0))
+                .show(ui, |ui| {
+                    resp = Some(
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.title_text)
+                                .id(id)
+                                .frame(egui::Frame::NONE)
+                                .font(font)
+                                .text_color(ch.text)
+                                .hint_text(egui::RichText::new("Title").color(ch.muted))
+                                .desired_width(f32::INFINITY)
+                                .margin(egui::Margin::ZERO),
+                        ),
+                    );
+                });
         });
-        ui.add_space(4.0);
+        // One line for the validation message of this title, then the rule: the message stays
+        // beside the field it is about, and the editor below never moves when it appears.
+        let (note, note_resp) = ui.allocate_exact_size(
+            Vec2::new(ui.available_width(), TITLE_NOTE_H),
+            Sense::hover(),
+        );
         let Some(resp) = resp else { return };
+        let invalid = self
+            .title_error
+            .as_deref()
+            .filter(|_| self.title_text.trim() != self.loaded_title);
+        if let Some(msg) = invalid {
+            // One line, clipped to its row: the whole message is in the tooltip below.
+            let painter = ui.painter_at(note);
+            let galley =
+                painter.layout_no_wrap(msg.to_owned(), FontId::proportional(12.5), ch.danger_text);
+            painter.galley(
+                Pos2::new(note.left() + GUTTER, note.top()),
+                galley,
+                ch.danger_text,
+            );
+            note_resp.on_hover_text(msg);
+        }
+        let rule = if invalid.is_some() {
+            ch.danger_text
+        } else if resp.has_focus() {
+            ch.accent
+        } else {
+            ch.hairline
+        };
+        paint_inset_rule(ui, note.bottom(), rule);
+        if resp.changed() {
+            self.title_error = None;
+        }
         if resp.has_focus() {
             self.focus_reached(Focus::Title);
         }
@@ -631,9 +691,85 @@ impl Host {
     }
 }
 
-fn menu_entries(ui: &mut egui::Ui, on: Option<NodeId>, branch: bool, cmds: &mut Vec<Cmd>) {
+/// A flat command in a bar: text only, a fill under the pointer or keyboard, never a button frame.
+/// Disabled, it is plain muted text that takes neither clicks nor focus.
+pub(crate) fn flat_action(
+    ui: &mut egui::Ui,
+    label: &str,
+    enabled: bool,
+    ch: &theme::Chrome,
+) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        FontId::proportional(12.5),
+        Color32::PLACEHOLDER,
+    );
+    let size = Vec2::new(galley.size().x + 16.0, BAR_H - 8.0);
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, r) = ui.allocate_exact_size(size, sense);
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    let colour = if !enabled {
+        ch.muted
+    } else if r.hovered() || r.has_focus() {
+        ch.text
+    } else {
+        ch.secondary
+    };
+    if enabled && (r.hovered() || r.has_focus()) {
+        ui.painter().rect_filled(rect, 4.0, ch.hover_fill);
+    }
+    if enabled && r.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            4.0,
+            Stroke::new(1.0, ch.accent),
+            egui::StrokeKind::Inside,
+        );
+    }
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, colour);
+    r
+}
+
+/// A one-pixel line along the top of a bar, `bleed` wider than its content on both sides so it
+/// runs the full width of the panel (the bars inset their content, the line is not inset).
+pub(crate) fn paint_hairline(ui: &egui::Ui, colour: Color32, bleed: f32) {
+    let r = ui.max_rect().expand2(Vec2::new(bleed, 0.0));
+    ui.painter()
+        .hline(r.x_range(), r.top() + 0.5, Stroke::new(1.0, colour));
+}
+
+/// A one-pixel rule at `y`, inset by the gutter on both sides (the title's axis).
+fn paint_inset_rule(ui: &egui::Ui, y: f32, colour: Color32) {
+    let r = ui.max_rect();
+    ui.painter().hline(
+        (r.left() + GUTTER)..=(r.right() - GUTTER),
+        (y - 1.0).floor() + 0.5,
+        Stroke::new(1.0, colour),
+    );
+}
+
+fn menu_entries(
+    ui: &mut egui::Ui,
+    on: Option<NodeId>,
+    branch: bool,
+    ch: &theme::Chrome,
+    cmds: &mut Vec<Cmd>,
+) {
+    ui.set_min_width(220.0);
+    ui.spacing_mut().button_padding = Vec2::new(10.0, 4.0);
+    ui.spacing_mut().item_spacing.y = 2.0;
+    let danger = ch.danger_text;
     let mut pick = |ui: &mut egui::Ui, label: &str, hint: &str, enabled: bool, cmd: Cmd| {
-        let r = ui.add_enabled(enabled, egui::Button::new(label).shortcut_text(hint));
+        let mut text = egui::RichText::new(label);
+        if matches!(cmd, Cmd::Delete) {
+            text = text.color(danger);
+        }
+        let r = ui.add_enabled(enabled, egui::Button::new(text).shortcut_text(hint));
         if r.clicked() {
             cmds.push(cmd);
             ui.close();

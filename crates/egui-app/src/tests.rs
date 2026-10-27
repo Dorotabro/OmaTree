@@ -71,10 +71,19 @@ struct H {
     repaint: std::time::Duration,
     /// What the operating system says its colour scheme is (none: not reported).
     system: Option<egui::Theme>,
+    /// The size of the window the frames are run in.
+    screen: Vec2,
+    /// What the last frame painted, in paint order.
+    shapes: Vec<egui::epaint::ClippedShape>,
 }
 
 impl H {
     fn open(path: &Path) -> Self {
+        Self::open_sized(path, Vec2::new(1000.0, 700.0))
+    }
+
+    /// Open in a window of `screen` size from the very first frame.
+    fn open_sized(path: &Path, screen: Vec2) -> Self {
         let mut h = H {
             ctx: egui::Context::default(),
             host: Host::new(),
@@ -83,6 +92,8 @@ impl H {
             closed: false,
             repaint: std::time::Duration::MAX,
             system: None,
+            screen,
+            shapes: Vec::new(),
         };
         assert!(h.host.open(&h.ctx.clone(), path), "{}", h.host.status());
         // The app starts with the tree focused; most tests type, so they start in the editor.
@@ -108,7 +119,7 @@ impl H {
         let mut input = RawInput {
             time: Some(self.t),
             events,
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 700.0))),
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.screen)),
             focused: true,
             system_theme: self.system,
             ..Default::default()
@@ -135,6 +146,7 @@ impl H {
             self.reinject_close = true;
         }
         out.textures_delta.clear();
+        self.shapes = std::mem::take(&mut out.shapes);
     }
 
     /// The window's close button / Alt+F4 / compositor close. Returns whether the window closed.
@@ -496,6 +508,8 @@ fn missing_invalid_and_unsupported_files_are_refused_clearly_and_never_modified(
         closed: false,
         repaint: std::time::Duration::MAX,
         system: None,
+        screen: Vec2::new(1000.0, 700.0),
+        shapes: Vec::new(),
     };
     h.settle();
 }
@@ -787,5 +801,6 @@ fn timings() {
 mod lifecycle_tests;
 
 mod drag_tests;
+mod polish_tests;
 mod theme_tests;
 mod tree_tests;

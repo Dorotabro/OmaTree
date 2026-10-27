@@ -387,91 +387,100 @@ impl Host {
             .doc
             .as_ref()
             .map_or_else(String::new, Document::display_name);
+        let ch = *self.theme.chrome();
+        let bold = self.bold.clone();
         let mut answer = Answer::None;
         let first_frame = std::mem::take(&mut self.dialog_fresh);
         match self.dialog.clone() {
             Dialog::None => return,
             Dialog::Unsaved { error } => {
-                let m = egui::Modal::new(egui::Id::unique("dlg-unsaved")).show(ctx, |ui| {
-                    ui.set_width(340.0);
-                    ui.heading("Unsaved changes");
-                    ui.label(format!("\u{201c}{name}\u{201d} has unsaved changes."));
-                    if let Some(e) = &error {
-                        ui.colored_label(ui.visuals().error_fg_color, e);
-                    }
-                    ui.horizontal(|ui| {
-                        let save = ui.button("Save");
-                        if first_frame {
-                            save.request_focus();
+                let m = egui::Modal::new(egui::Id::unique("dlg-unsaved"))
+                    .frame(dialog_frame(ctx))
+                    .show(ctx, |ui| {
+                        dialog_open(ui, ctx, 340.0);
+                        dialog_heading(ui, "Unsaved changes", bold.as_ref(), &ch);
+                        ui.label(format!("\u{201c}{name}\u{201d} has unsaved changes."));
+                        if let Some(e) = &error {
+                            ui.colored_label(ui.visuals().error_fg_color, e);
                         }
-                        if save.clicked() {
-                            answer = Answer::Save;
-                        }
-                        if error.is_some() && ui.button("Save As\u{2026}").clicked() {
-                            answer = Answer::SaveAs;
-                        }
-                        if ui.button("Discard").clicked() {
-                            answer = Answer::Discard;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            answer = Answer::Cancel;
-                        }
+                        dialog_buttons(ui, |ui| {
+                            let save = ui.button("Save");
+                            if first_frame {
+                                save.request_focus();
+                            }
+                            if save.clicked() {
+                                answer = Answer::Save;
+                            }
+                            if error.is_some() && ui.button("Save As\u{2026}").clicked() {
+                                answer = Answer::SaveAs;
+                            }
+                            if ui.button("Discard").clicked() {
+                                answer = Answer::Discard;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                answer = Answer::Cancel;
+                            }
+                        });
                     });
-                });
                 if m.should_close() {
                     answer = Answer::Cancel;
                 }
             }
             Dialog::ConfirmDiscard => {
-                let m = egui::Modal::new(egui::Id::unique("dlg-discard")).show(ctx, |ui| {
-                    ui.set_width(340.0);
-                    ui.heading("Discard changes?");
-                    ui.label("Your unsaved changes will be lost. This cannot be undone.");
-                    ui.horizontal(|ui| {
-                        // The safe choice has the focus.
-                        let keep = ui.button("Keep editing");
-                        if first_frame {
-                            keep.request_focus();
-                        }
-                        if keep.clicked() {
-                            answer = Answer::Cancel;
-                        }
-                        if ui.button("Discard changes").clicked() {
-                            answer = Answer::ConfirmDiscard;
-                        }
+                let m = egui::Modal::new(egui::Id::unique("dlg-discard"))
+                    .frame(dialog_frame(ctx))
+                    .show(ctx, |ui| {
+                        dialog_open(ui, ctx, 340.0);
+                        dialog_heading(ui, "Discard changes?", bold.as_ref(), &ch);
+                        ui.label("Your unsaved changes will be lost. This cannot be undone.");
+                        dialog_buttons(ui, |ui| {
+                            // The safe choice has the focus.
+                            let keep = ui.button("Keep editing");
+                            if first_frame {
+                                keep.request_focus();
+                            }
+                            if keep.clicked() {
+                                answer = Answer::Cancel;
+                            }
+                            if destructive_button(ui, "Discard changes", &ch).clicked() {
+                                answer = Answer::ConfirmDiscard;
+                            }
+                        });
                     });
-                });
                 if m.should_close() {
                     answer = Answer::Cancel;
                 }
             }
             Dialog::SaveAs { path, error, .. } => {
                 let mut typed = path;
-                let m = egui::Modal::new(egui::Id::unique("dlg-saveas")).show(ctx, |ui| {
-                    ui.set_width(460.0);
-                    ui.heading("Save notebook as");
-                    ui.label("File path (.omatree is added when there is no extension):");
-                    let edit = ui.add(
-                        egui::TextEdit::singleline(&mut typed)
-                            .desired_width(f32::INFINITY)
-                            .id(egui::Id::unique("dlg-saveas-path")),
-                    );
-                    if first_frame {
-                        edit.request_focus();
-                    }
-                    let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    if let Some(e) = &error {
-                        ui.colored_label(ui.visuals().error_fg_color, e);
-                    }
-                    ui.horizontal(|ui| {
-                        if ui.button("Save").clicked() || enter {
-                            answer = Answer::Submit(typed.clone());
+                let m = egui::Modal::new(egui::Id::unique("dlg-saveas"))
+                    .frame(dialog_frame(ctx))
+                    .show(ctx, |ui| {
+                        dialog_open(ui, ctx, 460.0);
+                        dialog_heading(ui, "Save notebook as", bold.as_ref(), &ch);
+                        ui.label("File path (.omatree is added when there is no extension):");
+                        let edit = ui.add(
+                            egui::TextEdit::singleline(&mut typed)
+                                .desired_width(f32::INFINITY)
+                                .id(egui::Id::unique("dlg-saveas-path")),
+                        );
+                        if first_frame {
+                            edit.request_focus();
                         }
-                        if ui.button("Cancel").clicked() {
-                            answer = Answer::Cancel;
+                        let enter =
+                            edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        if let Some(e) = &error {
+                            ui.colored_label(ui.visuals().error_fg_color, e);
                         }
+                        dialog_buttons(ui, |ui| {
+                            if ui.button("Save").clicked() || enter {
+                                answer = Answer::Submit(typed.clone());
+                            }
+                            if ui.button("Cancel").clicked() {
+                                answer = Answer::Cancel;
+                            }
+                        });
                     });
-                });
                 self.set_save_as_path(&typed);
                 if m.should_close() {
                     answer = Answer::Cancel;
@@ -493,75 +502,74 @@ impl Host {
                             format!("Move \u{201c}{}\u{201d} to Trash?", n.title())
                         }
                     });
-                let m = egui::Modal::new(egui::Id::unique("dlg-delete")).show(ctx, |ui| {
-                    ui.set_width(340.0);
-                    ui.heading("Move to Trash");
-                    ui.label(text.unwrap_or_default());
-                    ui.horizontal(|ui| {
-                        // The safe answer has the focus.
-                        let no = ui.button("No");
-                        if first_frame {
-                            no.request_focus();
-                        }
-                        if no.clicked() {
-                            answer = Answer::Cancel;
-                        }
-                        // The destructive answer: the palette's danger fill and its foreground.
-                        let danger = theme::colour(self.theme.palette().danger);
-                        let on_danger = theme::colour(self.theme.palette().danger_foreground);
-                        if ui
-                            .add(
-                                egui::Button::new(egui::RichText::new("Yes").color(on_danger))
-                                    .fill(danger),
-                            )
-                            .clicked()
-                        {
-                            answer = Answer::Delete(id);
-                        }
+                let m = egui::Modal::new(egui::Id::unique("dlg-delete"))
+                    .frame(dialog_frame(ctx))
+                    .show(ctx, |ui| {
+                        dialog_open(ui, ctx, 340.0);
+                        dialog_heading(ui, "Move to Trash", bold.as_ref(), &ch);
+                        ui.label(text.unwrap_or_default());
+                        dialog_buttons(ui, |ui| {
+                            // The safe answer has the focus.
+                            let no = ui.button("Cancel");
+                            if first_frame {
+                                no.request_focus();
+                            }
+                            if no.clicked() {
+                                answer = Answer::Cancel;
+                            }
+                            if destructive_button(ui, "Move to Trash", &ch).clicked() {
+                                answer = Answer::Delete(id);
+                            }
+                        });
                     });
-                });
                 if m.should_close() {
                     answer = Answer::Cancel;
                 }
             }
             Dialog::Error(message) => {
-                let m = egui::Modal::new(egui::Id::unique("dlg-error")).show(ctx, |ui| {
-                    ui.set_width(340.0);
-                    ui.heading("OmaTree");
-                    ui.label(&message);
-                    let ok = ui.button("OK");
-                    if first_frame {
-                        ok.request_focus();
-                    }
-                    if ok.clicked() {
-                        answer = Answer::Acknowledge;
-                    }
-                });
+                let m = egui::Modal::new(egui::Id::unique("dlg-error"))
+                    .frame(dialog_frame(ctx))
+                    .show(ctx, |ui| {
+                        dialog_open(ui, ctx, 340.0);
+                        dialog_heading(ui, "OmaTree", bold.as_ref(), &ch);
+                        ui.label(&message);
+                        dialog_buttons(ui, |ui| {
+                            let ok = ui.button("OK");
+                            if first_frame {
+                                ok.request_focus();
+                            }
+                            if ok.clicked() {
+                                answer = Answer::Acknowledge;
+                            }
+                        });
+                    });
                 if m.should_close() {
                     answer = Answer::Acknowledge;
                 }
             }
             Dialog::Overwrite { path, .. } => {
-                let m = egui::Modal::new(egui::Id::unique("dlg-overwrite")).show(ctx, |ui| {
-                    ui.set_width(340.0);
-                    ui.heading("Replace file");
-                    ui.label(format!(
-                        "\u{201c}{}\u{201d} already exists. Replace it with this notebook?",
-                        file_name(&path)
-                    ));
-                    ui.horizontal(|ui| {
-                        let no = ui.button("No");
-                        if first_frame {
-                            no.request_focus();
-                        }
-                        if no.clicked() {
-                            answer = Answer::Cancel;
-                        }
-                        if ui.button("Yes, replace").clicked() {
-                            answer = Answer::Overwrite;
-                        }
+                let m = egui::Modal::new(egui::Id::unique("dlg-overwrite"))
+                    .frame(dialog_frame(ctx))
+                    .show(ctx, |ui| {
+                        dialog_open(ui, ctx, 340.0);
+                        dialog_heading(ui, "Replace file", bold.as_ref(), &ch);
+                        ui.label(format!(
+                            "\u{201c}{}\u{201d} already exists. Replace it with this notebook?",
+                            file_name(&path)
+                        ));
+                        dialog_buttons(ui, |ui| {
+                            let no = ui.button("Cancel");
+                            if first_frame {
+                                no.request_focus();
+                            }
+                            if no.clicked() {
+                                answer = Answer::Cancel;
+                            }
+                            if destructive_button(ui, "Yes, replace", &ch).clicked() {
+                                answer = Answer::Overwrite;
+                            }
+                        });
                     });
-                });
                 if m.should_close() {
                     answer = Answer::Cancel;
                 }
@@ -583,4 +591,47 @@ impl Host {
             Answer::Acknowledge => self.cancel_dialog(),
         }
     }
+}
+
+// --- Dialog presentation (E6b) --------------------------------------------------------------
+
+/// Shared look of every modal: one width rule, one rhythm, one heading style.
+fn dialog_frame(ctx: &egui::Context) -> egui::Frame {
+    egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(18))
+}
+
+fn dialog_open(ui: &mut egui::Ui, ctx: &egui::Context, width: f32) {
+    ui.set_width(width.min((ctx.content_rect().width() - 72.0).max(200.0)));
+    ui.spacing_mut().item_spacing = egui::vec2(8.0, 10.0);
+    ui.spacing_mut().button_padding = egui::vec2(14.0, 5.0);
+}
+
+fn dialog_heading(
+    ui: &mut egui::Ui,
+    text: &str,
+    bold: Option<&egui::FontFamily>,
+    ch: &theme::Chrome,
+) {
+    let font = bold.map_or_else(
+        || egui::FontId::proportional(17.0),
+        |f| egui::FontId::new(17.0, f.clone()),
+    );
+    ui.label(egui::RichText::new(text).font(font).color(ch.text));
+}
+
+/// The row of answers, a little apart from the text above.
+fn dialog_buttons<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.add_space(4.0);
+    ui.horizontal(add).inner
+}
+
+/// A destructive answer: the danger fill, a label that reads on it (derived from the palette,
+/// see `theme::Chrome::on_danger`), and words that say what will happen, so colour is not the
+/// only cue.
+fn destructive_button(ui: &mut egui::Ui, label: &str, ch: &theme::Chrome) -> egui::Response {
+    ui.add(
+        egui::Button::new(egui::RichText::new(label).color(ch.on_danger))
+            .fill(ch.danger_fill)
+            .stroke(egui::Stroke::NONE),
+    )
 }

@@ -107,6 +107,7 @@ impl Host {
             Ok(changed) => {
                 self.edited |= changed;
                 self.loaded_title = wanted.clone();
+                self.title_error = None;
                 self.title_text = wanted;
                 self.rebuild_tree();
                 true
@@ -114,6 +115,7 @@ impl Host {
             Err(e) => {
                 let msg = rename_message(e, &wanted);
                 self.status = msg.clone();
+                self.title_error = Some(msg.clone());
                 self.open_dialog(ctx, Dialog::Error(msg));
                 self.focus_back = Focus::Title;
                 false

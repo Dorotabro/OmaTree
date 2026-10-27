@@ -4,31 +4,31 @@
 //! check what the host does with its results. Everything is headless (frames of a real `Host`).
 
 use super::*;
-use crate::theme::{colour, editor_palette, visuals};
+use crate::theme::{colour, editor_palette, visuals, Chrome};
 use omatree_core::theme::{Palette as Core, Rgb};
 use omatree_editor::theme::contrast;
 
-const TOKYO: &str =
+pub(super) const TOKYO: &str =
     "mode = \"dark\"\naccent = \"#7aa2f7\"\nselection = \"#292e42\"\nmuted = \"#414868\"\n\
 background = \"#1a1b26\"\ndark_background = \"#13141c\"\nlighter_background = \"#24283b\"\n\
 foreground = \"#a9b1d6\"\ndark_foreground = \"#565f89\"\nbright_foreground = \"#c0caf5\"\n\
 red = \"#f7768e\"\ngreen = \"#9ece6a\"\nmagenta = \"#bb9af7\"\nyellow = \"#e0af68\"\n";
-const LATTE: &str = "mode = \"light\"\naccent = \"#1e66f5\"\nselection = \"#ccd0da\"\nmuted = \"#9ca0b0\"\n\
+pub(super) const LATTE: &str = "mode = \"light\"\naccent = \"#1e66f5\"\nselection = \"#ccd0da\"\nmuted = \"#9ca0b0\"\n\
 background = \"#eff1f5\"\ndark_background = \"#e6e9ef\"\nlighter_background = \"#dce0e8\"\n\
 foreground = \"#4c4f69\"\ndark_foreground = \"#6c6f85\"\nbright_foreground = \"#232634\"\nred = \"#d20f39\"\n";
 /// Light by its own `mode`, with a background the brightness heuristic would call dark.
 const EXPLICIT_LIGHT: &str =
     "mode = \"light\"\nbackground = \"#3a3a3a\"\nforeground = \"#f0f0f0\"\n";
 
-const RICH: &str = "# Heading one\n\n## Heading two\n\nA [link](https://example.org) and `code` and **bold** 🦀\n\n\
+pub(super) const RICH: &str = "# Heading one\n\n## Heading two\n\nA [link](https://example.org) and `code` and **bold** 🦀\n\n\
 ```rust\nfn main() {}\n```\n\n| Název | Počet |\n|---|---|\n| jablka 🍎 | 3 |\n\n- [x] done\n- [ ] todo\n\n\
 > quote\n\n![alt text](attachment:missing-image)\n";
 
-fn colours_path(d: &Path) -> PathBuf {
+pub(super) fn colours_path(d: &Path) -> PathBuf {
     d.join("omarchy/current/theme/colors.toml")
 }
 
-fn install(d: &Path, text: &str) -> PathBuf {
+pub(super) fn install(d: &Path, text: &str) -> PathBuf {
     let p = colours_path(d);
     fs::create_dir_all(p.parent().unwrap()).unwrap();
     fs::write(&p, text).unwrap();
@@ -46,7 +46,7 @@ fn replace_theme_dir(d: &Path, text: &str) {
     fs::rename(&next, &theme).unwrap();
 }
 
-fn rich_notebook(name: &str) -> (PathBuf, PathBuf) {
+pub(super) fn rich_notebook(name: &str) -> (PathBuf, PathBuf) {
     let d = dir(name);
     let p = d.join("n.omatree");
     let mut doc = Document::open(&p).unwrap();
@@ -62,28 +62,28 @@ fn rich_notebook(name: &str) -> (PathBuf, PathBuf) {
 
 impl H {
     /// Follow a fixture colours file and let the first frames settle.
-    fn follow(&mut self, path: &Path) {
+    pub(super) fn follow(&mut self, path: &Path) {
         self.host.follow_omarchy(Some(path.to_owned()));
         self.settle();
     }
 
     /// Time passes with the app idle, long enough for `n` watcher polls.
-    fn polls(&mut self, n: usize) {
+    pub(super) fn polls(&mut self, n: usize) {
         for _ in 0..n {
             self.advance(0.6);
         }
     }
 
-    fn core(&self) -> Core {
+    pub(super) fn core(&self) -> Core {
         *self.host.theme_palette()
     }
 
-    fn egui_visuals(&self) -> egui::Visuals {
+    pub(super) fn egui_visuals(&self) -> egui::Visuals {
         self.ctx.global_style().visuals.clone()
     }
 }
 
-fn core_of(text: &str) -> Core {
+pub(super) fn core_of(text: &str) -> Core {
     omatree_core::theme::parse_omarchy(text).unwrap()
 }
 
@@ -99,24 +99,32 @@ fn every_core_role_reaches_the_egui_visuals() {
         assert_eq!(v.extreme_bg_color, colour(p.surface), "surface");
         assert_eq!(v.window_fill, colour(p.surface_raised), "surface_raised");
         assert_eq!(v.faint_bg_color, colour(p.surface_raised));
-        assert_eq!(v.weak_text_color, Some(colour(p.muted_foreground)));
+        // Text roles reach egui as they are whenever they already read (E6b); a role too faint
+        // for its surfaces is pulled just far enough (`theme::readable`), never replaced.
+        let c = Chrome::of(&p);
         assert_eq!(
-            v.widgets.noninteractive.fg_stroke.color,
-            colour(p.foreground)
+            c.text,
+            colour(p.foreground),
+            "foreground reads in these themes"
         );
-        assert_eq!(v.widgets.inactive.fg_stroke.color, colour(p.foreground));
+        assert_eq!(v.weak_text_color, Some(c.secondary));
+        if contrast(colour(p.muted_foreground), colour(p.surface)) >= 4.5 {
+            assert_eq!(c.secondary, colour(p.muted_foreground));
+        }
+        assert_eq!(v.widgets.noninteractive.fg_stroke.color, c.text);
+        assert_eq!(v.widgets.inactive.fg_stroke.color, c.text);
         assert_eq!(v.hyperlink_color, colour(p.accent), "accent");
         assert_eq!(v.window_stroke.color, colour(p.border), "border");
-        assert_eq!(v.widgets.noninteractive.bg_stroke.color, colour(p.border));
+        assert_eq!(v.widgets.noninteractive.bg_stroke.color, c.hairline);
         assert_eq!(v.widgets.active.bg_fill, colour(p.selection), "selection");
         assert_eq!(
             v.widgets.active.fg_stroke.color,
             colour(p.selection_foreground)
         );
         assert_eq!(v.selection.stroke.color, colour(p.selection_foreground));
-        assert_eq!(v.error_fg_color, colour(p.danger), "danger");
-        assert_eq!(v.warn_fg_color, colour(p.warning), "warning");
-        assert_eq!(v.text_cursor.stroke.color, colour(p.foreground));
+        assert_eq!(v.error_fg_color, c.danger_text, "danger");
+        assert_eq!(v.warn_fg_color, c.warning_text, "warning");
+        assert_eq!(v.text_cursor.stroke.color, c.text);
         assert_eq!(
             v.override_text_color, None,
             "buttons may colour their own text"
