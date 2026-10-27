@@ -69,6 +69,8 @@ pub enum Dialog {
         path: String,
         error: Option<String>,
     },
+    /// Compact Notebook (`compact_ui.rs`): its state is `Host::compact`.
+    Compact,
     /// The export destination exists; replacing it needs a yes.
     ExportOverwrite {
         format: note_export::ExportFormat,
@@ -194,6 +196,8 @@ impl Host {
 
     pub(crate) fn close_dialog(&mut self) {
         self.dialog = Dialog::None;
+        // A Compact Notebook review (and its tokens) does not outlive its dialog.
+        self.compact = None;
         self.set_focus(self.focus_back);
         if self.is_dirty() && !self.autosave_blocked && self.autosave_due.is_none() {
             self.edited = true; // resume the autosave countdown
@@ -530,6 +534,10 @@ impl Host {
             }
             Dialog::ConfirmReload => {
                 self.show_confirm_reload(ctx, first_frame);
+                return;
+            }
+            Dialog::Compact => {
+                self.show_compact(ctx, first_frame);
                 return;
             }
             Dialog::Export { .. } => {

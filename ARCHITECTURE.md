@@ -383,3 +383,15 @@ hidden sibling and renamed into place, and an existing single file is replaced o
 confirmation and only by a finished export; an existing folder and the notebook's own file are
 never replaced. Ctrl+Shift+E is detected by the editor (so it wins over Ctrl+E) and acted on by
 the host. See `docs/EGUI_MIGRATION_PLAN.md`, "E11a implementation record".
+
+### Compact Notebook interface (E11b)
+
+`compact_ui.rs` is a staged modal over the E9b core: a read-only report, an explicit confirmation
+(Cancel focused), a "Working…" frame, then the committed result; reclaiming disk space is a
+separate stage with its own preview, token and confirmation. The host holds the core's opaque
+tokens and passes them back unchanged; it never names an image, issues SQL or saves on its own
+account. Pruning needs a saved, clean notebook, so unsaved work is offered Save first, which
+authorizes nothing. A stale token, an unsaved change or an external write deletes nothing and
+says so; the review is dropped when the dialog closes or the notebook is replaced. The core
+calls are synchronous (one owning connection), so a large notebook pauses briefly. See
+`docs/EGUI_MIGRATION_PLAN.md`, "E11b implementation record".

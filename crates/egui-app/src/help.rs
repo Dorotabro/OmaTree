@@ -114,7 +114,7 @@ impl Host {
                     ),
                     (
                         "file menu".to_owned(),
-                        "Open or Save As by typing a path, Reload from disk, recent notebooks, Quit",
+                        "Open or Save As by typing a path, Compact Notebook, Reload from disk, recent notebooks, Quit",
                     ),
                 ],
             ),

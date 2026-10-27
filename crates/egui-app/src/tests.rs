@@ -779,6 +779,7 @@ fn timings() {
 
 mod lifecycle_tests;
 
+mod compact_tests;
 mod drag_tests;
 mod export_tests;
 mod files_tests;

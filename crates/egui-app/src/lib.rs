@@ -9,6 +9,7 @@
 //! - The host owns the window, shortcuts that are about the document (Ctrl+S), status text and
 //!   the attachment backend ([`DocStore`], a view of the open `Document`).
 
+mod compact_ui;
 mod drag;
 mod files;
 mod help;
@@ -58,6 +59,8 @@ pub struct Host {
     view: EditorView,
     /// What the image adapter reported while the editor ran (see `store`).
     images: ImageReport,
+    /// The Compact Notebook dialog's state (`compact_ui.rs`), while it is open.
+    compact: Option<compact_ui::Compact>,
     /// When unreadable images were last given another chance (see `after_editor`).
     image_retry: f64,
     /// The one theme pipeline: core palette -> egui visuals and the editor's palette.
@@ -131,6 +134,7 @@ impl Host {
             text: String::new(),
             view: EditorView::new(),
             images: ImageReport::default(),
+            compact: None,
             image_retry: f64::NEG_INFINITY,
             theme: ThemeState::new(None),
             keys: {

@@ -317,6 +317,8 @@ impl Host {
         self.notebook += 1;
         // What the adapter recorded about the old notebook's images means nothing now.
         self.images = ImageReport::default();
+        // A review and its tokens belong to the notebook that was replaced.
+        self.compact = None;
         self.image_retry = f64::NEG_INFINITY;
         self.doc = Some(doc);
         self.path = path;

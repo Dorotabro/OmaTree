@@ -45,6 +45,7 @@ enum Cmd {
     OpenTyped,
     SaveAsTyped,
     ExportNote,
+    CompactNotebook,
     OpenRecent(PathBuf),
     ClearRecent,
     Quit,
@@ -614,6 +615,7 @@ impl Host {
                 Cmd::OpenTyped => self.request_leave(ctx, Leave::OpenTyped),
                 Cmd::SaveAsTyped => self.start_save_as_typed(ctx),
                 Cmd::ExportNote => self.start_export(ctx),
+                Cmd::CompactNotebook => self.start_compact(ctx),
                 Cmd::OpenRecent(path) => self.request_open_path(ctx, path),
                 Cmd::ClearRecent => self.clear_recent(),
                 // The window's own close path: it comes back as a close request and meets the
@@ -934,6 +936,13 @@ fn file_entries(ui: &mut egui::Ui, ch: &theme::Chrome, recent: &[PathBuf], cmds:
         "Export note\u{2026}",
         keys(&keymap::EXPORT),
         Cmd::ExportNote,
+    );
+    pick(
+        ui,
+        cmds,
+        "Compact Notebook\u{2026}",
+        String::new(),
+        Cmd::CompactNotebook,
     );
     ui.separator();
     pick(

@@ -66,7 +66,7 @@ impl H {
         self.settle();
     }
 
-    fn state(&self) -> (bool, usize, usize, String) {
+    pub(super) fn state(&self) -> (bool, usize, usize, String) {
         let d = self.host.document().unwrap();
         (
             self.host.is_dirty(),
