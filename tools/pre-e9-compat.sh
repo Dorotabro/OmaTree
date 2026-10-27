@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Independent compatibility check for E9a: does a *pre-E9* build of omatree-core (taken from git,
+# Independent compatibility check for E9a/E9b: does a *pre-E9* build of omatree-core (taken from git,
 # not from this working tree) open the files this build writes, and does it leave a version 4
 # file untouched when it refuses it?
 #
@@ -43,7 +43,7 @@ echo "== building pre-E9 core ($REV)"
 (cd "$WORK/old" && cargo build --release -p checker --quiet)
 echo "== writing fixtures with the current build"
 OMATREE_COMPAT_DIR="$WORK/fixtures" cargo test -p omatree-core --quiet -- --ignored write_compat_fixtures >/dev/null
-for f in v3 v4; do
+for f in v3 v4 v4-pruned; do
   before="$(sha256sum "$WORK/fixtures/$f.omatree" | cut -d' ' -f1)"
   out="$("$WORK/old/target/release/checker" "$WORK/fixtures/$f.omatree")"
   after="$(sha256sum "$WORK/fixtures/$f.omatree" | cut -d' ' -f1)"

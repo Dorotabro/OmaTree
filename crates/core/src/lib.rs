@@ -16,3 +16,5 @@ pub mod theme;
 
 #[cfg(test)]
 mod attachment_tests;
+#[cfg(test)]
+mod compact_tests;

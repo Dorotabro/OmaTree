@@ -321,3 +321,19 @@ checked transaction* as the notes; a file stays at schema version 3 until that f
 creates the table and sets version 4 atomically. Save As copies everything stored, plus what is
 pending. The Qt build shares this core; it never writes attachments and older binaries refuse a
 version 4 file without touching it (`tools/pre-e9-compat.sh`).
+
+### Compact Notebook, core half (E9b)
+
+`omatree-core` can say which stored attachments nothing refers to any more and delete exactly
+those, but only when a caller asks and only in two separate, separately authorized steps.
+`Document::preview_attachment_prune` scans (read-only) every body that can still be recovered, in
+memory and in the file: active notes, every Trash node, every checkpoint, by the plain-text rule
+`assets/<32 lowercase hex>.png|jpg` (no Markdown parsing, so code blocks and comments count). An
+attachment is protected when the in-memory notebook *or* the file mentions it. The preview returns
+a report and an opaque token (a digest of everything the decision rests on); `prune_attachments`
+refuses without a saved notebook (`NeedsSave`, it never saves), refuses a changed notebook
+(`Stale`), and then deletes inside one `begin_checked_write` transaction that re-derives the
+unreferenced set from the file and refuses unless it is exactly the reviewed one. A caller cannot
+supply ids. Reclaiming file space (`preview_reclaim` / `reclaim_space`, a `VACUUM` on the same
+connection) has its own token and never runs by itself, not even after a prune: deleting rows does
+not shrink the file. See `docs/EGUI_MIGRATION_PLAN.md`, "E9b implementation record".

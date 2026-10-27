@@ -12,10 +12,11 @@
 use std::collections::BTreeSet;
 use std::fmt;
 use std::path::Path;
+use std::time::Duration;
 
 use rusqlite::{params, Connection, OpenFlags, Transaction};
 
-use crate::attachments::{Attachment, AttachmentId, AttachmentInfo, MediaType};
+use crate::attachments::{scan_references, Attachment, AttachmentId, AttachmentInfo, MediaType};
 use crate::notebook::{Node, NodeId, Notebook, NotebookError};
 use crate::recovery::{Checkpoint, Recovery, TrashEntry};
 
@@ -111,6 +112,32 @@ pub struct AttachmentPlan<'a> {
     pub copy_from: Option<&'a Storage>,
     /// This file is an existing notebook being replaced: what it stored is dropped first.
     pub replace_existing: bool,
+}
+
+/// Which kind of stored body mentions which attachment ids (the sets overlap).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct StoredReferences {
+    pub active: BTreeSet<String>,
+    pub trash: BTreeSet<String>,
+    pub checkpoints: BTreeSet<String>,
+}
+
+/// What a committed prune removed and left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PruneOutcome {
+    pub removed: usize,
+    pub removed_bytes: u64,
+    pub retained: usize,
+    pub retained_bytes: u64,
+}
+
+/// SQLite's own view of the file's pages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PhysicalStats {
+    pub page_size: u64,
+    pub page_count: u64,
+    pub freelist_pages: u64,
+    pub journal_mode: String,
 }
 
 #[derive(Debug)]
@@ -513,6 +540,154 @@ impl Storage {
         }))
     }
 
+    /// Id, size and media type of every stored attachment, by id, without reading any BLOB.
+    pub fn attachment_inventory(
+        &self,
+    ) -> Result<Vec<(AttachmentId, u64, MediaType)>, StorageError> {
+        inventory(&self.conn, self.version)
+    }
+
+    /// Every attachment id mentioned by a stored body: active notes, Trash (all descendants)
+    /// and checkpoints, by the plain-text rule of `scan_references`. Reads bodies only, never
+    /// a BLOB, and writes nothing. Empty before version 4 (there is nothing to protect).
+    pub fn stored_references(&self) -> Result<StoredReferences, StorageError> {
+        references(&self.conn, self.version)
+    }
+
+    /// Deletes exactly the attachments in `expected`, in one checked transaction on this
+    /// connection, and only if they are, inside that transaction, exactly the attachments that no
+    /// stored body mentions. Any difference (a reference appeared, an attachment is gone or new)
+    /// is `Ok(None)` and nothing is deleted. Notes, Trash, checkpoints and the expanded
+    /// nodes are not written. An empty `expected` does nothing, not even open a transaction.
+    pub fn prune_attachments(
+        &mut self,
+        expected: &[AttachmentId],
+    ) -> Result<Option<PruneOutcome>, StorageError> {
+        if expected.is_empty() {
+            let all = inventory(&self.conn, self.version)?;
+            return Ok(Some(PruneOutcome {
+                removed: 0,
+                removed_bytes: 0,
+                retained: all.len(),
+                retained_bytes: all.iter().map(|a| a.1).sum(),
+            }));
+        }
+        let version = self.version;
+        let tx = self.begin_checked_write()?;
+        let refs = references(&tx, version)?;
+        let mut removable = Vec::new();
+        let mut retained = 0;
+        let mut retained_bytes = 0;
+        for (id, len, _) in inventory(&tx, version)? {
+            let id_text = id.as_str();
+            if refs.active.contains(id_text)
+                || refs.trash.contains(id_text)
+                || refs.checkpoints.contains(id_text)
+            {
+                retained += 1;
+                retained_bytes += len;
+            } else {
+                removable.push((id, len));
+            }
+        }
+        // `inventory` is ordered by id, so `removable` is too.
+        let same = removable.len() == expected.len()
+            && removable
+                .iter()
+                .map(|r| &r.0)
+                .zip(expected)
+                .all(|(a, b)| a == b);
+        if !same {
+            return Ok(None);
+        }
+        let mut removed_bytes = 0;
+        for (id, len) in &removable {
+            let n = tx.execute("DELETE FROM attachments WHERE id = ?1", [id.as_str()])?;
+            if n != 1 {
+                return Err(StorageError::InvalidData(format!(
+                    "attachment {id} could not be removed"
+                )));
+            }
+            removed_bytes += len;
+        }
+        tx.commit()?;
+        Ok(Some(PruneOutcome {
+            removed: removable.len(),
+            removed_bytes,
+            retained,
+            retained_bytes,
+        }))
+    }
+
+    /// Page counts and journal mode of the file, from SQLite itself.
+    pub fn physical_stats(&self) -> Result<PhysicalStats, StorageError> {
+        let n = |name: &str| -> Result<u64, StorageError> {
+            let v: i64 = self.conn.pragma_query_value(None, name, |r| r.get(0))?;
+            u64::try_from(v).map_err(|_| StorageError::InvalidData(format!("negative {name}")))
+        };
+        Ok(PhysicalStats {
+            page_size: n("page_size")?,
+            page_count: n("page_count")?,
+            freelist_pages: n("freelist_count")?,
+            journal_mode: self
+                .conn
+                .pragma_query_value(None, "journal_mode", |r| r.get(0))?,
+        })
+    }
+
+    /// `VACUUM` on this connection: rewrites the file without its free pages. Refused when
+    /// another connection has committed since this one last looked (`ExternallyModified`),
+    /// like a save. `VACUUM` cannot run inside a transaction, so a commit by someone else between
+    /// that check and SQLite taking its lock is not prevented, but it is never accepted either:
+    /// this connection's baseline (`observed`) is left alone, so the next save is refused rather
+    /// than overwriting the other writer. `busy` is how long to wait for a lock held elsewhere.
+    ///
+    /// A *failed* `VACUUM` rolls back, but SQLite then counts it in `data_version` as if someone
+    /// else had written (measured: 1 to 2 on a read-only failure). That would make this
+    /// document's next save a false conflict. So after a failure the baseline is re-accepted only
+    /// when the file's own change counter (header bytes 24..28, which every commit in rollback
+    /// journal mode increments) proves nobody committed meanwhile; in WAL mode, where the header
+    /// proves nothing, it is never re-accepted (a refusal, the safe side).
+    pub(crate) fn reclaim_space(
+        &mut self,
+        path: &Path,
+        busy: Duration,
+    ) -> Result<(), StorageError> {
+        if data_version(&self.conn)? != self.observed {
+            return Err(StorageError::ExternallyModified);
+        }
+        let counter_before = change_counter(path);
+        self.conn.busy_timeout(busy)?;
+        let ran = self.conn.execute_batch("VACUUM");
+        // Always put the default wait back, whatever happened.
+        let restored = self.conn.busy_timeout(Duration::from_secs(5));
+        if let Err(e) = ran {
+            let rollback_journal = self
+                .physical_stats()
+                .is_ok_and(|s| s.journal_mode.eq_ignore_ascii_case("delete"));
+            if rollback_journal
+                && counter_before.is_some()
+                && change_counter(path) == counter_before
+            {
+                if let Ok(now) = data_version(&self.conn) {
+                    self.observed = now;
+                }
+            }
+            return Err(e.into());
+        }
+        restored?;
+        // In WAL mode the vacuum lives in the log until a checkpoint moves it into the file.
+        if self
+            .physical_stats()?
+            .journal_mode
+            .eq_ignore_ascii_case("wal")
+        {
+            self.conn
+                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+        }
+        Ok(())
+    }
+
     /// Loads and validates the stored notebook and recovery state. A
     /// version 1 file yields empty recovery state and an id counter derived
     /// from its nodes.
@@ -836,6 +1011,84 @@ fn read_nodes<P: rusqlite::Params>(
 
 fn data_version(conn: &Connection) -> Result<i64, StorageError> {
     Ok(conn.pragma_query_value(None, "data_version", |row| row.get(0))?)
+}
+
+/// The file change counter of the database header (bytes 24..28), if the file can be read.
+fn change_counter(path: &Path) -> Option<u32> {
+    use std::io::Read;
+    let mut header = [0u8; 28];
+    std::fs::File::open(path)
+        .ok()?
+        .read_exact(&mut header)
+        .ok()?;
+    Some(u32::from_be_bytes([
+        header[24], header[25], header[26], header[27],
+    ]))
+}
+
+fn inventory(
+    conn: &Connection,
+    version: i64,
+) -> Result<Vec<(AttachmentId, u64, MediaType)>, StorageError> {
+    if version < ATTACHMENT_VERSION {
+        return Ok(Vec::new());
+    }
+    let mut q = conn.prepare("SELECT id, byte_len, media_type FROM attachments ORDER BY id")?;
+    let rows = q.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut all = Vec::new();
+    for row in rows {
+        let (id, len, mime) = row?;
+        all.push((
+            AttachmentId::parse(&id).map_err(|e| StorageError::InvalidData(e.to_string()))?,
+            u64::try_from(len)
+                .map_err(|_| StorageError::InvalidData("negative attachment size".into()))?,
+            MediaType::from_mime(&mime)
+                .ok_or_else(|| StorageError::InvalidData(format!("attachment of type {mime}")))?,
+        ));
+    }
+    Ok(all)
+}
+
+fn references(conn: &Connection, version: i64) -> Result<StoredReferences, StorageError> {
+    let mut out = StoredReferences::default();
+    if version < ATTACHMENT_VERSION {
+        return Ok(out);
+    }
+    collect_references(conn, "SELECT body FROM nodes", &mut out.active)?;
+    collect_references(conn, "SELECT body FROM trash_nodes", &mut out.trash)?;
+    collect_references(
+        conn,
+        "SELECT body FROM checkpoint_nodes",
+        &mut out.checkpoints,
+    )?;
+    Ok(out)
+}
+
+fn collect_references(
+    conn: &Connection,
+    sql: &str,
+    into: &mut BTreeSet<String>,
+) -> Result<(), StorageError> {
+    let mut q = conn.prepare(sql)?;
+    let mut rows = q.query([])?;
+    while let Some(row) = rows.next()? {
+        // Borrowed straight from SQLite's buffer: no copy of the body.
+        let body = row.get_ref(0)?.as_str().map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+        scan_references(body, |id| {
+            if !into.contains(id) {
+                into.insert(id.to_owned());
+            }
+        });
+    }
+    Ok(())
 }
 
 fn user_version(conn: &Connection) -> Result<i64, StorageError> {

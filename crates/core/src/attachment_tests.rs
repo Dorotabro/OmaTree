@@ -13,10 +13,10 @@ use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-struct Dir(PathBuf);
+pub(crate) struct Dir(PathBuf);
 
 impl Dir {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         static N: AtomicU32 = AtomicU32::new(0);
         let d = std::env::temp_dir().join(format!(
             "omatree-att-{}-{}",
@@ -28,7 +28,11 @@ impl Dir {
         Dir(d)
     }
 
-    fn join(&self, name: &str) -> PathBuf {
+    pub(crate) fn path(&self) -> &Path {
+        &self.0
+    }
+
+    pub(crate) fn join(&self, name: &str) -> PathBuf {
         self.0.join(name)
     }
 }
@@ -41,16 +45,16 @@ impl Drop for Dir {
     }
 }
 
-fn raw(path: &Path) -> Connection {
+pub(crate) fn raw(path: &Path) -> Connection {
     Connection::open(path).unwrap()
 }
 
-fn header_version(path: &Path) -> u32 {
+pub(crate) fn header_version(path: &Path) -> u32 {
     let b = std::fs::read(path).unwrap();
     u32::from_be_bytes([b[60], b[61], b[62], b[63]])
 }
 
-fn tables(path: &Path) -> Vec<String> {
+pub(crate) fn tables(path: &Path) -> Vec<String> {
     let c = raw(path);
     let mut q = c
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
@@ -60,7 +64,7 @@ fn tables(path: &Path) -> Vec<String> {
 }
 
 /// (id, media_type, byte_len, data) of every stored attachment.
-fn stored(path: &Path) -> Vec<(String, String, i64, Vec<u8>)> {
+pub(crate) fn stored(path: &Path) -> Vec<(String, String, i64, Vec<u8>)> {
     let c = raw(path);
     let mut q = c
         .prepare("SELECT id, media_type, byte_len, data FROM attachments ORDER BY id")
@@ -82,7 +86,7 @@ const CONTENT_TABLES: [&str; 7] = [
 ];
 
 /// Every content table, row by row.
-fn logical(path: &Path) -> Vec<Vec<String>> {
+pub(crate) fn logical(path: &Path) -> Vec<Vec<String>> {
     CONTENT_TABLES.iter().map(|t| dump_table(path, t)).collect()
 }
 
@@ -833,7 +837,8 @@ fn a_notebook_from_a_newer_schema_is_refused_without_a_byte_changing() {
 }
 
 /// Writes the compatibility fixtures for `tools/pre-e9-compat.sh` into `$OMATREE_COMPAT_DIR`:
-/// `v3.omatree` (text only, saved by this build) and `v4.omatree` (one stored attachment).
+/// `v3.omatree` (text only, saved by this build), `v4.omatree` (one stored attachment) and
+/// `v4-pruned.omatree` (an orphan pruned and the space reclaimed, E9b).
 /// `OMATREE_COMPAT_DIR=/some/dir cargo test -p omatree-core -- --ignored write_compat_fixtures`
 #[test]
 #[ignore]
@@ -841,7 +846,7 @@ fn write_compat_fixtures() {
     let dir =
         PathBuf::from(std::env::var_os("OMATREE_COMPAT_DIR").expect("set OMATREE_COMPAT_DIR"));
     std::fs::create_dir_all(&dir).unwrap();
-    for name in ["v3.omatree", "v4.omatree"] {
+    for name in ["v3.omatree", "v4.omatree", "v4-pruned.omatree"] {
         let _ = std::fs::remove_file(dir.join(name));
     }
     let v3 = dir.join("v3.omatree");
@@ -859,4 +864,17 @@ fn write_compat_fixtures() {
         .unwrap();
     doc.save().unwrap();
     assert_eq!(header_version(&v4), 4);
+    let pruned = dir.join("v4-pruned.omatree");
+    v3_fixture(&pruned);
+    let mut doc = Document::open_existing(&pruned).unwrap();
+    let keep = doc.put_attachment(&png(8, 8)).unwrap();
+    doc.put_attachment(&png(120, 120)).unwrap(); // never referenced
+    doc.set_body(NodeId::from_raw(0), &format!("![shot]({keep})\n"))
+        .unwrap();
+    doc.save().unwrap();
+    let pv = doc.preview_attachment_prune().unwrap();
+    assert_eq!(doc.prune_attachments(&pv.token).unwrap().removed.count, 1);
+    let rp = doc.preview_reclaim().unwrap();
+    assert!(doc.reclaim_space(&rp.token).unwrap().ran);
+    assert_eq!(header_version(&pruned), 4);
 }

@@ -14,6 +14,12 @@ use crate::notebook::{MovePlan, NodeId, Notebook, NotebookError, DEFAULT_TITLE};
 use crate::recovery::{unix_now, Checkpoint, Recovery, RecoveryError, TrashEntry};
 use crate::storage::{AttachmentPlan, Storage, StorageError};
 
+mod compact;
+pub use compact::{
+    Prunable, PruneError, PrunePreview, PruneReport, PruneResult, PruneToken, ReclaimError,
+    ReclaimPreview, ReclaimResult, ReclaimToken, Tally,
+};
+
 #[derive(Debug)]
 pub enum DocumentError {
     Storage(StorageError),

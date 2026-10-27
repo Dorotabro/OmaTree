@@ -158,6 +158,47 @@ pub fn parse_reference(text: &str) -> Result<(AttachmentId, MediaType), Attachme
     Ok((id, media))
 }
 
+/// Finds every canonical attachment reference in `text` and hands the 32-digit id of each to
+/// `found` (a slice of `text`; duplicates are reported each time).
+///
+/// This is the D9 plain-text rule, not Markdown: it does not know about code blocks, comments,
+/// links or escaping, so a reference anywhere in a body counts. The grammar is exactly
+///
+/// ```text
+/// reference = "assets/" id ( ".png" / ".jpg" )      id = 32 * ( DIGIT / %x61-66 )
+/// ```
+///
+/// with nothing required before or after it (`xassets/<id>.png` and `assets/<id>.pngx` both
+/// match: conservative). Not recognised, so never protecting anything: upper-case digits or
+/// extension, other extensions (`.jpeg`, `.PNG`), ids shorter or longer than 32 digits (the first
+/// 32 digits of a longer run are not taken for an id: the next byte must be `.`), percent-escapes,
+/// backslashes, and anything that is not `assets/` literally. The id is only ever compared with
+/// stored ids; nothing here builds a path or opens anything.
+pub fn scan_references<'a>(text: &'a str, mut found: impl FnMut(&'a str)) {
+    let bytes = text.as_bytes();
+    let mut from = 0;
+    while let Some(at) = text[from..].find(ASSET_PREFIX) {
+        let start = from + at + ASSET_PREFIX.len();
+        // Restart one byte after the `a` (always a character boundary), so overlapping
+        // candidates such as `assets/assets/<id>.png` are all examined.
+        from += at + 1;
+        let Some(id) = bytes.get(start..start + 32) else {
+            continue;
+        };
+        if !id
+            .iter()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
+        {
+            continue;
+        }
+        let tail = &bytes[start + 32..];
+        if tail.starts_with(b".png") || tail.starts_with(b".jpg") {
+            // The 32 bytes are ASCII, so this is a valid slice.
+            found(&text[start..start + 32]);
+        }
+    }
+}
+
 /// Check `bytes` and say what they are. Size first, then the format.
 pub fn sniff(bytes: &[u8]) -> Result<MediaType, AttachmentError> {
     if bytes.is_empty() {
@@ -451,5 +492,42 @@ mod tests {
         let b = AttachmentId::random().unwrap();
         assert_ne!(a, b);
         assert!(AttachmentId::parse(a.as_str()).is_ok());
+    }
+
+    fn scan(text: &str) -> Vec<String> {
+        let mut v = Vec::new();
+        scan_references(text, |id| v.push(id.to_owned()));
+        v
+    }
+
+    const ID: &str = "0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn the_scanner_recognises_exactly_the_canonical_grammar() {
+        assert_eq!(scan(&format!("![a](assets/{ID}.png)")), [ID]);
+        assert_eq!(scan(&format!("![a](assets/{ID}.jpg)")), [ID]);
+        // Conservative on both sides.
+        assert_eq!(scan(&format!("xassets/{ID}.pngx")), [ID]);
+        assert_eq!(scan(&format!("Příliš 🦀assets/{ID}.jpg🦀 žluťoučký")), [ID]);
+        assert_eq!(scan(&format!("assets/assets/{ID}.png")), [ID]);
+        for bad in [
+            format!("assets/{}.png", ID.to_uppercase()),
+            format!("assets/{ID}.PNG"),
+            format!("assets/{ID}.jpeg"),
+            format!("assets/{ID}.gif"),
+            format!("assets/{ID}"),
+            format!("assets/{}.png", &ID[..31]),
+            format!("assets/{ID}0.png"),
+            format!("assets/0{ID}.png"),
+            format!("assets/{}g.png", &ID[..31]),
+            format!("assets%2F{ID}.png"),
+            format!("assets\\{ID}.png"),
+            format!("Assets/{ID}.png"),
+            "assets/".to_owned(),
+            "assets/é".to_owned(),
+            String::new(),
+        ] {
+            assert!(scan(&bad).is_empty(), "{bad:?} must not be a reference");
+        }
     }
 }
