@@ -254,7 +254,7 @@ impl Host {
 
     /// After a restore: the user is told once about duplicate sibling names the notebook may
     /// contain (older checkpoints can hold them), as the Qt app does.
-    fn warn_about_duplicates(&mut self, ctx: &egui::Context) {
+    pub(crate) fn warn_about_duplicates(&mut self, ctx: &egui::Context) {
         let dup = self
             .doc
             .as_ref()

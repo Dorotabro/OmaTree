@@ -30,12 +30,13 @@ pub enum Dialog {
     SaveAs {
         path: String,
         error: Option<String>,
-        close_after: bool,
+        /// Carry on with the pending leave (close, New, Open) once the notebook is saved.
+        then: bool,
     },
     /// The chosen file exists; replacing it needs a yes.
     Overwrite {
         path: PathBuf,
-        close_after: bool,
+        then: bool,
     },
     /// Move this note and everything below it to Trash?
     ConfirmDelete(NodeId),
@@ -45,6 +46,13 @@ pub enum Dialog {
     Recovery,
     /// The keyboard reference, F1 (`help.rs`).
     Shortcuts,
+    /// Typing the path of a notebook to open (used when no native file dialog is available).
+    Open {
+        path: String,
+        error: Option<String>,
+    },
+    /// A native file dialog is open in another window; nothing here reacts until it answers.
+    Picking,
 }
 
 pub(crate) fn is_conflict(e: &DocumentError) -> bool {
@@ -77,6 +85,7 @@ impl Host {
     /// Per-frame work that must also run while the window is hidden: close requests and autosave.
     pub fn logic(&mut self, ctx: &egui::Context) {
         self.theme.update(ctx);
+        self.poll_pick(ctx);
         let now = ctx.input(|i| i.time);
         if std::mem::take(&mut self.edited) {
             self.autosave_due = Some(now + AUTOSAVE_DELAY);
@@ -118,6 +127,7 @@ impl Host {
             return true;
         }
         if self.dialog == Dialog::None {
+            self.pending = Some(Leave::Close);
             self.open_dialog(ctx, Dialog::Unsaved { error: None });
         }
         false
@@ -156,7 +166,7 @@ impl Host {
         }
     }
 
-    fn finish_close(&mut self, ctx: &egui::Context) {
+    pub(crate) fn finish_close(&mut self, ctx: &egui::Context) {
         self.quit = true;
         self.dialog = Dialog::None;
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -192,6 +202,11 @@ impl Host {
         if !self.commit_title(ctx) {
             return;
         }
+        // A notebook with no file yet is saved by choosing one.
+        if self.doc.as_ref().is_some_and(|d| !d.has_path()) {
+            self.start_save_as(ctx, false);
+            return;
+        }
         match self.persist(ctx) {
             Ok(()) => {
                 self.saved();
@@ -202,7 +217,9 @@ impl Host {
     }
 
     fn autosave(&mut self, ctx: &egui::Context) {
-        if self.autosave_blocked || self.dialog_open() || !self.is_dirty() {
+        // An untitled notebook has no file to write to: nothing is saved behind the user's back.
+        let untitled = self.doc.as_ref().is_some_and(|d| !d.has_path());
+        if untitled || self.autosave_blocked || self.dialog_open() || !self.is_dirty() {
             return;
         }
         match self.persist(ctx) {
@@ -225,11 +242,16 @@ impl Host {
     // --- The close question ------------------------------------------------------------------
 
     pub fn unsaved_save(&mut self, ctx: &egui::Context) {
+        // No file yet: Save means choosing one, then carrying on.
+        if self.doc.as_ref().is_some_and(|d| !d.has_path()) {
+            self.start_save_as(ctx, true);
+            return;
+        }
         match self.persist(ctx) {
             Ok(()) => {
                 self.saved();
                 self.status = "Saved".to_owned();
-                self.finish_close(ctx);
+                self.continue_pending(ctx);
             }
             Err(e) => {
                 let msg = self.note_save_failure(&e);
@@ -245,18 +267,20 @@ impl Host {
 
     pub fn confirm_discard(&mut self, ctx: &egui::Context) {
         if self.dialog == Dialog::ConfirmDiscard {
-            self.finish_close(ctx);
+            self.continue_pending(ctx);
         }
     }
 
     /// Cancel / Escape in any dialog: back to editing, document untouched.
     pub fn cancel_dialog(&mut self) {
+        // Whatever was waiting for the answer (close, New, Open) is dropped with it.
+        self.pending = None;
         self.close_dialog();
     }
 
     // --- Save As -------------------------------------------------------------------------------
 
-    pub fn start_save_as(&mut self, ctx: &egui::Context, close_after: bool) {
+    pub fn start_save_as(&mut self, ctx: &egui::Context, then: bool) {
         if !self.commit_title(ctx) {
             return;
         }
@@ -269,18 +293,34 @@ impl Host {
             .as_deref()
             .and_then(Path::parent)
             .map(Path::to_path_buf)
+            .or_else(|| std::env::current_dir().ok())
             .unwrap_or_default();
         let name = self.path.as_deref().and_then(Path::file_stem).map_or_else(
-            || "notebook".to_owned(),
-            |s| s.to_string_lossy().into_owned(),
+            || "Untitled".to_owned(),
+            |s| format!("{} copy", s.to_string_lossy()),
         );
-        let suggested = dir.join(format!("{name} copy.omatree"));
+        if self.picker.is_some() {
+            self.begin_pick(
+                ctx,
+                PickRequest {
+                    kind: PickKind::Save { then },
+                    dir: self
+                        .path
+                        .as_deref()
+                        .and_then(Path::parent)
+                        .map(Path::to_path_buf),
+                    name: format!("{name}.omatree"),
+                },
+            );
+            return;
+        }
+        let suggested = dir.join(format!("{name}.omatree"));
         self.open_dialog(
             ctx,
             Dialog::SaveAs {
                 path: suggested.display().to_string(),
                 error: None,
-                close_after,
+                then,
             },
         );
     }
@@ -301,23 +341,33 @@ impl Host {
         if p.is_absolute() {
             return Some(p);
         }
-        let base = self.path.as_deref().and_then(Path::parent)?;
+        let base = self
+            .path
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::current_dir().ok())?;
         Some(base.join(p))
     }
 
     /// Save (Enter) in the Save As dialog.
     pub fn submit_save_as(&mut self, ctx: &egui::Context) {
-        let Dialog::SaveAs {
-            path, close_after, ..
-        } = self.dialog.clone()
-        else {
+        let Dialog::SaveAs { path, then, .. } = self.dialog.clone() else {
             return;
         };
-        let Some(target) = self.target_of(&path) else {
+        self.submit_save_target(ctx, &path, then);
+    }
+
+    /// Save As to `typed` (what was typed, or the path a file dialog returned): the extension is
+    /// added when missing, an existing file other than this notebook's own needs a yes, and
+    /// `Document::save_as` does the rest (including refusing to overwrite a file that is not a
+    /// notebook).
+    pub(crate) fn submit_save_target(&mut self, ctx: &egui::Context, typed: &str, then: bool) {
+        let Some(target) = self.target_of(typed) else {
             self.set_dialog(Dialog::SaveAs {
-                path,
+                path: typed.to_owned(),
                 error: Some("Enter a file name.".to_owned()),
-                close_after,
+                then,
             });
             return;
         };
@@ -326,18 +376,15 @@ impl Host {
             .as_ref()
             .is_some_and(|d| d.save_as_needs_confirmation(&target));
         if needs {
-            self.set_dialog(Dialog::Overwrite {
-                path: target,
-                close_after,
-            });
+            self.set_dialog(Dialog::Overwrite { path: target, then });
         } else {
-            self.finish_save_as(ctx, target, false, close_after);
+            self.finish_save_as(ctx, target, false, then);
         }
     }
 
     pub fn confirm_overwrite(&mut self, ctx: &egui::Context) {
-        if let Dialog::Overwrite { path, close_after } = self.dialog.clone() {
-            self.finish_save_as(ctx, path, true, close_after);
+        if let Dialog::Overwrite { path, then } = self.dialog.clone() {
+            self.finish_save_as(ctx, path, true, then);
         }
     }
 
@@ -346,7 +393,7 @@ impl Host {
         ctx: &egui::Context,
         target: PathBuf,
         overwrite: bool,
-        close_after: bool,
+        then: bool,
     ) {
         self.leave(ctx);
         let Some(doc) = self.doc.as_mut() else { return };
@@ -355,8 +402,8 @@ impl Host {
                 self.path = Some(target.clone());
                 self.saved();
                 self.status = format!("Saved as {}", file_name(&target));
-                if close_after {
-                    self.finish_close(ctx);
+                if then {
+                    self.continue_pending(ctx);
                 } else {
                     self.close_dialog();
                 }
@@ -367,7 +414,7 @@ impl Host {
                 self.set_dialog(Dialog::SaveAs {
                     path: target.display().to_string(),
                     error: Some(msg),
-                    close_after,
+                    then,
                 });
             }
         }
@@ -405,6 +452,14 @@ impl Host {
             }
             Dialog::Shortcuts => {
                 self.show_shortcuts(ctx, first_frame);
+                return;
+            }
+            Dialog::Open { .. } => {
+                self.show_open_path(ctx, first_frame);
+                return;
+            }
+            Dialog::Picking => {
+                self.show_picking(ctx);
                 return;
             }
             Dialog::Unsaved { error } => {

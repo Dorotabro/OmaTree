@@ -827,7 +827,12 @@ fn f1_lists_the_real_shortcuts_and_not_the_retired_ones() {
         .collect();
     let has = |texts: &[String], s: &str| texts.iter().any(|t| t == s);
     for (s, what) in [
-        (keymap::SAVE, "Save"),
+        (keymap::SAVE, "Save (an untitled notebook asks where)"),
+        (keymap::OPEN, "Open a notebook"),
+        (
+            keymap::NEW_NOTEBOOK,
+            "New notebook (untitled, in memory until saved)",
+        ),
         (keymap::SAVE_AS, "Save As"),
         (keymap::NEW_NOTE, "New note"),
         (keymap::NEW_CHILD, "New child note"),

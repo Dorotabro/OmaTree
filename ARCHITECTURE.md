@@ -154,7 +154,9 @@ in `docs/EGUI_MIGRATION_PLAN.md`. This section only states the intended shape.
 ## Crates
 
 Status: `omatree-core` **exists** (ticket E1, `crates/core`); `omatree-egui` **exists as a
-minimal shell** (tickets E4 and E4.1, `crates/egui-app`); the editor library lives in the
+working notebook application** (tickets E4 to E8a, `crates/egui-app`: tree with drag and drop,
+Search, Recovery, F1, themes, New/Open/Save As through native dialogs; attachments, export and
+the cut-over are still to come); the editor library lives in the
 `omatree-egui-editor-spike` repository (branch `editor-library`) and is consumed as a Git
 dependency pinned to an exact commit (see the E4.1 record in
 `docs/EGUI_MIGRATION_PLAN.md`, which also says how to update the pin).
@@ -165,8 +167,9 @@ dependency pinned to an exact commit (see the E4.1 record in
                      live-rendered source-backed editing, attachments trait, export, PDF
     omatree (Qt)     [implemented] the current application at the repository root;
                      depends on omatree-core; behaviour unchanged
-    omatree-egui     [E4: minimal] the new application: egui host over core + editor;
-                     opens a notebook, flat indented note list, one EditorView, Ctrl+S
+    omatree-egui     [E8a: working] the new application: egui host over core + editor;
+                     starts untitled or with a path, hierarchical tree, Search, Recovery,
+                     F1, New/Open/Save As, autosave, guarded close; no attachments yet
 
 The standalone editor keeps a runnable demo binary built on the same library.
 
@@ -203,7 +206,7 @@ The standalone editor keeps a runnable demo binary built on the same library.
 - Theme: the existing semantic palette (Omarchy, else system light/dark) drives the
   egui visuals.
 - Export (Markdown folder, ZIP, PDF) reads only the attachment store.
-## Implemented in E4 (egui shell)
+## Implemented in E4 (egui shell, since extended: see the sections below)
 
     omatree-egui (crates/egui-app)  Host: Document, rows, selected node, one text buffer,
                                     status, UnavailableStore, EditorKeys::omatree()
@@ -281,3 +284,19 @@ call. `keymap.rs` holds the application-wide shortcuts once: `Host::handle_short
 and `help.rs` (F1) prints them through egui's formatter, together with the editor's `EditorKeys`.
 `Dialog` has two new variants (`Recovery`, `Shortcuts`); both go through `open_dialog`, `focus_back`
 and `cancel_dialog` like every other question.
+
+## The egui application today (E8a)
+
+`crates/egui-app` is one `Host` over exactly one `Document` (`omatree-core`) and one `EditorView`.
+It starts with an untitled in-memory notebook or the path given; there is no second store of
+notebook content. Modules: `tree`/`tree_ui`/`drag` (virtualised tree, keys, drag and drop),
+`search`, `recovery_ui`, `help` + `keymap` (F1 and the one shortcut table), `theme` + `layout`
+(palette-derived colours, spacing), `lifecycle` (Save, autosave, conflicts, the modal questions)
+and `files` (New, Open, and the native file dialogs).
+
+Leaving a notebook (closing the window, New, Open) has one guard, `Host::request_leave`: commit
+the title, flush the editor, ask Save / Discard / Cancel when dirty, and carry on only after a
+successful save or a confirmed discard; the waiting action is a single `Option<Leave>` consumed
+once. A notebook is only ever replaced by `Host::install`, which resets editor state, Search,
+Recovery and autosave state together. The system file dialogs (`rfd`, desktop portal) run on a
+thread and are polled once per frame; without them a typed-path dialog asks the same questions.

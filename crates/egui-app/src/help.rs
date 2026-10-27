@@ -101,7 +101,12 @@ impl Host {
                 "Files",
                 "Anywhere in the note window",
                 vec![
-                    (key(&keymap::SAVE), "Save"),
+                    (
+                        key(&keymap::NEW_NOTEBOOK),
+                        "New notebook (untitled, in memory until saved)",
+                    ),
+                    (key(&keymap::OPEN), "Open a notebook"),
+                    (key(&keymap::SAVE), "Save (an untitled notebook asks where)"),
                     (key(&keymap::SAVE_AS), "Save As"),
                 ],
             ),

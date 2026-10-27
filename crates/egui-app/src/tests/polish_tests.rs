@@ -1009,8 +1009,9 @@ fn the_sidebar_actions_are_flat_text_reachable_by_keyboard_and_disabled_means_mu
         })
         .count();
     assert_eq!(small, 0, "a flat action has no box");
-    // Shift+Tab from the tree reaches the last action; Enter does what its click does.
+    // Shift+Tab from the tree reaches "file", then "+ child"; Enter does what its click does.
     let n = h.host.rows().len();
+    h.key(Key::Tab, Modifiers::SHIFT);
     h.key(Key::Tab, Modifiers::SHIFT);
     h.press(Key::Enter);
     h.settle();

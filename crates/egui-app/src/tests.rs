@@ -83,8 +83,8 @@ impl H {
     }
 
     /// Open in a window of `screen` size from the very first frame.
-    fn open_sized(path: &Path, screen: Vec2) -> Self {
-        let mut h = H {
+    fn bare(screen: Vec2) -> Self {
+        H {
             ctx: egui::Context::default(),
             host: Host::new(),
             t: 0.0,
@@ -94,7 +94,11 @@ impl H {
             system: None,
             screen,
             shapes: Vec::new(),
-        };
+        }
+    }
+
+    fn open_sized(path: &Path, screen: Vec2) -> Self {
+        let mut h = H::bare(screen);
         assert!(h.host.open(&h.ctx.clone(), path), "{}", h.host.status());
         // The app starts with the tree focused; most tests type, so they start in the editor.
         h.host.focus(Focus::Editor);
@@ -801,6 +805,7 @@ fn timings() {
 mod lifecycle_tests;
 
 mod drag_tests;
+mod files_tests;
 mod polish_tests;
 mod recovery_tests;
 mod search_tests;

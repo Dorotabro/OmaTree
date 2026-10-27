@@ -10,6 +10,7 @@
 //!   the attachment backend (none yet: [`UnavailableStore`]).
 
 mod drag;
+mod files;
 mod help;
 mod keymap;
 mod layout;
@@ -22,6 +23,10 @@ mod theme;
 mod tree;
 mod tree_ui;
 
+pub use files::{
+    default_picker, native_picker, scripted_picker, Leave, PickKind, PickRequest, PickResult,
+    Picker,
+};
 pub use lifecycle::{Dialog, AUTOSAVE_DELAY};
 pub use ops::Focus;
 pub use recovery_ui::Tab as RecoveryTab;
@@ -70,6 +75,11 @@ pub struct Host {
     /// Notebook-wide Search: the field, the query and the results derived from it.
     search: search::Search,
     recovery: recovery_ui::RecoveryUi,
+    /// What waits for the unsaved-changes answer (close, New, Open).
+    pending: Option<Leave>,
+    /// The native file dialog starter (none: typed paths) and the one in flight.
+    picker: Option<Picker>,
+    pick: Option<files::Pick>,
     scroll_to: Option<NodeId>,
     /// Open the keyboard context menu on the selected row.
     menu_request: bool,
@@ -128,6 +138,9 @@ impl Host {
             status_since: 0.0,
             search: search::Search::default(),
             recovery: recovery_ui::RecoveryUi::default(),
+            pending: None,
+            picker: None,
+            pick: None,
             scroll_to: None,
             menu_request: false,
             menu_pos: None,
@@ -228,25 +241,12 @@ impl Host {
     pub fn open(&mut self, ctx: &egui::Context, path: &Path) -> bool {
         match Document::open_existing(path) {
             Ok(doc) => {
-                self.leave(ctx);
-                self.forget_all(ctx);
-                self.notebook += 1;
-                self.doc = Some(doc);
-                self.path = Some(path.to_path_buf());
-                self.error = None;
-                self.status = format!("Opened {}", file_name(path));
-                self.tree = self.doc.as_ref().map(Tree::build).unwrap_or_default();
-                self.selected = None;
-                self.text.clear();
-                self.title_text.clear();
-                self.loaded_title.clear();
-                self.dialog = Dialog::None;
-                // Results name notes of the notebook that is going away.
-                self.search = search::Search::default();
-                if let Some(first) = self.tree.rows().first().map(|r| r.id) {
-                    self.load(first);
-                }
-                self.set_focus(Focus::Tree);
+                self.install(
+                    ctx,
+                    doc,
+                    Some(path.to_path_buf()),
+                    format!("Opened {}", file_name(path)),
+                );
                 true
             }
             Err(e) => {
@@ -261,7 +261,7 @@ impl Host {
     }
 
     /// Forget editor state (caret, selection, undo, images) of the notebook being replaced.
-    fn forget_all(&mut self, ctx: &egui::Context) {
+    pub(crate) fn forget_all(&mut self, ctx: &egui::Context) {
         for r in self.tree.rows() {
             self.view.forget_note(ctx, key_of(self.notebook, r.id));
         }
@@ -343,6 +343,14 @@ impl Host {
         }
         if ctx.input_mut(|i| i.consume_shortcut(&keymap::SAVE)) {
             self.save(ctx);
+        }
+        if self.drag.is_none() && ctx.input_mut(|i| i.consume_shortcut(&keymap::OPEN)) {
+            self.open_notebook(ctx);
+        }
+        // Ctrl+Alt+N: a whole new notebook (Ctrl+N stays "new note"). Alt is never ignored by
+        // egui's matching, so this is tried before and apart from Ctrl+N.
+        if self.drag.is_none() && ctx.input_mut(|i| i.consume_shortcut(&keymap::NEW_NOTEBOOK)) {
+            self.new_notebook(ctx);
         }
         // Application-wide note commands (as the Qt app's `Shortcut`s): they work from the tree,
         // the title and the editor alike.
@@ -604,14 +612,8 @@ impl App {
         host.set_bold(omatree_editor::fonts::install_bold(&cc.egui_ctx));
         host.follow_omarchy(omatree_core::theme::default_omarchy_colors_path());
         host.theme.update(&cc.egui_ctx);
-        match path {
-            Some(p) => {
-                if !host.open(&cc.egui_ctx, &p) {
-                    eprintln!("omatree-egui: {}", host.status());
-                }
-            }
-            None => eprintln!("usage: omatree-egui NOTEBOOK.omatree"),
-        }
+        host.set_picker(files::default_picker());
+        host.start_with(&cc.egui_ctx, path.as_deref());
         App { host }
     }
 }

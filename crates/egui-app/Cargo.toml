@@ -24,3 +24,4 @@ omatree-core = { path = "../core" }
 omatree_editor = { package = "omatree-egui-editor-spike", git = "https://github.com/Dorotabro/omatree-egui-editor-spike.git", rev = "30a95dd43064232dc1ac04315c8020e2307a223c" }
 # Same egui/eframe line and feature set as the editor repository's own binary.
 eframe = { version = "0.37", default-features = false, features = ["clipboard", "links", "default_fonts", "system_fonts", "glow", "wayland", "x11"] }
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "pollster"] }

@@ -36,6 +36,11 @@ enum Cmd {
     NewRoot,
     NewChild,
     Recovery,
+    NewNotebook,
+    OpenNotebook,
+    Save,
+    SaveAs,
+    Help,
     ExpandAll(bool),
     ExpandSubtree(NodeId, bool),
     /// The drag ended (dropped, cancelled or lost): close what hovering opened.
@@ -79,6 +84,12 @@ impl Host {
                     {
                         cmds.push(Cmd::NewChild);
                     }
+                    // The notebook's own commands, one stop at the other end of the strip.
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let file = flat_action(ui, "file", true, &chrome)
+                            .on_hover_text("Notebook: new, open, save, recovery");
+                        egui::Popup::menu(&file).show(|ui| file_entries(ui, &chrome, &mut cmds));
+                    });
                 });
             });
 
@@ -586,6 +597,11 @@ impl Host {
                 Cmd::NewRoot => self.create_root(ctx),
                 Cmd::NewChild => self.create_child(ctx),
                 Cmd::Recovery => self.open_recovery(ctx),
+                Cmd::NewNotebook => self.new_notebook(ctx),
+                Cmd::OpenNotebook => self.open_notebook(ctx),
+                Cmd::Save => self.save(ctx),
+                Cmd::SaveAs => self.start_save_as(ctx, false),
+                Cmd::Help => self.open_dialog(ctx, Dialog::Shortcuts),
                 Cmd::ExpandAll(open) => self.set_all_expanded(ctx, open),
                 Cmd::ExpandSubtree(id, open) => self.set_subtree_expanded(ctx, id, open),
                 Cmd::EndDrag(opened) => self.end_drag(opened),
@@ -806,4 +822,41 @@ fn menu_entries(
     pick(ui, "Move to Trash", "Delete", on.is_some(), Cmd::Delete);
     let recovery_keys = ui.ctx().format_shortcut(&keymap::RECOVERY);
     pick(ui, "Recovery\u{2026}", &recovery_keys, true, Cmd::Recovery);
+}
+
+/// The notebook menu behind "file": the commands that are about the whole notebook.
+fn file_entries(ui: &mut egui::Ui, ch: &theme::Chrome, cmds: &mut Vec<Cmd>) {
+    ui.set_min_width(240.0);
+    ui.spacing_mut().button_padding = Vec2::new(10.0, 4.0);
+    ui.spacing_mut().item_spacing.y = 2.0;
+    let _ = ch;
+    let ctx = ui.ctx().clone();
+    let keys = |s: &egui::KeyboardShortcut| ctx.format_shortcut(s);
+    let mut pick = |ui: &mut egui::Ui, label: &str, hint: String, cmd: Cmd| {
+        if ui
+            .add(egui::Button::new(label).shortcut_text(hint))
+            .clicked()
+        {
+            cmds.push(cmd);
+            ui.close();
+        }
+    };
+    pick(
+        ui,
+        "New notebook",
+        keys(&keymap::NEW_NOTEBOOK),
+        Cmd::NewNotebook,
+    );
+    pick(ui, "Open\u{2026}", keys(&keymap::OPEN), Cmd::OpenNotebook);
+    ui.separator();
+    pick(ui, "Save", keys(&keymap::SAVE), Cmd::Save);
+    pick(ui, "Save As\u{2026}", keys(&keymap::SAVE_AS), Cmd::SaveAs);
+    ui.separator();
+    pick(
+        ui,
+        "Recovery\u{2026}",
+        keys(&keymap::RECOVERY),
+        Cmd::Recovery,
+    );
+    pick(ui, "Keyboard shortcuts", keys(&keymap::HELP), Cmd::Help);
 }

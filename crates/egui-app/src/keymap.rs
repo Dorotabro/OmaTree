@@ -12,6 +12,9 @@ pub(crate) const SAVE: KeyboardShortcut = KeyboardShortcut::new(CMD, Key::S);
 pub(crate) const SAVE_AS: KeyboardShortcut = KeyboardShortcut::new(CMD_SHIFT, Key::S);
 pub(crate) const NEW_NOTE: KeyboardShortcut = KeyboardShortcut::new(CMD, Key::N);
 pub(crate) const NEW_CHILD: KeyboardShortcut = KeyboardShortcut::new(CMD_SHIFT, Key::N);
+pub(crate) const OPEN: KeyboardShortcut = KeyboardShortcut::new(CMD, Key::O);
+pub(crate) const NEW_NOTEBOOK: KeyboardShortcut =
+    KeyboardShortcut::new(CMD.plus(Modifiers::ALT), Key::N);
 pub(crate) const FIND: KeyboardShortcut = KeyboardShortcut::new(CMD, Key::F);
 pub(crate) const RECOVERY: KeyboardShortcut = KeyboardShortcut::new(CMD_SHIFT, Key::R);
 pub(crate) const MOVE_UP: KeyboardShortcut = KeyboardShortcut::new(Modifiers::ALT, Key::ArrowUp);
