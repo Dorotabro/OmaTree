@@ -23,7 +23,7 @@ omatree-core = { path = "../core" }
 # "E4.1 implementation record".
 omatree_editor = { package = "omatree-egui-editor-spike", git = "https://github.com/Dorotabro/omatree-egui-editor-spike.git", rev = "30a95dd43064232dc1ac04315c8020e2307a223c" }
 # Same egui/eframe line and feature set as the editor repository's own binary.
-eframe = { version = "0.37", default-features = false, features = ["clipboard", "links", "default_fonts", "system_fonts", "glow", "wayland", "x11"] }
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "links", "default_fonts", "system_fonts", "glow", "wayland", "x11"] }
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "pollster"] }
 # The editor library builds `image` with PNG only. Cargo unifies features per crate, so asking for
 # `jpeg` here (the decoder crates are already in the lock file) lets the editor's own

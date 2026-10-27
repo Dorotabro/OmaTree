@@ -6,9 +6,11 @@ It is deliberately small and may evolve.
 
 > **Migration in progress.** Qt/QML is being replaced by egui/eframe (see
 > `docs/EGUI_DECISIONS.md`, `docs/EGUI_MIGRATION_PLAN.md`). Everything from
-> "Technology stack" to "Platform-specific code" below describes the **current
-> implementation** (Qt) and stays accurate until the cut-over. The section
-> "Target architecture (egui)" at the end is **proposed and mostly not implemented**.
+> "Technology stack" to "Platform-specific code" below describes the **legacy Qt
+> implementation**, which stays buildable and tested until the cut-over (ticket E13, the
+> maintainer's decision). The section "Target architecture (egui)" at the end describes the
+> **egui application, which is implemented** on Linux through ticket E12a; what remains is
+> packaging (E12b), cross-platform validation (E12c) and the cut-over itself.
 
 ## Current implementation (Qt)
 
@@ -146,30 +148,32 @@ small scope (see `VISION.md`).
 
 ---
 
-# Target architecture (egui): proposed, not yet implemented
+# Target architecture (egui): implemented on `egui-integration`
 
-The decisions are recorded in `docs/EGUI_DECISIONS.md`; the sequence, APIs and risks are
-in `docs/EGUI_MIGRATION_PLAN.md`. This section only states the intended shape.
+The decisions are recorded in `docs/EGUI_DECISIONS.md`; the sequence, APIs, risks and the
+per-ticket implementation records are in `docs/EGUI_MIGRATION_PLAN.md`. This section states the
+shape of what exists.
 
 ## Crates
 
-Status: `omatree-core` **exists** (ticket E1, `crates/core`); `omatree-egui` **exists as a
-working notebook application** (tickets E4 to E8a, `crates/egui-app`: tree with drag and drop,
-Search, Recovery, F1, themes, New/Open/Save As through native dialogs; attachments, export and
-the cut-over are still to come); the editor library lives in the
-`omatree-egui-editor-spike` repository (branch `editor-library`) and is consumed as a Git
-dependency pinned to an exact commit (see the E4.1 record in
+Status (after E12a): all three exist. `omatree-core` is `crates/core`. `omatree-egui`
+(`crates/egui-app`) is a complete notebook application on Linux: hierarchical tree with drag and
+drop, Search, Recovery (Trash and checkpoints), F1, themes, New/Open/Save As through native
+dialogs, autosave, conflict recovery, images stored in the notebook (PNG and JPEG), export of the
+active note (Markdown, folder, ZIP, PDF), Compact Notebook, and AccessKit accessibility. The
+editor library lives in the `omatree-egui-editor-spike` repository (branch `editor-library`) and is
+consumed as a Git dependency pinned to an exact commit (see the E4.1 record in
 `docs/EGUI_MIGRATION_PLAN.md`, which also says how to update the pin).
 
-    omatree-core     [implemented] Qt-free, egui-free: notebook, document, storage (SQLite),
-                     recovery, search, theme palette, link safety
+    omatree-core     [implemented] Qt-free, egui-free: notebook, document, storage (SQLite,
+                     schema 4 with attachments), recovery, search, theme palette, link safety,
+                     reference-aware pruning and space reclamation
     omatree-editor   egui Markdown editor library (from the standalone editor):
                      live-rendered source-backed editing, attachments trait, export, PDF
-    omatree (Qt)     [implemented] the current application at the repository root;
-                     depends on omatree-core; behaviour unchanged
-    omatree-egui     [E8a: working] the new application: egui host over core + editor;
-                     starts untitled or with a path, hierarchical tree, Search, Recovery,
-                     F1, New/Open/Save As, autosave, guarded close; no attachments yet
+    omatree (Qt)     [legacy, implemented] the Qt application at the repository root; depends on
+                     omatree-core; behaviour unchanged; still built and tested
+    omatree-egui     [implemented on Linux] the egui application over core + editor; Windows and
+                     macOS are not yet verified (E12c); packaging is E12b
 
 The standalone editor keeps a runnable demo binary built on the same library.
 
@@ -285,7 +289,7 @@ and `help.rs` (F1) prints them through egui's formatter, together with the edito
 `Dialog` has two new variants (`Recovery`, `Shortcuts`); both go through `open_dialog`, `focus_back`
 and `cancel_dialog` like every other question.
 
-## The egui application today (E8a)
+## The egui application today (E12a)
 
 `crates/egui-app` is one `Host` over exactly one `Document` (`omatree-core`) and one `EditorView`.
 It starts with an untitled in-memory notebook or the path given; there is no second store of
@@ -395,3 +399,15 @@ authorizes nothing. A stale token, an unsaved change or an external write delete
 says so; the review is dropped when the dialog closes or the notebook is replaced. The core
 calls are synchronous (one owning connection), so a large notebook pauses briefly. See
 `docs/EGUI_MIGRATION_PLAN.md`, "E11b implementation record".
+
+### Linux runtime audit (E12a)
+
+Findings that changed the code: with a text field focused the window rendered at the display's
+refresh rate because egui-winit re-sent the input method's cursor rectangle on every input event
+and the input method answered each message with an empty pre-edit event; `Host::filter_input`
+(through `eframe::App::raw_input_hook`) drops an empty pre-edit when no composition is in
+progress and passes real composition untouched. A pasted image goes at the end of the note when
+the note's editor has never had a caret. A doubled extension from the desktop portal is
+collapsed. AccessKit is enabled (`eframe` feature `accesskit`): the tree rows, the tree, the title
+field and the editor have roles and names. The window's launch size can be set with
+`OMATREE_WINDOW_SIZE=WxH` for diagnostics. See `docs/EGUI_MIGRATION_PLAN.md`, "E12a record".

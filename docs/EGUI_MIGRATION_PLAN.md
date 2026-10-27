@@ -1140,6 +1140,88 @@ The review state lives in `Host::compact`, outside `Dialog` so the large report 
 
 **E12 readiness.** The egui shell now has every Qt feature this migration set out to port, except what E12 covers: accessibility and IME review, the full parity checklist on X11, Windows and macOS, packaging, `THIRD_PARTY.md`, and the cross-platform items recorded in E9c (gating the unix-only test modules, `fullfsync` on macOS, Windows rename semantics for export replacement).
 
+### E12a record (Linux parity, usability, accessibility and regression audit)
+
+E12a is the first of three release-hardening tickets (E12b packaging and desktop integration, E12c cross-platform validation). No feature was added, Qt is untouched, the schema is unchanged and the pinned editor is unchanged. **Baseline** (clean tree, `egui-integration` at E11b, before any change): `cargo fmt`, `clippy -D warnings`, `cargo test --workspace` (Qt 43, core 357 plus 4 ignored, egui 292 plus 13 ignored) and the release build all passed; `tools/pre-e9-compat.sh` unchanged.
+
+**Validation after the fixes.** `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (Qt 43, core 357 plus 4 ignored, egui 302 plus 15 ignored) and `cargo build --release --workspace` pass; `tools/pre-e9-compat.sh` unchanged (v3 opens, v4 and v4-pruned refused). The ignored measurement `audit_performance` and the fixture writers were run separately.
+
+**How the evidence is labelled.** *GUI* = observed in the native window (Wayland on Hyprland unless stated), *auto* = headless frame tests on a real `Host` and `Document`, *Qt* = observed in the Qt build or its QML scenarios, *inspected* = read from source or dependency metadata only, *unverified* = not done. A test file existing is not a PASS: each row says what was actually run.
+
+**Test matrix (Qt scenario, egui evidence, result).** The egui regression suite is 292 tests (`crates/egui-app/src/tests/*.rs`) plus the 43 Qt/QML-driven tests, which still pass.
+
+| User action | Qt expectation (scenario) | egui evidence | Result |
+|---|---|---|---|
+| Untitled, create, Save As, reopen | `lifecycle.qml` | auto: `lifecycle_tests`, the E12a extended session (23 steps, `audit_tests`); GUI E8a | PASS |
+| New root/child, default titles | `newnote.qml` | auto: `tree_tests`; session steps 3-4 (12 levels) | PASS |
+| Rename: empty and duplicate refused, pending title committed | `titles.qml`, `titleclose.qml` | auto: `tree_tests`, `lifecycle_tests`, `compact_tests` (invalid title) | PASS |
+| Edit body, real changes dirty, unchanged never | `EditorPane.qml` | auto: `tests.rs` | PASS |
+| Autosave, failure shown once, retry | `autosave.qml` | auto: `hardening_tests`; GUI: autosave seen in E10, E11b | PASS |
+| Save, Save As, overwrite, non-notebook refused | `lifecycle.qml` | auto; GUI E8a and E11a (native portal dialog) | PASS |
+| New/Open ask first when dirty | `replacement.qml` | auto: `files_tests`, session step 21 | PASS (GUI: not re-run in E12a) |
+| External modification: nothing written | `conflict.qml` | auto: `hardening_tests`, session step 22; GUI E8b | PASS |
+| Czech paths and names | `paths.qml` | auto: `files_tests`; GUI: Czech file names in E11a | PASS |
+| Expand/collapse, subtree, persisted | `expansion.qml`, `moveexpanded.qml` | auto: `tree_tests`, session steps 5-7 | PASS (GUI: not exercised in E12a) |
+| Tree keyboard | `keyboard.qml`, `keymap.qml` | auto: `tree_tests`, `audit_tests` (Tab order, modal traps) | PASS; GUI: Tab and Escape walks only |
+| Drag and drop, cycle prevention | `TreePane.qml` | auto: `drag_tests`, session step 6 (programmatic drop) | PASS auto; a real mouse drag was **not** exercised in E12a |
+| Delete to Trash, restore Trash and checkpoints | `recovery.qml`, `recoverykeys.qml` | auto: `recovery_tests`, session 17-18; GUI E11b (restore after compaction) | PASS |
+| Search: titles first, body snippets, reveal | `search.qml`, `searchheader.qml` | auto: `search_tests`, session 11-12 (reveals a collapsed branch) | PASS auto; GUI: not exercised in E12a |
+| Escape returns to the tree | `escape.qml` | auto: modal and tab tests | PASS |
+| Dialog keyboard: one focus, Enter, Escape | `dialogs.qml` | auto: all five modal kinds (`every_modal_traps_the_keyboard...`); GUI E11a/E11b dialogs | PASS (deliberate deviation: explicit button words, not N/Y) |
+| F1 reference from the real key map | `keymap.qml` | auto: `export_tests`, `polish_tests` | PASS auto; GUI: not exercised in E12a |
+| Omarchy palette live, system fallback | `theme.qml`, `systemtheme.qml` | auto: `theme_tests`; **GUI E12a**: the user's Omarchy Kanagawa theme (read-only copy), a light fixture, a low-contrast fixture, a live switch light to Kanagawa in about 4 s | PASS |
+| Edit/Preview toggle and spacing | `preview.qml`, `spacing.qml` | retired (D4) | RETIRED |
+| No remote or file images | `resources.qml` | auto: `image_tests`, `export_tests`; GUI E10 | PASS |
+| macOS "open with" | `systemopen.qml` | none | E12c |
+| v4 notebook saved by Qt | `attachments.qml` (E9c) | Qt-driven test | PASS |
+| Images: paste, JPEG, resize, recovery | (new) | auto `image_tests`; GUI E10 | PASS |
+| Export four formats | (new) | auto; GUI E11a incl. evince | PASS |
+| Compact Notebook | (new) | auto; GUI E11b | PASS |
+
+**Extended session (section 2).** One automated test (`an_extended_session_stays_coherent_from_first_note_to_quit`) runs the 23 steps through the host's own commands and frame loop: untitled notebook, Save As, a hierarchy 12 levels deep, rename, move and drop, collapse and expand, Markdown across several notes, repeated switching, Ctrl+Z and redo, search reveal in a collapsed branch, paste PNG, width annotation, save and reopen, delete and Trash restore, checkpoint restore then Ctrl+Z (it does not resurrect older text), export to Markdown, ZIP and PDF, Compact preview with the file unchanged, New with unsaved changes (Cancel keeps the edit), an external conflict resolved by Save As, and quit. It found no defect; one step of my own was wrong (restoring the newest checkpoint removes the subtree again, which is correct). *The same sequence was not driven by hand in a window*: GUI coverage is the individual flows exercised in E5 to E11b plus the E12a items below.
+
+**Issues found, fixed and deferred.**
+
+| # | Severity | Reproduction | Impact | Fix or deferral | Evidence |
+|---|---|---|---|---|---|
+| 1 | High | Focus the editor or the title field, change nothing | The window renders at 60 frames per second and sends 60 text-input commits per second, about 8 % of a core, forever | **Fixed.** Cause: egui-winit re-sends the IME cursor rectangle whenever the frame has any input event, the input method (fcitx5 here, through text-input-v3) answers every message with `done`, winit turns it into an empty pre-edit event, which is an event. `Host::filter_input` (via `eframe::App::raw_input_hook`) drops an empty pre-edit when no composition is in progress; real composition passes. | GUI: 8.0 % and 8.2 % of a core (editor, title) with 60 commits/s from the Wayland trace; after the fix 0.3 % and 0.5 %, 4 commits/s (the cursor blink); tree focus 0.2 %. auto: `only_an_empty_preedit_with_no_composition_in_progress_is_dropped` |
+| 2 | Medium | Open a notebook (tree has the keyboard), press Ctrl+V with an image | The image went to the very start of the note, out of sight in a long note (E10 observation) | **Fixed.** A note whose editor has no caret yet gets one at the end before the paste; a caret the user left is kept. Not an editor-library change. | auto: negative control (fix disabled) fails with the reference at offset 0; passes with the fix; `a_caret_the_user_left_behind...` |
+| 3 | Low | Export through the GTK portal: a name ending `.zip` came back `.zip.zip` | Doubled extension (observed in E11a) | **Fixed.** A doubled extension of the format's own is collapsed (never for folders). | auto: `a_doubled_extension_from_the_portal...` |
+| 4 | High (accessibility) | List the AT-SPI desktop while the app runs | The app did not appear at all: `eframe` was built with default features off, so AccessKit was off and no accessibility tree existed | **Fixed.** `accesskit` added to the eframe features. Cost: +54 crates (zbus/atspi stack), release binary 28.6 to 33.9 MiB, `THIRD_PARTY.md` must list them (E12b). It is one word in `crates/egui-app/Cargo.toml` to revert. The platform's accessibility flag must be on (a screen reader turns it on); it is off by default here. | GUI: before, not in the AT-SPI registry; after (with the session flag on), `omatree-egui` is listed with a tree |
+| 5 | Medium | Read the tree through AT-SPI | Rows were `unknown` nodes with no name, no level, no state | **Fixed.** Rows are `TreeItem`s named by title with level, expanded/collapsed and selected set directly (egui maps its own "selected" to "toggled", which a tree item must not use). Only the visible rows exist (the tree is virtualised). | GUI: `tree item 'Příliš žluťoučký 🦀' selected`; auto: three tests on the AccessKit update |
+| 6 | Low | Same | The tree, the title field and the editor had no name | **Fixed.** "Notes" (tree), "Note title", "Note text (Markdown)". | auto: `the_tree_title_and_editor_have_names...` |
+| 7 | Medium | Read the title field's text through AT-SPI with an emoji in the title | `Index is too big`: the text interface's character count disagrees with its indexing for a non-BMP character | **Deferred** (egui/AccessKit text mapping, not host code; screen-reader behaviour with emoji titles is therefore doubtful). Retest on newer egui. | GUI |
+| 8 | Info | Read the editor through AT-SPI | The editor exposes the Markdown **source** (104 characters including `![a](assets/...)`) as editable text: a screen reader reads delimiters, as the design (source-backed) implies | Accepted deviation from a rendered-text reading; documented. | GUI |
+| 9 | Medium | Editor paste does not set `EditorOutput::changed` | Host would not write a pasted reference through until the next edit | E10 workaround re-assessed against paste, undo, redo, save and reopen, Save As, switching notes and closing (E10 and E12a tests): **complete**. Upstream one-line fix still recommended; not required. | auto |
+| 10 | Low | Open a native dialog | Not parented to the window (a separate window; the main window is not modal to it) | **Deferred to E12c** (needs the window handle in `rfd`). | GUI |
+| 11 | Low | Dismiss versus fail a portal | Both return "no path"; a failure looks like a cancel | **Deferred** (library limitation). | inspected |
+| 12 | Low | Deep tree, long titles | Titles are cut; the pointer tooltip has no keyboard equivalent | **Deferred.** The accessibility tree carries the full title. | inspected |
+| 13 | Low | Recovery timestamps | UTC, labelled "UTC" | **Deferred to E12c** (needs the platform's time-zone API on three systems). | inspected |
+| 14 | Info | Shift+Tab inside the editor | Stays in the editor (Tab and Shift+Tab are list indentation there); Escape returns to the tree | By design; the Tab order from the tree is tree, header controls, title, editor | auto |
+| 15 | Info | Window of 360 px | The tree is capped at 60 % (216 px), leaving the editor 145 px | Accepted; the tree resizes; 520 px is comfortable | GUI |
+| 16 | Info | A theme with foreground and background nearly equal (#909090 on #808080) | Note text is almost invisible: the app uses the theme's colours | Accepted: a user's theme choice; titles and the tree remained readable | GUI |
+| 17 | Info | A 200 KB note of 1,500 tables | Typing 30 ms per keystroke, switching to it 106 ms, idle frame 9 ms | Accepted: an extreme document; ordinary notes are far below | auto, release |
+| 18 | Info | Tooling | `wtype` (virtual keyboard) events do not reach an XWayland window; real-device events (`ydotool`) do | Automation limit, not an app defect | GUI |
+| 19 | Info | Open a notebook | Qt shows no note until one is chosen; egui selects the first | Deliberate deviation | Qt, GUI |
+
+**Keyboard and focus (section 3).** *auto, all five modals* (Recovery, Export, Compact Notebook, F1, Move to Trash) from both the editor and the tree: typing, Ctrl+N, Ctrl+Shift+N and Delete do nothing behind the dialog, Escape closes it, and the keyboard returns to where it was. Tab from the tree goes tree, header controls, title, editor (Tab order test); Ctrl+Shift+E opens Export from the editor and from the tree and does not stack, Ctrl+E alone remains inline code (E11a). GUI (E10 to E11b): Tab and Enter drove the Compact and Export dialogs; Escape cancelled them. Not exercised by hand: the File menu with the keyboard beyond opening it, context menus, the native file dialogs' own keyboard. The paste-without-focus issue (#2) is fixed.
+
+**Markdown editor (section 4).** The source-backed behaviour is the editor library's and is covered by its own tests and the E3 to E11 host tests; E12a added no editor-library change and re-confirmed in the window: headings, bold, list and task rendering, table, quote, code block and links (E11a evince PDF and the window), concealment and reveal (the image line shows its source while the caret is on it), PNG and JPEG inline (E10), themes (above). Copy and paste of text and images worked on Wayland and XWayland. *Not re-examined*: the standalone editor comparison, slash menu and emoji picker in a window, selection across formatting boundaries by hand.
+
+**Unicode, IME and layouts (section 5).** *GUI*: Czech text typed through the compositor reaches the editor and is stored correctly. The user's fcitx5 is running with only the `keyboard-us` method; its Unicode input module (Ctrl+Alt+Shift+U) opened its pre-edit popup **at the caret** (so the IME cursor rectangle is right), and the idle loop in #1 shows the text-input-v3 round trip works. **Unverified:** committing a character through an input method (my Unicode-module attempt did not commit, so this is inconclusive), dead keys, compose sequences, a Czech layout, CJK input and pre-edit rendering inside concealed Markdown. What is needed: an environment with an input method that produces pre-edit text (for example fcitx5 with a Pinyin or Mozc engine, or an ibus Compose setup) and the layout switched, then typing inside `**bold**`, a link and a table cell. The empty-pre-edit filter (#1) was written so real composition passes, and is tested for that, but real composition with it was not observed.
+
+**Accessibility (section 6).** egui 0.37 builds an AccessKit tree and eframe forwards it through AT-SPI on Linux **only when its `accesskit` feature is on and the session's accessibility flag is set**. Before E12a the feature was off: nothing was exposed (#4). Now, observed through AT-SPI (python `Atspi`, with the flag switched on for the test and **restored afterwards**): application, frame (no window name), the three header buttons with names and descriptions, the tree and its rows (named, level, expanded, selected), the title field and the editor as editable text (with the Text and EditableText interfaces) and the separator. The Qt build's accessibility was not measured. *Not verified:* operation with a screen reader (Orca is not installed here), announcements of status messages, errors and the search result count, modal dialog roles (dialog contents were not dumped), focus-change announcements. Known limitations: the window has no accessible name (egui sets none), the dialogs' buttons depend on egui's default labelling, text-field text breaks for non-BMP titles (#7), the editor reads as Markdown source (#8), and images have no description. **Classification:** #4 and #5 were release-relevant and are fixed; "usable with a screen reader" is **unverified** and is a maintainer decision for E12c/E13 (an accepted deviation if the Qt build was not accessible either). Broad accessibility work (dialog roles, live regions, image descriptions) is a future improvement.
+
+**Themes and geometry (section 7).** *GUI*: this Hyprland takes `hl.dsp.window.float` and `hl.dsp.window.resize` (Lua dispatch), so windows were really resized: 520x480 and 360x560 and 1500x900 (the Kanagawa theme), 700x520 (light and low-contrast fixtures). Screenshots were looked at, not only frame shapes. The app's theme file is `$XDG_STATE_HOME/omarchy/current/theme/colors.toml`; all runs used an isolated state directory (the user's theme copied read-only), so no real configuration was touched. 520 px is comfortable; at 360 px the editor is 145 px wide (#15). The launch size can be set with `OMATREE_WINDOW_SIZE=WxH` (diagnostic; a tiling compositor ignores it). Not exercised: sidebar dragging to extremes, very long status messages in a window, image-rich notes at small sizes (E10 headless).
+
+**Wayland, XWayland and native X11 (section 8).** *Native Wayland* (Hyprland, release build): launch, shutdown through the window action, keyboard, mouse, clipboard text and image paste (E10), native portal dialogs (E11a), rendering, themes, resize. *XWayland* (the same binary started with `WAYLAND_DISPLAY` unset; the compositor reports `xwayland: true`): launch, keyboard through a real input device, mouse click focus, clipboard text and clipboard image paste (image stored and rendered), rendering, idle CPU 0.4 %; not exercised there: native dialogs, drag and drop, shutdown, hi-DPI (the text drew at an enlarged scale, which is XWayland's unscaled rendering). **Native X11 is unverified**: no Xephyr or Xvfb exists here and XWayland is not equivalent evidence. Hi-DPI is unverified (the display is 1920x1080 at scale 1).
+
+**Performance (section 9; release build; the large-notebook figures are headless frames, one machine, one run).** Notebook of 5,000 notes (15.5 MB, 100 checkpoints, one 200 KB note with 1,500 tables): open and first frames 1,299 ms (this includes building the tree for 5,000 notes); idle tree frame 0.09 ms; selecting the 200 KB note 286 ms; idle frame with it shown 9.3 ms; typing in it 30 ms per keystroke; 40 alternations between a short and the 200 KB note 106 ms each; search over the 5,000 notes 71 ms including the typing frames; Recovery with 100 checkpoints 25 ms; Compact Notebook 46 ms; resident memory 30 MiB at the start and 113 MiB after the session. Earlier tickets measured: first image decode and cached frames (E10: 47 ms for a 24-image note, 0.8 ms per cached frame), exports (E11a: 11 ms to 1.5 s), prune and reclaim (E9b, E11b: 62 ms and 90 ms on 5,000 notes). *GUI*: idle CPU of the release window: tree 0.2 %, editor 0.3 % and title 0.5 % after the fix (8.0 and 8.2 % before); resident memory 109 MB for the egui window with the small fixture against 191 MB for the Qt window (the Qt build idles at 0.0 to 0.2 % CPU). Cold launch to a visible window was about 3 s in the harness (its own wait; not a precise measurement). No regression of the E3/E5 guarantees was seen, but the E3.1 numbers were not re-measured side by side.
+
+**Data safety (section 11).** The critical sequences were repeated after the fixes: in the extended session (unsaved edit then New with Cancel, external conflict then Save As, checkpoint restore then Ctrl+Z, export with unsaved content, Compact preview without mutation) and in the existing suites (failed save keeping dirty state, image paste/undo/save/reopen, restoring an image from Trash, cancelling an overwrite, stale prune token, prune then Trash and checkpoint restore, failed VACUUM): all pass, and the E9 integrity, failure-injection and old-binary tests are unchanged and pass. None of the E12a changes touches storage, authorization or the Compact Notebook code.
+
+**Release blockers and what remains.** *Blockers found:* none for data integrity or Linux Wayland runtime behaviour. *Unverified items the maintainer should decide on before cut-over:* operation with a screen reader, native X11, hi-DPI, a real IME commit, a hand-driven drag in a window. *Handoff to E12b (packaging, desktop integration):* `THIRD_PARTY.md` for the 54 AccessKit/zbus crates and the 5.3 MiB growth; the desktop file, app id and icon; the accessibility flag note for the README. *Handoff to E12c:* parenting native dialogs, portal failure versus cancel, local-time display, gating the unix-only test modules, Windows and macOS runs (clipboard images, file dialogs, Finder open, `fullfsync`, rename semantics), non-BMP text in accessibility, and a screen-reader pass.
+
 ### Recommendation: first ticket
 
 **Start with E1 (extract `omatree-core`)**, run in parallel with E2 in the spike repository if there are two people or sessions.
@@ -1183,20 +1265,20 @@ Each row is "Qt feature → the existing Qt test that defines it → the egui ti
 | Feature | Defined by | Ticket | Status |
 |---|---|---|---|
 | Untitled notebook; create, save, reopen | `lifecycle.qml` | E4/E8 | E8a implemented |
-| Create root/child, default titles ("New note 2") | `newnote.qml`, `notebook.rs` | E5 | not started |
-| Rename with empty/duplicate refusal; pending title committed before leaving or closing | `titles.qml`, `titleclose.qml` | E5/E8 | not started |
-| Edit body; every real change dirties; unchanged text never does | `EditorPane.qml`, `document.rs` | E3/E4 | not started |
+| Create root/child, default titles ("New note 2") | `newnote.qml`, `notebook.rs` | E5 | implemented and tested (E5a, `tree_tests`; E12a session) |
+| Rename with empty/duplicate refusal; pending title committed before leaving or closing | `titles.qml`, `titleclose.qml` | E5/E8 | implemented and tested (E5a, E8a/b, `compact_tests`) |
+| Edit body; every real change dirties; unchanged text never does | `EditorPane.qml`, `document.rs` | E3/E4 | implemented and tested (E3, E4.1) |
 | Autosave after edits; failure shown once; retry | `autosave.qml`, `main.qml` | E8 | E4.1/E8a/E8b implemented |
 | Save, Save As, overwrite confirmation, non-notebook refusal | `lifecycle.qml`, `document.rs` | E8 | E8a implemented (native dialogs) |
 | Open/New replace the whole notebook safely (asks first) | `replacement.qml` | E8 | E8a implemented |
 | External modification conflict message; nothing written | `conflict.qml` | E8 | E8b implemented (Save As or Reload from Disk) |
 | Paths with spaces/accents/Czech; `.omatree` appended | `paths.qml` | E8 | E8a implemented |
-| Tree: expand/collapse, subtree toggle, persisted expansion | `expansion.qml`, `moveexpanded.qml` | E5 | not started |
-| Tree keyboard (arrows, Enter, F2, Delete, Alt+Up/Down, context menu key) | `keyboard.qml`, `keymap.qml` | E5 | not started |
-| Drag and drop move, cycle prevention, drop indicators | `TreePane.qml`, `notebook.rs` | E5 | not started |
+| Tree: expand/collapse, subtree toggle, persisted expansion | `expansion.qml`, `moveexpanded.qml` | E5 | implemented and tested (E5a; E12a session); not re-exercised by hand in E12a |
+| Tree keyboard (arrows, Enter, F2, Delete, Alt+Up/Down, context menu key) | `keyboard.qml`, `keymap.qml` | E5 | implemented and tested (E5a; E12a Tab order and modal traps); context menus not re-exercised by hand |
+| Drag and drop move, cycle prevention, drop indicators | `TreePane.qml`, `notebook.rs` | E5 | implemented and tested (E5b, `drag_tests`); a real mouse drag was not repeated in E12a |
 | Delete → Trash with confirmation; Trash and checkpoint restore | `recovery.qml`, `recoverykeys.qml` | E7 | E7b implemented (see record) |
 | Search: title first, body snippets, reveal the result | `search.qml`, `searchheader.qml` | E7 | E7a implemented (see record); E7b: result paging, highlight, count |
-| Escape returns to the tree from title/body; transient surfaces keep their own (the preview case is retired with Preview) | `escape.qml` | E5/E7 | not started |
+| Escape returns to the tree from title/body; transient surfaces keep their own (the preview case is retired with Preview) | `escape.qml` | E5/E7 | implemented and tested (E5/E7; E12a all five modals) |
 | Dialog keyboard (one focus, Enter presses it, N/Y/Esc) | `dialogs.qml` | E7 | E6b/E7b: one focus, Enter, Escape, Tab; explicit words instead of N/Y |
 | F1 shortcut reference built from the real key map | `keymap.qml` | E7 | E7b implemented (`keymap.rs`, `help.rs`) |
 | Omarchy palette live; system light/dark fallback; non-Linux has no Omarchy | `theme.qml`, `systemtheme.qml` | E6 | E6a implemented (pipeline); E6b implemented (visual polish) |
@@ -1206,11 +1288,11 @@ Each row is "Qt feature → the existing Qt test that defines it → the egui ti
 | macOS Finder "open with" goes through the unsaved-changes flow | `systemopen.qml` | E12 | not started |
 | Window icon, Wayland app id, Windows taskbar id | `cpp/app_identity.cpp` | E12 | not started |
 | Cross-platform keyboard: ⌘ on macOS, Tab reaches controls | `keyboard_policy.cpp`, `keymap.qml` | E12 | not started |
-| **New in egui:** live-styled Markdown editing, tasks, tables, links, emoji, slash menu | spike `FINDINGS.md` | E2/E3 | spike only |
+| **New in egui:** live-styled Markdown editing, tasks, tables, links, emoji, slash menu | spike `FINDINGS.md` | E2/E3 | implemented (E2/E3, library); rendering confirmed in the window through E10 to E12a; slash menu and emoji picker not re-exercised by hand in E12a |
 | **New in egui:** images stored in the notebook, resizing | §5 | E9/E10 | implemented (E10): paste, inline PNG and JPEG, resize, save/reopen, recovery; Wayland-verified |
 | **New in egui:** Markdown/folder/ZIP/PDF export | spike | E11 | implemented for the active note (E11a): all four formats, native and typed destinations, verified with independent readers and a real PDF viewer; Compact Notebook UI is E11b |
-| Accessibility, IME | none today in tests | E12 | NOT TESTED in spike |
-| Linux Wayland / X11 / Windows / macOS | `packaging/*` | E12 | spike: Wayland only |
+| Accessibility, IME | none today in tests | E12a | **Accessibility:** AccessKit enabled in E12a; tree, rows, title and editor exposed and named (AT-SPI inspected); screen-reader operation **unverified**. **IME:** pre-edit popup positioned correctly under fcitx5, idle loop fixed; a real commit, dead keys, compose and CJK **unverified** |
+| Linux Wayland / X11 / Windows / macOS | `packaging/*` | E12a/E12c | Wayland: verified (E12a, native); XWayland: keyboard, mouse, clipboard text and image, rendering verified; native X11, Windows, macOS: **unverified** (E12c) |
 
 ---
 

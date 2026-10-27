@@ -75,6 +75,8 @@ struct H {
     screen: Vec2,
     /// What the last frame painted, in paint order.
     shapes: Vec<egui::epaint::ClippedShape>,
+    /// The accessibility tree update of the last frame (once `enable_accesskit` was called).
+    a11y: Option<egui::accesskit::TreeUpdate>,
 }
 
 impl H {
@@ -94,6 +96,7 @@ impl H {
             system: None,
             screen,
             shapes: Vec::new(),
+            a11y: None,
         }
     }
 
@@ -151,6 +154,9 @@ impl H {
         }
         out.textures_delta.clear();
         self.shapes = std::mem::take(&mut out.shapes);
+        if let Some(update) = out.platform_output.accesskit_update.take() {
+            self.a11y = Some(update);
+        }
     }
 
     /// The window's close button / Alt+F4 / compositor close. Returns whether the window closed.
@@ -514,6 +520,7 @@ fn missing_invalid_and_unsupported_files_are_refused_clearly_and_never_modified(
         system: None,
         screen: Vec2::new(1000.0, 700.0),
         shapes: Vec::new(),
+        a11y: None,
     };
     h.settle();
 }
@@ -779,6 +786,7 @@ fn timings() {
 
 mod lifecycle_tests;
 
+mod audit_tests;
 mod compact_tests;
 mod drag_tests;
 mod export_tests;

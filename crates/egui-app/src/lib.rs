@@ -61,6 +61,8 @@ pub struct Host {
     images: ImageReport,
     /// The Compact Notebook dialog's state (`compact_ui.rs`), while it is open.
     compact: Option<compact_ui::Compact>,
+    /// An input-method composition is in progress (see `Host::filter_input`).
+    composing: bool,
     /// When unreadable images were last given another chance (see `after_editor`).
     image_retry: f64,
     /// The one theme pipeline: core palette -> egui visuals and the editor's palette.
@@ -135,6 +137,7 @@ impl Host {
             view: EditorView::new(),
             images: ImageReport::default(),
             compact: None,
+            composing: false,
             image_retry: f64::NEG_INFINITY,
             theme: ThemeState::new(None),
             keys: {
@@ -335,6 +338,52 @@ impl Host {
         }
     }
 
+    /// Gives the controls that have no visible label a name an assistive technology can say: the
+    /// tree is "Notes" (a tree), the title field "Note title" and the Markdown editor "Note text".
+    /// The nodes exist only while the control is on screen; this changes nothing visible.
+    fn name_controls_for_assistive_technology(&self, ctx: &egui::Context) {
+        ctx.accesskit_node_builder(Host::tree_id(), |node| {
+            node.set_role(egui::accesskit::Role::Tree);
+            node.set_label("Notes");
+        });
+        if let Some(id) = self.selected {
+            ctx.accesskit_node_builder(self.title_id(), |node| node.set_label("Note title"));
+            ctx.accesskit_node_builder(key_of(self.notebook, id).widget_id(), |node| {
+                node.set_label("Note text (Markdown)");
+            });
+        }
+    }
+
+    /// Drops the input-method events that carry nothing, before egui sees them.
+    ///
+    /// On Wayland with a text-input-v3 input method (fcitx5 and others), every frame in which a
+    /// text field has the focus makes egui-winit send the cursor rectangle again whenever the
+    /// frame has *any* input event, and the input method answers every such message with `done`,
+    /// which winit turns into an empty pre-edit event: an event, so the next frame sends the
+    /// rectangle again. The window then renders at the display's refresh rate for as long as a
+    /// text field is focused (measured: 60 frames and 60 text-input commits per second, about 8 %
+    /// of a core, with nothing moving). An empty pre-edit while no composition is in progress
+    /// clears nothing, so it is dropped; real composition (a non-empty pre-edit, its commit, or
+    /// the empty pre-edit that cancels it) is passed through untouched.
+    pub fn filter_input(&mut self, raw: &mut egui::RawInput) {
+        use egui::{Event, ImeEvent};
+        let composing = &mut self.composing;
+        raw.events.retain(|e| match e {
+            Event::Ime(ImeEvent::Preedit { text, .. }) if text.is_empty() => {
+                std::mem::take(composing)
+            }
+            Event::Ime(ImeEvent::Preedit { .. }) => {
+                *composing = true;
+                true
+            }
+            Event::Ime(ImeEvent::Commit(_)) => {
+                *composing = false;
+                true
+            }
+            _ => true,
+        });
+    }
+
     pub fn is_dirty(&self) -> bool {
         self.doc.as_ref().is_some_and(Document::is_dirty)
     }
@@ -468,6 +517,16 @@ impl Host {
                     ui.weak("Select or create a note");
                     return None;
                 };
+                // A pasted image goes where the caret is. A note whose editor has never had the
+                // keyboard has no caret yet, and the editor would put the image at the very start
+                // of the note, out of sight when the note is long: give it one at the end.
+                if ui.ctx().input(|i| {
+                    i.events
+                        .iter()
+                        .any(|e| matches!(e, egui::Event::PasteImage(_)))
+                }) {
+                    place_caret_at_end_if_none(ui.ctx(), key_of(self.notebook, id), &self.text);
+                }
                 // The editor's images come from this notebook's own `Document`, for this frame.
                 let store = DocStore::new(doc, &self.images);
                 Some(self.view.show(
@@ -488,6 +547,7 @@ impl Host {
             self.after_editor(&ctx, out);
         }
         self.show_dialog(&ctx);
+        self.name_controls_for_assistive_technology(&ctx);
         if self.edited {
             // `logic` starts the autosave countdown on the next frame; make sure there is one.
             ctx.request_repaint();
@@ -643,6 +703,19 @@ impl Host {
     }
 }
 
+/// Gives `key`'s text edit a caret at the end of `text` if it has none (it never had the focus).
+/// A caret the user left behind is kept.
+fn place_caret_at_end_if_none(ctx: &egui::Context, key: NoteKey, text: &str) {
+    use egui::text::{CCursor, CCursorRange};
+    let id = key.widget_id();
+    let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
+    if state.cursor.char_range().is_none() {
+        let end = CCursor::new(text.chars().count());
+        state.cursor.set_char_range(Some(CCursorRange::one(end)));
+        state.store(ctx, id);
+    }
+}
+
 fn file_name(path: &Path) -> String {
     path.file_name().map_or_else(
         || path.display().to_string(),
@@ -669,6 +742,10 @@ impl App {
 }
 
 impl eframe::App for App {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.host.filter_input(raw_input);
+    }
+
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.host.logic(ctx);
     }

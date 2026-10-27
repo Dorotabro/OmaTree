@@ -266,11 +266,35 @@ impl Host {
         if let (Some(ext), None) = (format.extension(), p.extension()) {
             p.set_extension(ext);
         }
+        // The desktop portal's file chooser appends the filter's extension to a name that
+        // already has it (`note.zip` comes back as `note.zip.zip`, observed with the GTK portal).
+        // A doubled extension is never what anyone means.
+        if let (Some(ext), Some(name)) =
+            (format.extension(), p.file_name().and_then(|n| n.to_str()))
+        {
+            let lower = name.to_lowercase();
+            let doubled = format!(".{ext}.{ext}");
+            if lower.ends_with(&doubled) {
+                let keep = name.len() - ext.len() - 1;
+                let fixed = name[..keep].to_owned();
+                p.set_file_name(fixed);
+            }
+        }
         Some(if p.is_absolute() {
             p
         } else {
             self.export_dir().join(p)
         })
+    }
+
+    /// `export_target`, for tests.
+    #[cfg(test)]
+    pub(crate) fn export_target_for_test(
+        &self,
+        format: ExportFormat,
+        typed: &str,
+    ) -> Option<PathBuf> {
+        self.export_target(format, typed)
     }
 
     /// A native folder dialog answers with an existing parent; the export folder is made inside.

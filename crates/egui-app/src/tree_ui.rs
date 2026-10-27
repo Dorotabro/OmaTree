@@ -221,6 +221,19 @@ impl Host {
                         ui.make_persistent_id(("omatree-row", r.id.get())),
                         Sense::click_and_drag(),
                     );
+                    // What a screen reader gets for the row: its title, its level, whether it is
+                    // open and whether it is the selected note. egui's own `selected` becomes
+                    // AccessKit's "toggled", so the tree-item fields are set directly.
+                    resp.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::Role::TreeItem, true, r.title.as_str())
+                    });
+                    ctx.accesskit_node_builder(resp.id, |node| {
+                        node.set_selected(current);
+                        node.set_level(r.depth + 1);
+                        if r.has_children {
+                            node.set_expanded(open);
+                        }
+                    });
                     // Only a drag that began on a row (past egui's click distance) is a tree drag.
                     // (A press held in place also counts as a drag to egui; it is not one here.)
                     let moved = ctx.input(|i| {
