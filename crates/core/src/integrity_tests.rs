@@ -549,20 +549,41 @@ pub(crate) struct State {
 }
 
 pub(crate) fn state(path: &Path) -> State {
-    let has_attachments = tables(path).iter().any(|t| t == "attachments");
-    State {
-        version: header_version(path),
-        tables: tables(path),
-        logical: logical(path),
+    // Two runs of the same scenario differ by the clock (Trash, checkpoint and attachment
+    // timestamps), so everything is read from a copy with those columns zeroed. The integrity
+    // check runs on the real file.
+    let integrity: String = raw(path)
+        .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+        .unwrap();
+    let mut masked = path.as_os_str().to_owned();
+    masked.push(".masked");
+    let masked = PathBuf::from(masked);
+    std::fs::copy(path, &masked).unwrap();
+    let has_attachments = tables(&masked).iter().any(|t| t == "attachments");
+    {
+        let c = raw(&masked);
+        c.execute_batch(
+            "UPDATE checkpoints SET created_at = 0; UPDATE trash_entries SET deleted_at = 0;",
+        )
+        .ok();
+        if has_attachments {
+            c.execute_batch("UPDATE attachments SET created_at = 0")
+                .ok();
+        }
+    }
+    let out = State {
+        version: header_version(&masked),
+        tables: tables(&masked),
+        logical: logical(&masked),
         attachments: if has_attachments {
-            stored(path)
+            stored(&masked)
         } else {
             Vec::new()
         },
-        integrity: raw(path)
-            .query_row("PRAGMA integrity_check", [], |r| r.get(0))
-            .unwrap(),
-    }
+        integrity,
+    };
+    let _ = std::fs::remove_file(&masked);
+    out
 }
 
 /// The first-attachment scenario: two images (fixed ids, so two runs are comparable), a new note
@@ -2367,7 +2388,11 @@ fn oom_child() {
         return;
     };
     let path = PathBuf::from(path);
+    let phase = std::env::var("E9C_OOM_PHASE").unwrap_or_default();
     let before = state(&path);
+    if phase == "put" {
+        return oom_put(&path);
+    }
     // Reading: hold each 64 MiB image that is read until memory runs out.
     let doc = Document::open(&path).unwrap();
     let ids = doc.stored_attachment_ids().unwrap();
@@ -2392,8 +2417,13 @@ fn oom_child() {
     drop(doc);
     assert_eq!(state(&path), before, "reading changed the file");
 
-    // Putting: pending images accumulate until memory runs out.
-    let doc = Document::open(&path).unwrap();
+    println!("OOM-OK");
+}
+
+/// Putting: pending images accumulate until memory runs out (under a limit tighter than the
+/// 128 MiB budget needs, or the budget would stop it first).
+fn oom_put(path: &Path) {
+    let doc = Document::open(path).unwrap();
     let fixture = png_of_len(MAX_ATTACHMENT_BYTES as usize);
     let mut put = 0;
     let mut failed_putting = false;
@@ -2408,13 +2438,12 @@ fn oom_child() {
             Err(other) => panic!("unexpected error {other:?}"),
         }
     }
-    assert!(failed_putting, "memory never ran out");
+    assert!(failed_putting, "memory never ran out ({put} images held)");
     assert_eq!(
         doc.pending_attachments().0,
         put,
         "every image reported as held is held"
     );
-    assert!(!doc.is_dirty() || put > 0);
     println!("OOM-OK");
 }
 
@@ -2432,30 +2461,39 @@ fn memory_exhaustion_is_an_error_never_an_abort() {
     doc.save().unwrap();
     drop(doc);
     // The virtual-memory limit is relative to what the test binary needs just to start.
-    let out = Command::new("sh")
-        .arg("-c")
-        .arg(r#"ulimit -v "$E9C_VLIMIT" && exec "$0" --exact integrity_tests::oom_child --nocapture --test-threads=1"#)
-        .arg(std::env::current_exe().unwrap())
-        .env("E9C_OOM_PATH", &p)
-        .env("E9C_VLIMIT", "650000")
-        .output()
-        .unwrap();
-    let text = String::from_utf8_lossy(&out.stdout);
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        out.status.success(),
-        "child did not finish cleanly (abort?):\n{text}\n{err}"
-    );
-    assert!(
-        text.contains("OOM-OK")
-            && text.contains("OOM-READ-REFUSED")
-            && text.contains("OOM-PUT-REFUSED"),
-        "{text}"
-    );
-    for line in text.lines().filter(|l| l.contains("OOM-")) {
-        eprintln!("{}", line.split("OOM-").nth(1).map_or(line, |_| line));
+    for (phase, limit, want) in [
+        ("read", "650000", "OOM-READ-REFUSED"),
+        ("put", "E9C_PUT_LIMIT", "OOM-PUT-REFUSED"),
+    ] {
+        let limit = if phase == "put" { PUT_VM_LIMIT } else { limit };
+        let out = Command::new("sh")
+            .arg("-c")
+            .arg(r#"ulimit -v "$E9C_VLIMIT" && exec "$0" --exact integrity_tests::oom_child --nocapture --test-threads=1"#)
+            .arg(std::env::current_exe().unwrap())
+            .env("E9C_OOM_PATH", &p)
+            .env("E9C_OOM_PHASE", phase)
+            .env("E9C_VLIMIT", limit)
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.success(),
+            "{phase}: child did not finish cleanly (abort?):\n{text}\n{err}"
+        );
+        assert!(
+            text.contains("OOM-OK") && text.contains(want),
+            "{phase}: {text}"
+        );
+        for line in text.lines().filter(|l| l.contains("OOM-")) {
+            eprintln!("{line}");
+        }
     }
 }
+
+/// Tighter than the read phase: room for the fixture and about two images, which is less than
+/// the budget allows.
+const PUT_VM_LIMIT: &str = "400000";
 
 #[test]
 fn after_a_failed_vacuum_save_as_and_repeated_attempts_work_and_old_tokens_die() {

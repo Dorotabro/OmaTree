@@ -419,6 +419,18 @@ impl Document {
         draw: &mut dyn FnMut() -> Result<[u8; 16], AttachmentError>,
     ) -> Result<String, AttachmentError> {
         let media_type = attachments::sniff(bytes)?;
+        // The budget is checked before another full copy is made. Checked arithmetic: a sum that
+        // overflows is over the limit too.
+        let held: u64 = self
+            .pending
+            .borrow()
+            .values()
+            .map(|a| a.data.len() as u64)
+            .sum();
+        match held.checked_add(bytes.len() as u64) {
+            Some(total) if total <= attachments::MAX_PENDING_BYTES => {}
+            _ => return Err(AttachmentError::PendingFull(held)),
+        }
         for _ in 0..8 {
             let id = AttachmentId::from_bytes(draw()?)?;
             if self.pending.borrow().contains_key(&id) || self.stored_has(&id)? {

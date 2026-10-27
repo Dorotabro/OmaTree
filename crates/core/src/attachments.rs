@@ -16,6 +16,12 @@ use std::fmt;
 
 /// The largest attachment accepted (the editor library's own limit).
 pub const MAX_ATTACHMENT_BYTES: u64 = 64 * 1024 * 1024;
+/// The most attachment bytes a notebook holds in memory waiting for a save (all pending images
+/// together). Two full-size images fit; a screenshot is typically well under 10 MiB, and a saved
+/// notebook commits its pending images within seconds (autosave), so the budget is only felt in
+/// an untitled notebook or after save failures. Saving needs about 2.3 times these bytes at its
+/// peak (measured in E9c), so the budget keeps that under about 300 MiB.
+pub const MAX_PENDING_BYTES: u64 = 128 * 1024 * 1024;
 /// The folder-like prefix of every reference.
 pub const ASSET_PREFIX: &str = "assets/";
 
@@ -68,6 +74,9 @@ pub enum AttachmentError {
     /// Looks like a PNG or JPEG but is damaged or truncated.
     Malformed(&'static str),
     TooLarge(u64),
+    /// Adding this image would take the unsaved images past [`MAX_PENDING_BYTES`]; nothing was
+    /// added. Carries the bytes already pending.
+    PendingFull(u64),
     Empty,
     /// What is stored does not match what was recorded (length, media type).
     Corrupt(String),
@@ -83,6 +92,12 @@ impl fmt::Display for AttachmentError {
             Self::UnsupportedFormat => write!(f, "only PNG and JPEG images are supported"),
             Self::Malformed(why) => write!(f, "the image is damaged: {why}"),
             Self::TooLarge(n) => write!(f, "attachment too large ({n} bytes)"),
+            Self::PendingFull(held) => write!(
+                f,
+                "too many unsaved images ({} MiB held, limit {} MiB): save the notebook first",
+                held / (1024 * 1024),
+                MAX_PENDING_BYTES / (1024 * 1024)
+            ),
             Self::Empty => write!(f, "the attachment is empty"),
             Self::Corrupt(why) => write!(f, "stored attachment is inconsistent: {why}"),
             Self::Storage(e) => write!(f, "attachment storage error: {e}"),

@@ -878,3 +878,100 @@ fn write_compat_fixtures() {
     assert!(doc.reclaim_space(&rp.token).unwrap().ran);
     assert_eq!(header_version(&pruned), 4);
 }
+
+// --- E10: the budget for unsaved images --------------------------------------------------------
+
+#[test]
+fn unsaved_images_are_capped_in_total_and_a_refusal_changes_nothing() {
+    use crate::attachments::fixtures::png_of_len;
+    use crate::attachments::MAX_PENDING_BYTES;
+    let d = Dir::new();
+    let p = d.join("n.omatree");
+    let doc = Document::open(&p).unwrap();
+    let max = MAX_ATTACHMENT_BYTES as usize;
+    assert_eq!(MAX_PENDING_BYTES, 2 * MAX_ATTACHMENT_BYTES);
+    let big = png_of_len(max);
+    let a = doc.put_attachment(&big).unwrap();
+    let b = doc.put_attachment(&big).unwrap();
+    assert_eq!(doc.pending_attachments(), (2, 2 * max as u64));
+    // Exactly at the limit: even the smallest image is refused, with what is held reported.
+    match doc.put_attachment(&png(1, 1)) {
+        Err(AttachmentError::PendingFull(held)) => assert_eq!(held, 2 * max as u64),
+        other => panic!("expected PendingFull, got {other:?}"),
+    }
+    let message = doc.put_attachment(&big).unwrap_err().to_string();
+    assert!(
+        message.contains("save the notebook first") && message.contains("128 MiB"),
+        "{message}"
+    );
+    // Nothing was discarded or altered; both earlier images are still readable.
+    assert_eq!(doc.pending_attachments(), (2, 2 * max as u64));
+    assert_eq!(doc.attachment(&a).unwrap(), big);
+    assert_eq!(doc.attachment(&b).unwrap(), big);
+}
+
+#[test]
+fn the_budget_is_released_by_a_committed_save_and_kept_by_a_failed_one() {
+    use crate::attachments::fixtures::png_of_len;
+    let d = Dir::new();
+    let p = d.join("n.omatree");
+    let mut doc = Document::open(&p).unwrap();
+    let big = png_of_len(MAX_ATTACHMENT_BYTES as usize);
+    doc.put_attachment(&big).unwrap();
+    let r = doc.put_attachment(&{
+        let mut v = big.clone();
+        v[40] = 1; // inside the padding: a distinct image of the same size
+        v
+    });
+    assert!(r.is_ok());
+    assert!(doc.put_attachment(&png(2, 2)).is_err(), "full");
+    // A failed save (a read-only directory) keeps everything pending and still full.
+    std::fs::set_permissions(
+        d.path(),
+        std::os::unix::fs::PermissionsExt::from_mode(0o555),
+    )
+    .unwrap();
+    let res = doc.save();
+    std::fs::set_permissions(
+        d.path(),
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    assert!(res.is_err());
+    assert_eq!(doc.pending_attachments().0, 2);
+    assert!(
+        doc.put_attachment(&png(2, 2)).is_err(),
+        "still full after the failed save"
+    );
+    // A committed save releases it.
+    doc.save().unwrap();
+    assert_eq!(doc.pending_attachments(), (0, 0));
+    assert!(doc.put_attachment(&png(2, 2)).is_ok());
+}
+
+#[test]
+fn many_small_images_up_to_the_limit_then_a_clean_refusal() {
+    use crate::attachments::fixtures::png_of_len;
+    let d = Dir::new();
+    let doc = Document::open(&d.join("n.omatree")).unwrap();
+    let chunk = 16 * 1024 * 1024;
+    let mut accepted = 0u64;
+    for i in 0..10u8 {
+        let mut b = png_of_len(chunk);
+        b[40] = i;
+        match doc.put_attachment(&b) {
+            Ok(_) => accepted += chunk as u64,
+            Err(AttachmentError::PendingFull(held)) => {
+                assert_eq!(held, accepted);
+                break;
+            }
+            Err(e) => panic!("{e:?}"),
+        }
+    }
+    assert_eq!(
+        accepted,
+        8 * chunk as u64,
+        "exactly eight 16 MiB images fit in 128 MiB"
+    );
+    assert_eq!(doc.pending_attachments().1, accepted);
+}

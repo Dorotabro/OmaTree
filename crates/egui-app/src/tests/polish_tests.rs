@@ -549,7 +549,7 @@ fn the_status_bar_separates_document_state_from_what_just_happened() {
     let p = d.join("n.omatree");
     make_fixture(&p);
     let mut h = H::open(&p);
-    // Clean: no "no unsaved changes" chatter, no image notice for a note without images.
+    // Clean: no "no unsaved changes" chatter.
     assert!(h.texts_starting("\u{25cf}").is_empty());
     assert!(h.texts_starting("No unsaved").is_empty());
     assert!(h.texts_starting("Images are not").is_empty());
@@ -559,12 +559,10 @@ fn the_status_bar_separates_document_state_from_what_just_happened() {
     assert_eq!(marker.len(), 1);
     assert!(marker[0].pos.x > h.screen.x / 2.0);
     assert_eq!(marker[0].colour, h.chrome().warning_text);
-    // A note that mentions an image gets the capability notice, in muted text, where there is room.
+    // Images are supported now (E10): a note that mentions one gets no capability notice, wide or
+    // narrow window.
     h.dirty_edit("Projects", "\n![alt](attachment:x)\n");
-    let notice = h.texts_starting("Images are not supported yet");
-    assert_eq!(notice.len(), 1);
-    assert_eq!(notice[0].colour, h.chrome().muted);
-    // ... and not in a narrow window, where it would push the message out.
+    assert!(h.texts_starting("Images are not").is_empty());
     h.screen = Vec2::new(520.0, 480.0);
     h.settle();
     assert!(h.texts_starting("Images are not").is_empty());

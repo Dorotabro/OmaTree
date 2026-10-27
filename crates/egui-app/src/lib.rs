@@ -7,7 +7,7 @@
 //!   place, and writes it back with `Document::set_body` the frame it changes.
 //! - `EditorView` owns caret, selection and undo history per `NoteKey { notebook, note }`.
 //! - The host owns the window, shortcuts that are about the document (Ctrl+S), status text and
-//!   the attachment backend (none yet: [`UnavailableStore`]).
+//!   the attachment backend ([`DocStore`], a view of the open `Document`).
 
 mod drag;
 mod files;
@@ -33,7 +33,7 @@ pub use lifecycle::{Dialog, AUTOSAVE_DELAY};
 pub use ops::Focus;
 pub use recent::{default_file as default_recent_file, Recent};
 pub use recovery_ui::Tab as RecoveryTab;
-pub use store::UnavailableStore;
+pub use store::{DocStore, ImageReport};
 pub use tree::{Row, Tree};
 
 use eframe::egui::{self, Key};
@@ -55,7 +55,10 @@ pub struct Host {
     /// The selected note's Markdown, edited in place by the editor.
     text: String,
     view: EditorView,
-    store: UnavailableStore,
+    /// What the image adapter reported while the editor ran (see `store`).
+    images: ImageReport,
+    /// When unreadable images were last given another chance (see `after_editor`).
+    image_retry: f64,
     /// The one theme pipeline: core palette -> egui visuals and the editor's palette.
     theme: ThemeState,
     keys: EditorKeys,
@@ -70,8 +73,6 @@ pub struct Host {
     loaded_title: String,
     /// Why the pending title was refused, shown beside the field until it is edited or accepted.
     title_error: Option<String>,
-    /// The open note's Markdown mentions an image (`![`); only then is the image notice shown.
-    note_has_image: bool,
     /// What the status bar last showed and since when, so ordinary feedback can fade away.
     status_seen: (String, bool),
     status_since: f64,
@@ -128,7 +129,8 @@ impl Host {
             selected: None,
             text: String::new(),
             view: EditorView::new(),
-            store: UnavailableStore,
+            images: ImageReport::default(),
+            image_retry: f64::NEG_INFINITY,
             theme: ThemeState::new(None),
             keys: EditorKeys::omatree(),
             bold: None,
@@ -138,7 +140,6 @@ impl Host {
             title_text: String::new(),
             loaded_title: String::new(),
             title_error: None,
-            note_has_image: false,
             status_seen: (String::new(), false),
             status_since: 0.0,
             search: search::Search::default(),
@@ -289,7 +290,6 @@ impl Host {
             .unwrap_or_default();
         self.title_text = self.loaded_title.clone();
         self.title_error = None;
-        self.note_has_image = self.text.contains("![");
     }
 
     /// Finish what the editor still holds for the selected note (a pending image width) and make
@@ -453,16 +453,18 @@ impl Host {
         let out = egui::CentralPanel::default()
             .frame(frame)
             .show(root, |ui| {
-                let Some(id) = self.selected else {
+                let (Some(id), Some(doc)) = (self.selected, self.doc.as_ref()) else {
                     ui.weak("Select or create a note");
                     return None;
                 };
+                // The editor's images come from this notebook's own `Document`, for this frame.
+                let store = DocStore::new(doc, &self.images);
                 Some(self.view.show(
                     ui,
                     EditorInput {
                         key: key_of(self.notebook, id),
                         text: &mut self.text,
-                        attachments: &self.store,
+                        attachments: &store,
                         palette: self.theme.editor(),
                         keys: &self.keys,
                         bold: self.bold.as_ref(),
@@ -495,8 +497,7 @@ impl Host {
     }
 
     /// The bottom bar: what just happened on the left (one or two lines, the whole text in a
-    /// tooltip), the document's state on the right. A clean document says nothing; the image
-    /// notice appears only for a note that mentions an image, and only where there is room.
+    /// tooltip), the document's state on the right. A clean document says nothing.
     fn status_bar(&mut self, ui: &mut egui::Ui, ch: &theme::Chrome) {
         tree_ui::paint_hairline(ui, ch.hairline, layout::GUTTER);
         let dirty = self.is_dirty();
@@ -541,13 +542,6 @@ impl Host {
                     }
                 }
             }
-            if self.note_has_image && ui.available_width() > 420.0 {
-                ui.label(
-                    egui::RichText::new("Images are not supported yet")
-                        .size(12.5)
-                        .color(ch.muted),
-                );
-            }
             if echo || !fresh || self.status.is_empty() {
                 return;
             }
@@ -584,10 +578,10 @@ impl Host {
         });
     }
 
-    fn after_editor(&mut self, _ctx: &egui::Context, out: EditorOutput) {
-        if out.changed {
+    fn after_editor(&mut self, ctx: &egui::Context, out: EditorOutput) {
+        // A pasted image changes the text without `out.changed` (see `ImageReport::staged`).
+        if self.images.take_staged() || out.changed {
             self.sync();
-            self.note_has_image = self.text.contains("![");
         }
         if out.has_focus {
             self.focus_reached(Focus::Editor);
@@ -598,6 +592,37 @@ impl Host {
         }
         if let Some(s) = out.status {
             self.status = s;
+        }
+        self.report_images(ctx);
+    }
+
+    /// Turns what the image adapter recorded into the status bar's words. A refused paste says
+    /// why (the editor's own sentence is generic). A stored image that is damaged is named as
+    /// such. A read the database could not do right now is not "a missing image": the editor
+    /// remembers a failed read as unavailable, so the notebook's decoded images are dropped (at
+    /// most every few seconds) to let it try again. Nothing here deletes or changes anything.
+    fn report_images(&mut self, ctx: &egui::Context) {
+        use omatree_core::attachments::AttachmentError as Core;
+        if let Some(e) = self.images.take_put() {
+            self.status = store::friendly_put_error(&e);
+        }
+        let Some(e) = self.images.take_read() else {
+            return;
+        };
+        match e {
+            Core::Corrupt(why) => {
+                self.status =
+                    format!("An image in this note is damaged and cannot be shown: {why}");
+            }
+            other => {
+                self.status = format!("An image could not be read right now: {other}");
+                let now = ctx.input(|i| i.time);
+                if now - self.image_retry > 3.0 {
+                    self.image_retry = now;
+                    self.view.forget_images(self.notebook);
+                    ctx.request_repaint_after(std::time::Duration::from_secs(3));
+                }
+            }
         }
     }
 }

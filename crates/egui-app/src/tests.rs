@@ -621,37 +621,10 @@ fn ctrl_e_is_inline_code_and_strikethrough_is_a_slash_command() {
 }
 
 #[test]
-fn pasting_an_image_creates_no_reference_and_explains() {
-    let d = dir("paste");
-    let p = d.join("n.omatree");
-    make_fixture(&p);
-    let mut h = H::open(&p);
-    h.select("Ideas");
-    let n = h.host.buffer().len();
-    h.set_caret(n, n);
-    let img = egui::ColorImage::filled([8, 8], egui::Color32::BLUE);
-    h.frame(
-        vec![Event::PasteImage(std::sync::Arc::new(img))],
-        Modifiers::NONE,
-    );
-    h.frame(vec![], Modifiers::NONE);
-    assert_eq!(h.body("Ideas"), "ideas\n", "no broken Markdown reference");
-    assert!(
-        h.host.status().contains("Image paste failed"),
-        "{}",
-        h.host.status()
-    );
-    assert!(h.host.status().contains("not supported yet"));
-    assert!(!h.host.is_dirty());
-    assert!(
-        !d.join("assets").exists(),
-        "nothing written beside the notebook"
-    );
-}
-
-#[test]
 fn external_and_unavailable_image_references_are_rejected_and_left_in_the_source() {
-    let store = UnavailableStore;
+    let notebook = Document::open(&dir("imgref-store").join("s.omatree")).unwrap();
+    let report = ImageReport::default();
+    let store = DocStore::new(&notebook, &report);
     for r in [
         "https://example.com/x.png",
         "http://127.0.0.1/x.png",
@@ -664,7 +637,9 @@ fn external_and_unavailable_image_references_are_rejected_and_left_in_the_source
         assert!(store.get(r).is_err(), "{r}");
         assert!(store.info(r).is_err(), "{r}");
     }
+    // Not an image at all: refused before anything is stored.
     assert!(store.put(b"png", "png").is_err());
+    assert!(!notebook.is_dirty());
 
     // A note that references an existing local file is shown but never loads it, and the source
     // bytes are exactly as stored.
@@ -807,6 +782,7 @@ mod lifecycle_tests;
 mod drag_tests;
 mod files_tests;
 mod hardening_tests;
+mod image_tests;
 mod polish_tests;
 mod recovery_tests;
 mod search_tests;

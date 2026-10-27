@@ -355,3 +355,19 @@ file it made is removed on any failure. Attachment reads and the in-memory copy 
 fallible allocations: running out of memory is an `AttachmentError::Storage`, never an abort, and a
 transient failure (memory, lock, I/O) is not reported as a damaged notebook. See
 `docs/EGUI_MIGRATION_PLAN.md`, "E9c implementation record".
+
+### Embedded images in the egui app (E10)
+
+The editor library only talks to an `AttachmentStore`. The egui host gives it `DocStore`
+(`crates/egui-app/src/store.rs`): a per-frame view of the open `Document`, so images are the
+notebook's own SQLite attachments and the `Document` stays the single authority (one connection,
+the E9 pending store and transaction rules, the E9c integrity checks). A pasted clipboard image is
+encoded to PNG by the editor, stored through `Document::put_attachment` (which enforces the
+64 MiB limit and a 128 MiB budget for all unsaved images, `MAX_PENDING_BYTES`), and only then
+referenced by the editor's own undoable edit. Saving commits pending images in the same
+transaction as the notes. References resolve only inside the notebook (`assets/<32 hex>.png|jpg`);
+anything else is shown as its Markdown source and never reaches a file or network loader. PNG and
+JPEG are decoded at display time by the editor's `image` dependency (the host enables its `jpeg`
+feature). The host reports refused pastes and damaged or unreadable images in the status bar and
+never treats a display problem as permission to delete an attachment. See
+`docs/EGUI_MIGRATION_PLAN.md`, "E10 implementation record".

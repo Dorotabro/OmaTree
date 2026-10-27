@@ -301,6 +301,9 @@ impl Host {
         self.leave(ctx);
         self.forget_all(ctx);
         self.notebook += 1;
+        // What the adapter recorded about the old notebook's images means nothing now.
+        self.images = ImageReport::default();
+        self.image_retry = f64::NEG_INFINITY;
         self.doc = Some(doc);
         self.path = path;
         self.error = None;
@@ -311,7 +314,6 @@ impl Host {
         self.title_text.clear();
         self.loaded_title.clear();
         self.title_error = None;
-        self.note_has_image = false;
         self.dialog = Dialog::None;
         self.pending = None;
         self.pick = None;

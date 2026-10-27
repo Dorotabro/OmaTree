@@ -1423,6 +1423,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -2191,9 +2193,11 @@ name = "omatree-egui"
 version = "0.1.2"
 dependencies = [
  "eframe",
+ "image",
  "omatree-core",
  "omatree-egui-editor-spike",
  "rfd",
+ "rusqlite",
 ]
 
 [[package]]
