@@ -41,6 +41,10 @@ pub enum Dialog {
     ConfirmDelete(NodeId),
     /// Something was refused (a rename); shown until acknowledged.
     Error(String),
+    /// Trash and checkpoints (`recovery_ui.rs`).
+    Recovery,
+    /// The keyboard reference, F1 (`help.rs`).
+    Shortcuts,
 }
 
 pub(crate) fn is_conflict(e: &DocumentError) -> bool {
@@ -144,7 +148,7 @@ impl Host {
         self.dialog_fresh = true;
     }
 
-    fn close_dialog(&mut self) {
+    pub(crate) fn close_dialog(&mut self) {
         self.dialog = Dialog::None;
         self.set_focus(self.focus_back);
         if self.is_dirty() && !self.autosave_blocked && self.autosave_due.is_none() {
@@ -395,6 +399,14 @@ impl Host {
         let first_frame = std::mem::take(&mut self.dialog_fresh);
         match self.dialog.clone() {
             Dialog::None => return,
+            Dialog::Recovery => {
+                self.show_recovery(ctx, first_frame);
+                return;
+            }
+            Dialog::Shortcuts => {
+                self.show_shortcuts(ctx, first_frame);
+                return;
+            }
             Dialog::Unsaved { error } => {
                 let m = egui::Modal::new(egui::Id::unique("dlg-unsaved"))
                     .frame(dialog_frame(ctx))
@@ -598,17 +610,17 @@ impl Host {
 // --- Dialog presentation (E6b) --------------------------------------------------------------
 
 /// Shared look of every modal: one width rule, one rhythm, one heading style.
-fn dialog_frame(ctx: &egui::Context) -> egui::Frame {
+pub(crate) fn dialog_frame(ctx: &egui::Context) -> egui::Frame {
     egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(18))
 }
 
-fn dialog_open(ui: &mut egui::Ui, ctx: &egui::Context, width: f32) {
+pub(crate) fn dialog_open(ui: &mut egui::Ui, ctx: &egui::Context, width: f32) {
     ui.set_width(width.min((ctx.content_rect().width() - 72.0).max(200.0)));
     ui.spacing_mut().item_spacing = egui::vec2(8.0, 10.0);
     ui.spacing_mut().button_padding = egui::vec2(14.0, 5.0);
 }
 
-fn dialog_heading(
+pub(crate) fn dialog_heading(
     ui: &mut egui::Ui,
     text: &str,
     bold: Option<&egui::FontFamily>,
@@ -622,7 +634,7 @@ fn dialog_heading(
 }
 
 /// The row of answers, a little apart from the text above.
-fn dialog_buttons<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+pub(crate) fn dialog_buttons<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.add_space(4.0);
     ui.horizontal(add).inner
 }
@@ -630,7 +642,11 @@ fn dialog_buttons<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) ->
 /// A destructive answer: the danger fill, a label that reads on it (derived from the palette,
 /// see `theme::Chrome::on_danger`), and words that say what will happen, so colour is not the
 /// only cue.
-fn destructive_button(ui: &mut egui::Ui, label: &str, ch: &theme::Chrome) -> egui::Response {
+pub(crate) fn destructive_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    ch: &theme::Chrome,
+) -> egui::Response {
     ui.add(
         egui::Button::new(egui::RichText::new(label).color(ch.on_danger))
             .fill(ch.danger_fill)

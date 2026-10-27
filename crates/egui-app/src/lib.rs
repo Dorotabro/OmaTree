@@ -10,9 +10,12 @@
 //!   the attachment backend (none yet: [`UnavailableStore`]).
 
 mod drag;
+mod help;
+mod keymap;
 mod layout;
 mod lifecycle;
 mod ops;
+mod recovery_ui;
 mod search;
 mod store;
 mod theme;
@@ -21,10 +24,11 @@ mod tree_ui;
 
 pub use lifecycle::{Dialog, AUTOSAVE_DELAY};
 pub use ops::Focus;
+pub use recovery_ui::Tab as RecoveryTab;
 pub use store::UnavailableStore;
 pub use tree::{Row, Tree};
 
-use eframe::egui::{self, Key, Modifiers};
+use eframe::egui::{self, Key};
 use omatree_core::document::{Document, DocumentError};
 use omatree_core::notebook::NodeId;
 use omatree_editor::theme::Palette;
@@ -65,6 +69,7 @@ pub struct Host {
     status_since: f64,
     /// Notebook-wide Search: the field, the query and the results derived from it.
     search: search::Search,
+    recovery: recovery_ui::RecoveryUi,
     scroll_to: Option<NodeId>,
     /// Open the keyboard context menu on the selected row.
     menu_request: bool,
@@ -122,6 +127,7 @@ impl Host {
             status_seen: (String::new(), false),
             status_since: 0.0,
             search: search::Search::default(),
+            recovery: recovery_ui::RecoveryUi::default(),
             scroll_to: None,
             menu_request: false,
             menu_pos: None,
@@ -317,34 +323,48 @@ impl Host {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        // F1 opens the reference and closes it again; behind any other question it does nothing.
+        if self.doc.is_some()
+            && matches!(self.dialog, Dialog::None | Dialog::Shortcuts)
+            && ctx.input_mut(|i| i.consume_shortcut(&keymap::HELP))
+        {
+            if self.dialog == Dialog::Shortcuts {
+                self.cancel_dialog();
+            } else {
+                self.open_dialog(ctx, Dialog::Shortcuts);
+            }
+        }
         if self.dialog_open() {
             return;
         }
-        // Ctrl+Shift+S first: egui matches Ctrl+S even with Shift held.
-        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::S)) {
+        // Shift variants first: egui ignores an extra Shift.
+        if ctx.input_mut(|i| i.consume_shortcut(&keymap::SAVE_AS)) {
             self.start_save_as(ctx, false);
         }
-        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::S)) {
+        if ctx.input_mut(|i| i.consume_shortcut(&keymap::SAVE)) {
             self.save(ctx);
         }
         // Application-wide note commands (as the Qt app's `Shortcut`s): they work from the tree,
-        // the title and the editor alike. Shift variants first: egui ignores an extra Shift.
-        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::N)) {
+        // the title and the editor alike.
+        if ctx.input_mut(|i| i.consume_shortcut(&keymap::NEW_CHILD)) {
             self.create_child(ctx);
         }
-        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::N)) {
+        if ctx.input_mut(|i| i.consume_shortcut(&keymap::NEW_NOTE)) {
             self.create_root(ctx);
         }
-        if ctx.input_mut(|i| i.consume_key(Modifiers::ALT, Key::ArrowUp)) {
+        if ctx.input_mut(|i| i.consume_shortcut(&keymap::MOVE_UP)) {
             self.move_selected(ctx, -1);
         }
-        if ctx.input_mut(|i| i.consume_key(Modifiers::ALT, Key::ArrowDown)) {
+        if ctx.input_mut(|i| i.consume_shortcut(&keymap::MOVE_DOWN)) {
             self.move_selected(ctx, 1);
         }
-        if self.drag.is_none() && ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::F)) {
+        if self.drag.is_none() && ctx.input_mut(|i| i.consume_shortcut(&keymap::RECOVERY)) {
+            self.open_recovery(ctx);
+        }
+        if self.drag.is_none() && ctx.input_mut(|i| i.consume_shortcut(&keymap::FIND)) {
             self.start_search();
         }
-        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F2)) && self.selected.is_some() {
+        if ctx.input_mut(|i| i.consume_shortcut(&keymap::RENAME)) && self.selected.is_some() {
             self.set_focus(Focus::Title);
         }
     }

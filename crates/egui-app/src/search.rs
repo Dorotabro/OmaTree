@@ -51,6 +51,10 @@ pub(crate) struct Search {
     /// The field has had the keyboard since it opened (an empty field closes when it leaves).
     seen_focus: bool,
     scroll_to_current: bool,
+    /// The lower-cased query the results answer (what the match highlight looks for).
+    needle: String,
+    /// Results per page for Page Up / Page Down (what the last frame showed, less one).
+    page_rows: usize,
     /// The next time the field is given the keyboard, leave its text alone (not select it all).
     keep_query: bool,
 }
@@ -72,6 +76,7 @@ impl Search {
         self.results.clear();
         self.tops.clear();
         self.answered.clear();
+        self.needle.clear();
         self.current = 0;
         self.stale = Stale::No;
         self.deadline = None;
@@ -230,6 +235,7 @@ impl Host {
         }
         tops.push(y);
         s.tops = tops;
+        s.needle = query.to_lowercase();
         s.answered = query;
         s.results = results;
         s.stale = Stale::No;
@@ -273,14 +279,24 @@ impl Host {
                 let focused = ctx.memory(|m| m.has_focus(id));
                 if focused && !self.dialog_open() {
                     let none = egui::Modifiers::NONE;
-                    let (down, up, enter, escape) = ctx.input_mut(|i| {
+                    let results = self.search.showing_results();
+                    let (down, up, enter, escape, page_down, page_up) = ctx.input_mut(|i| {
                         (
                             i.consume_key(none, Key::ArrowDown),
                             i.consume_key(none, Key::ArrowUp),
                             i.consume_key(none, Key::Enter),
                             i.consume_key(none, Key::Escape),
+                            results && i.consume_key(none, Key::PageDown),
+                            results && i.consume_key(none, Key::PageUp),
                         )
                     });
+                    let page = self.search.page_rows.max(1) as isize;
+                    if page_down {
+                        self.search.step(page);
+                    }
+                    if page_up {
+                        self.search.step(-page);
+                    }
                     if down {
                         self.search.step(1);
                     }
@@ -303,6 +319,16 @@ impl Host {
                                 .size(15.0)
                                 .color(prompt),
                         );
+                        let count = self.search.results.len();
+                        let count_text =
+                            (self.search.showing_results() && count > 0).then(|| count.to_string());
+                        let reserve = count_text.as_ref().map_or(0.0, |t| {
+                            ui.painter()
+                                .layout_no_wrap(t.clone(), FontId::proportional(12.5), ch.muted)
+                                .size()
+                                .x
+                                + 12.0
+                        });
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut self.search.query)
                                 .id(id)
@@ -310,9 +336,23 @@ impl Host {
                                 .font(FontId::proportional(14.5))
                                 .text_color(ch.text)
                                 .hint_text(egui::RichText::new("search notes").color(ch.muted))
-                                .desired_width(f32::INFINITY)
+                                .desired_width((ui.available_width() - reserve).max(20.0))
                                 .margin(egui::Margin::ZERO),
                         );
+                        if let Some(text) = count_text {
+                            // The number of results, also named for assistive technology.
+                            let spoken = if count == 1 {
+                                "1 result".to_owned()
+                            } else {
+                                format!("{count} results")
+                            };
+                            ui.add(egui::Label::new(
+                                egui::RichText::new(text).size(12.5).color(ch.muted),
+                            ))
+                            .widget_info(|| {
+                                egui::WidgetInfo::labeled(egui::Role::Label, true, spoken.as_str())
+                            });
+                        }
                         if resp.has_focus() {
                             // Up, Down and Escape are this field's: egui must not use them to
                             // move the keyboard to another widget.
@@ -377,10 +417,13 @@ impl Host {
         let field_focused = ctx.memory(|m| m.has_focus(Host::search_id()));
         let want_visible = std::mem::take(&mut self.search.scroll_to_current);
         let mut clicked = None;
+        let mut page = 0;
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show_viewport(ui, |ui, viewport| {
                 let total = *self.search.tops.last().unwrap_or(&0.0);
+                let average = total / self.search.results.len().max(1) as f32;
+                page = ((viewport.height() / average).floor() as usize).saturating_sub(1);
                 let width = ui.available_width().max(60.0);
                 let (area, _) = ui.allocate_exact_size(Vec2::new(width, total), Sense::hover());
                 let tops = &self.search.tops;
@@ -390,19 +433,32 @@ impl Host {
                 let painter = ui.painter_at(ui.clip_rect());
                 let text_left = area.left() + GUTTER;
                 let right = area.right() - GUTTER + 4.0;
-                let single = |text: &str, size: f32, colour: egui::Color32, family| {
-                    let mut job = egui::text::LayoutJob::single_section(
-                        text.to_owned(),
-                        egui::TextFormat::simple(FontId::new(size, family), colour),
-                    );
-                    job.wrap = egui::text::TextWrapping {
-                        max_width: (right - text_left).max(10.0),
-                        max_rows: 1,
-                        break_anywhere: true,
-                        overflow_character: Some('\u{2026}'),
+                let needle = self.search.needle.as_str();
+                let mark = ch.accent.gamma_multiply(0.32);
+                // One line, ellipsised; `marked` paints the query where it occurs in the text.
+                let single =
+                    |text: &str, size: f32, colour: egui::Color32, family, marked: bool| {
+                        let plain = egui::TextFormat::simple(FontId::new(size, family), colour);
+                        let mut job = egui::text::LayoutJob::default();
+                        let mut at = 0;
+                        if marked {
+                            for r in match_ranges(text, needle) {
+                                job.append(&text[at..r.start], 0.0, plain.clone());
+                                let mut hit = plain.clone();
+                                hit.background = mark;
+                                job.append(&text[r.clone()], 0.0, hit);
+                                at = r.end;
+                            }
+                        }
+                        job.append(&text[at..], 0.0, plain);
+                        job.wrap = egui::text::TextWrapping {
+                            max_width: (right - text_left).max(10.0),
+                            max_rows: 1,
+                            break_anywhere: true,
+                            overflow_character: Some('\u{2026}'),
+                        };
+                        painter.layout_job(job)
                     };
-                    painter.layout_job(job)
-                };
                 let proportional = egui::FontFamily::Proportional;
                 for i in first..self.search.results.len() {
                     let top = area.top() + tops[i];
@@ -444,7 +500,7 @@ impl Host {
                         proportional.clone()
                     };
                     let mut y = rect.top() + RESULT_PAD_Y;
-                    let galley = single(&r.title, RESULT_TITLE_PX, title_colour, family);
+                    let galley = single(&r.title, RESULT_TITLE_PX, title_colour, family, true);
                     let elided = galley.elided;
                     painter.galley(
                         Pos2::new(text_left, y + (RESULT_TITLE_H - galley.size().y) / 2.0),
@@ -455,8 +511,13 @@ impl Host {
                     if !r.breadcrumb.is_empty() {
                         // A path that does not fit loses its outermost notes first: the nearest
                         // ancestors are what tell two notes of the same name apart.
-                        let mut g =
-                            single(&r.breadcrumb, RESULT_SUB_PX, ch.muted, proportional.clone());
+                        let mut g = single(
+                            &r.breadcrumb,
+                            RESULT_SUB_PX,
+                            ch.muted,
+                            proportional.clone(),
+                            false,
+                        );
                         if g.elided {
                             let parts: Vec<&str> = r.breadcrumb.split(" \u{203a} ").collect();
                             for skip in 1..parts.len() {
@@ -464,7 +525,13 @@ impl Host {
                                     "\u{2026} \u{203a} {}",
                                     parts[skip..].join(" \u{203a} ")
                                 );
-                                g = single(&shorter, RESULT_SUB_PX, ch.muted, proportional.clone());
+                                g = single(
+                                    &shorter,
+                                    RESULT_SUB_PX,
+                                    ch.muted,
+                                    proportional.clone(),
+                                    false,
+                                );
                                 if !g.elided {
                                     break;
                                 }
@@ -483,6 +550,7 @@ impl Host {
                             RESULT_SUB_PX,
                             ch.secondary,
                             proportional.clone(),
+                            true,
                         );
                         painter.galley(
                             Pos2::new(text_left, y + (RESULT_SUB_H - g.size().y) / 2.0),
@@ -506,6 +574,7 @@ impl Host {
                     ui.scroll_to_rect(rect, None);
                 }
             });
+        self.search.page_rows = page;
         if let Some(i) = clicked {
             self.search.current = i;
             self.activate_result(&ctx, i);
@@ -515,4 +584,34 @@ impl Host {
     pub(crate) fn search_showing_results(&self) -> bool {
         self.search.showing_results()
     }
+}
+
+/// Where `needle` (already lower-case) occurs in `text`, ignoring case the way the search does
+/// (Unicode lower-casing, which can change a character's length), as byte ranges of the original
+/// text on character boundaries. Overlapping hits are merged.
+pub(crate) fn match_ranges(text: &str, needle: &str) -> Vec<std::ops::Range<usize>> {
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let mut lowered = String::with_capacity(text.len());
+    // For every byte of `lowered`: where the original character it came from starts.
+    let mut origin: Vec<usize> = Vec::with_capacity(text.len());
+    for (start, ch) in text.char_indices() {
+        for lower in ch.to_lowercase() {
+            let before = lowered.len();
+            lowered.push(lower);
+            origin.extend(std::iter::repeat_n(start, lowered.len() - before));
+        }
+    }
+    let mut out: Vec<std::ops::Range<usize>> = Vec::new();
+    for (at, hit) in lowered.match_indices(needle) {
+        let start = origin[at];
+        let last = origin[at + hit.len() - 1];
+        let end = last + text[last..].chars().next().map_or(0, char::len_utf8);
+        match out.last_mut() {
+            Some(prev) if start <= prev.end => prev.end = prev.end.max(end),
+            _ => out.push(start..end),
+        }
+    }
+    out
 }

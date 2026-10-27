@@ -3,7 +3,7 @@
 //! user's notebook.
 
 use super::*;
-use eframe::egui::{Event, Pos2, RawInput, Rect, Vec2};
+use eframe::egui::{Event, Modifiers, Pos2, RawInput, Rect, Vec2};
 use omatree_core::document::Document;
 use omatree_editor::attachments::AttachmentStore;
 use std::fs;
@@ -802,6 +802,7 @@ mod lifecycle_tests;
 
 mod drag_tests;
 mod polish_tests;
+mod recovery_tests;
 mod search_tests;
 mod theme_tests;
 mod tree_tests;

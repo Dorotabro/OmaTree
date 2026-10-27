@@ -272,3 +272,12 @@ itself is `omatree_core::search::search` over the in-memory `Document`, so there
 index. Results are throwaway: invalidated by query, structure or body changes (a debounce for bodies),
 never trusted on activation (the note is looked up again by `NodeId`), and chosen through
 `Host::select`, so pending-title validation and hierarchy reveal stay in one place.
+
+## Recovery, shortcuts and F1 (E7b)
+
+`recovery_ui.rs` lists what `Document::recovery()` retains and calls `restore_trash` /
+`restore_checkpoint`; it then repairs the host (tree, selection, editor state, Search) in the same
+call. `keymap.rs` holds the application-wide shortcuts once: `Host::handle_shortcuts` consumes them
+and `help.rs` (F1) prints them through egui's formatter, together with the editor's `EditorKeys`.
+`Dialog` has two new variants (`Recovery`, `Shortcuts`); both go through `open_dialog`, `focus_back`
+and `cancel_dialog` like every other question.

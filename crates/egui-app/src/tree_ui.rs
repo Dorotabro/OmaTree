@@ -35,6 +35,7 @@ enum Cmd {
     Delete,
     NewRoot,
     NewChild,
+    Recovery,
     ExpandAll(bool),
     ExpandSubtree(NodeId, bool),
     /// The drag ended (dropped, cancelled or lost): close what hovering opened.
@@ -584,6 +585,7 @@ impl Host {
                 Cmd::Delete => self.ask_delete(ctx),
                 Cmd::NewRoot => self.create_root(ctx),
                 Cmd::NewChild => self.create_child(ctx),
+                Cmd::Recovery => self.open_recovery(ctx),
                 Cmd::ExpandAll(open) => self.set_all_expanded(ctx, open),
                 Cmd::ExpandSubtree(id, open) => self.set_subtree_expanded(ctx, id, open),
                 Cmd::EndDrag(opened) => self.end_drag(opened),
@@ -802,4 +804,6 @@ fn menu_entries(
     pick(ui, "Collapse all", "", true, Cmd::ExpandAll(false));
     ui.separator();
     pick(ui, "Move to Trash", "Delete", on.is_some(), Cmd::Delete);
+    let recovery_keys = ui.ctx().format_shortcut(&keymap::RECOVERY);
+    pick(ui, "Recovery\u{2026}", &recovery_keys, true, Cmd::Recovery);
 }

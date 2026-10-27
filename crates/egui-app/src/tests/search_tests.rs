@@ -34,7 +34,7 @@ fn make_search(path: &Path) {
     doc.save().unwrap();
 }
 
-fn search_nb(name: &str) -> (PathBuf, PathBuf) {
+pub(super) fn search_nb(name: &str) -> (PathBuf, PathBuf) {
     let d = dir(name);
     let p = d.join("n.omatree");
     make_search(&p);
@@ -49,17 +49,17 @@ impl H {
         (d, p, h)
     }
 
-    fn ctrl_f(&mut self) {
+    pub(super) fn ctrl_f(&mut self) {
         self.key(Key::F, CTRL);
     }
 
     /// Ctrl+F (which selects whatever the field held) and the query typed over it.
-    fn search_for(&mut self, query: &str) {
+    pub(super) fn search_for(&mut self, query: &str) {
         self.ctrl_f();
         self.type_text(query);
     }
 
-    fn found(&self) -> Vec<String> {
+    pub(super) fn found(&self) -> Vec<String> {
         self.host
             .search_results()
             .iter()

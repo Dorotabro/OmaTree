@@ -42,7 +42,7 @@ impl Host {
         ))
     }
 
-    fn rebuild_tree(&mut self) {
+    pub(crate) fn rebuild_tree(&mut self) {
         if let Some(doc) = &self.doc {
             self.tree = Tree::build(doc);
             self.search.structure_changed();

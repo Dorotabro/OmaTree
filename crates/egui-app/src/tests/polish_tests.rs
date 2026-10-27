@@ -30,6 +30,8 @@ pub(super) struct Text {
     pub(super) colour: Color32,
     pub(super) elided: bool,
     pub(super) rows: usize,
+    /// The slices of the text that carry a background (a highlighted match).
+    pub(super) marked: Vec<String>,
 }
 
 impl Text {
@@ -78,6 +80,14 @@ fn collect(shape: &Shape, out: &mut Painted) {
                 colour,
                 elided: t.galley.elided,
                 rows: t.galley.rows.len(),
+                marked: t
+                    .galley
+                    .job
+                    .sections
+                    .iter()
+                    .filter(|s| s.format.background != Color32::TRANSPARENT)
+                    .map(|s| t.galley.job.text[s.byte_range.start.0..s.byte_range.end.0].to_owned())
+                    .collect(),
             });
         }
         Shape::Rect(r) => out.fills.push(Fill {
