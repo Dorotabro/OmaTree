@@ -2,8 +2,12 @@
 //!
 //! Schema version 1 stores only the active nodes. Version 2 adds the id
 //! counter, Trash and recovery checkpoints. Version 3 adds the set of
-//! expanded nodes, which is view state rather than content. Older files stay
-//! readable and are migrated to version 3 only by a successful save.
+//! expanded nodes, which is view state rather than content. Version 4 adds
+//! the `attachments` table (image BLOBs). Older files stay readable. A save
+//! migrates a file older than 3 to 3; a file only becomes version 4 when a save
+//! has an attachment to write, in the same transaction, so a notebook that never
+//! holds an image stays a version 3 file. Migration is one explicit step per
+//! version (`migrate`), never "re-run everything newer than the file".
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -11,10 +15,17 @@ use std::path::Path;
 
 use rusqlite::{params, Connection, OpenFlags, Transaction};
 
+use crate::attachments::{Attachment, AttachmentId, AttachmentInfo, MediaType};
 use crate::notebook::{Node, NodeId, Notebook, NotebookError};
 use crate::recovery::{Checkpoint, Recovery, TrashEntry};
 
-const SCHEMA_VERSION: i64 = 3;
+/// The newest schema this build understands.
+const SCHEMA_VERSION: i64 = 4;
+/// What a notebook without attachments is: new files are created at this version and a
+/// text-only save never raises a file above it.
+const BASE_VERSION: i64 = 3;
+/// The first version that has the `attachments` table.
+const ATTACHMENT_VERSION: i64 = 4;
 /// The first version that has the recovery tables.
 const RECOVERY_VERSION: i64 = 2;
 const OLDEST_READABLE_VERSION: i64 = 1;
@@ -77,6 +88,31 @@ const VIEW_SCHEMA: &str = "
     );
 ";
 
+/// What version 4 adds. No foreign key to nodes, Trash or checkpoints: what an attachment
+/// belongs to is derived from the Markdown bodies, and `DELETE FROM nodes` (every save) must
+/// never reach it. `byte_len` must agree with the BLOB.
+const ATTACHMENT_SCHEMA: &str = "
+    CREATE TABLE attachments (
+        id         TEXT PRIMARY KEY CHECK (length(id) = 32),
+        media_type TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        byte_len   INTEGER NOT NULL CHECK (byte_len > 0),
+        data       BLOB NOT NULL,
+        CHECK (byte_len = length(data))
+    ) WITHOUT ROWID;
+";
+
+/// What a save should do about attachments besides keeping those already stored.
+#[derive(Default)]
+pub struct AttachmentPlan<'a> {
+    /// Held in memory until now; inserted by this save.
+    pub pending: Vec<&'a Attachment>,
+    /// Another notebook file whose stored attachments are copied into this one (Save As).
+    pub copy_from: Option<&'a Storage>,
+    /// This file is an existing notebook being replaced: what it stored is dropped first.
+    pub replace_existing: bool,
+}
+
 #[derive(Debug)]
 pub enum StorageError {
     Sqlite(rusqlite::Error),
@@ -118,7 +154,7 @@ impl From<NotebookError> for StorageError {
 
 pub struct Storage {
     conn: Connection,
-    /// Schema version of the file as it is on disk right now (1, 2 or 3).
+    /// Schema version of the file as it is on disk right now (1 to 4).
     version: i64,
     /// `PRAGMA data_version` of `conn`, as last seen. SQLite changes that
     /// number for a connection when *another* connection commits, and not for
@@ -131,7 +167,8 @@ pub struct Storage {
 }
 
 impl Storage {
-    /// Creates a version 3 notebook in a new (or empty) database file.
+    /// Creates a version 3 notebook in a new (or empty) database file (attachments make it 4
+    /// later, with the save that stores the first one).
     /// Refuses to touch a database that already contains anything.
     pub fn create(path: &Path) -> Result<Self, StorageError> {
         let mut conn = Connection::open(path)?;
@@ -157,17 +194,17 @@ impl Storage {
             "INSERT INTO notebook_meta (id, next_node_id) VALUES (1, 0)",
             [],
         )?;
-        tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        tx.pragma_update(None, "user_version", BASE_VERSION)?;
         tx.commit()?;
         let observed = data_version(&conn)?;
         Ok(Storage {
             conn,
-            version: SCHEMA_VERSION,
+            version: BASE_VERSION,
             observed,
         })
     }
 
-    /// Opens an existing notebook (schema version 1 to 3); never creates a
+    /// Opens an existing notebook (schema version 1 to 4); never creates a
     /// file and never modifies one. An older file is only upgraded by a
     /// later successful `save_document`.
     pub fn open(path: &Path) -> Result<Self, StorageError> {
@@ -191,24 +228,40 @@ impl Storage {
 
     /// Replaces everything stored (active notebook, id counter, Trash,
     /// checkpoints and the expanded nodes) with the given state in a single
-    /// transaction. An older file is migrated to version 3 inside the same
-    /// transaction, so on any failure the previous valid file is left exactly
-    /// as it was. Expanded ids of nodes that do not exist are left out.
+    /// transaction. Attachments already stored are kept. An older file is migrated inside the same
+    /// transaction, so on any failure the previous valid file is left exactly as it was. Expanded
+    /// ids of nodes that do not exist are left out.
     pub fn save_document_with_view(
         &mut self,
         notebook: &Notebook,
         recovery: &Recovery,
         expanded: &BTreeSet<NodeId>,
     ) -> Result<(), StorageError> {
-        let migrating = self.version < SCHEMA_VERSION;
+        self.save_document_with_attachments(
+            notebook,
+            recovery,
+            expanded,
+            &AttachmentPlan::default(),
+        )
+    }
+
+    /// `save_document_with_view` that also writes attachments (see [`AttachmentPlan`]) in the
+    /// same checked transaction on the same connection: all of it commits or none of it does,
+    /// and the external-modification guard covers it. The file becomes version 4 here, inside
+    /// that transaction, if (and only if) there is anything to store in the attachments table.
+    pub fn save_document_with_attachments(
+        &mut self,
+        notebook: &Notebook,
+        recovery: &Recovery,
+        expanded: &BTreeSet<NodeId>,
+        plan: &AttachmentPlan,
+    ) -> Result<(), StorageError> {
         let from = self.version;
+        let wants = !plan.pending.is_empty() || plan.copy_from.is_some_and(Storage::has_stored);
+        let to = target_version(from.max(BASE_VERSION), wants);
         let tx = self.begin_checked_write()?;
-        if from < RECOVERY_VERSION {
-            tx.execute_batch(RECOVERY_SCHEMA)?;
-        }
-        if from < SCHEMA_VERSION {
-            tx.execute_batch(VIEW_SCHEMA)?;
-        }
+        migrate(&tx, from, to)?;
+        write_attachments(&tx, to, plan)?;
 
         // Children first for the nodes foreign key; the other tables cascade.
         tx.execute("DELETE FROM expanded_nodes", [])?;
@@ -223,11 +276,11 @@ impl Storage {
         write_checkpoints(&tx, recovery)?;
         write_expanded(&tx, notebook, expanded)?;
 
-        if migrating {
-            tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        if to != from {
+            tx.pragma_update(None, "user_version", to)?;
         }
         tx.commit()?;
-        self.version = SCHEMA_VERSION;
+        self.version = to;
         Ok(())
     }
 
@@ -263,10 +316,9 @@ impl Storage {
         self.save_document_with_view(notebook, recovery, &BTreeSet::new())
     }
 
-    /// Whether the file is already at the current schema version, i.e. it
-    /// has the recovery and view tables and supports `save_active_with_view`.
+    /// Whether the file already has the recovery and view tables (version 3 or 4) and supports `save_active_with_view`.
     pub fn is_current_schema(&self) -> bool {
-        self.version >= SCHEMA_VERSION
+        self.version >= BASE_VERSION
     }
 
     /// Persists only the active state: the `nodes` table, the next node id
@@ -278,10 +330,32 @@ impl Storage {
         notebook: &Notebook,
         expanded: &BTreeSet<NodeId>,
     ) -> Result<(), StorageError> {
+        self.save_active_with_attachments(notebook, expanded, &[])
+    }
+
+    /// `save_active_with_view` that also inserts `pending` attachments, in the same checked
+    /// transaction. A version 3 file is raised to 4 inside it when there is something to insert.
+    pub fn save_active_with_attachments(
+        &mut self,
+        notebook: &Notebook,
+        expanded: &BTreeSet<NodeId>,
+        pending: &[&Attachment],
+    ) -> Result<(), StorageError> {
         if !self.is_current_schema() {
             return Err(StorageError::UnsupportedSchemaVersion(self.version));
         }
+        let from = self.version;
+        let to = target_version(from, !pending.is_empty());
         let tx = self.begin_checked_write()?;
+        migrate(&tx, from, to)?;
+        write_attachments(
+            &tx,
+            to,
+            &AttachmentPlan {
+                pending: pending.to_vec(),
+                ..AttachmentPlan::default()
+            },
+        )?;
         // Deleting the nodes also deletes their expanded rows (cascade); the
         // current set is written back below.
         tx.execute("DELETE FROM expanded_nodes", [])?;
@@ -298,7 +372,11 @@ impl Storage {
             [next],
         )?;
         write_expanded(&tx, notebook, expanded)?;
+        if to != from {
+            tx.pragma_update(None, "user_version", to)?;
+        }
         tx.commit()?;
+        self.version = to;
         Ok(())
     }
 
@@ -311,7 +389,7 @@ impl Storage {
     /// The stored expanded nodes that exist in `notebook`. A file older than
     /// version 3 has none. Ids of missing nodes are ignored, not an error.
     pub fn load_expanded(&self, notebook: &Notebook) -> Result<BTreeSet<NodeId>, StorageError> {
-        if self.version < SCHEMA_VERSION {
+        if self.version < BASE_VERSION {
             return Ok(BTreeSet::new());
         }
         let mut query = self.conn.prepare("SELECT node_id FROM expanded_nodes")?;
@@ -324,6 +402,115 @@ impl Storage {
             }
         }
         Ok(expanded)
+    }
+
+    /// The schema version of the file as it is now.
+    pub fn schema_version(&self) -> i64 {
+        self.version
+    }
+
+    /// Whether the attachments table holds anything.
+    pub fn has_stored(&self) -> bool {
+        self.version >= ATTACHMENT_VERSION
+            && self
+                .conn
+                .query_row("SELECT EXISTS (SELECT 1 FROM attachments)", [], |r| {
+                    r.get(0)
+                })
+                .unwrap_or(false)
+    }
+
+    /// The ids of every stored attachment (none before version 4).
+    pub fn attachment_ids(&self) -> Result<Vec<AttachmentId>, StorageError> {
+        if self.version < ATTACHMENT_VERSION {
+            return Ok(Vec::new());
+        }
+        let mut q = self
+            .conn
+            .prepare("SELECT id FROM attachments ORDER BY id")?;
+        let rows = q.query_map([], |r| r.get::<_, String>(0))?;
+        let mut ids = Vec::new();
+        for row in rows {
+            ids.push(
+                AttachmentId::parse(&row?).map_err(|e| StorageError::InvalidData(e.to_string()))?,
+            );
+        }
+        Ok(ids)
+    }
+
+    /// Size and media type of a stored attachment, without reading the bytes.
+    pub fn attachment_info(
+        &self,
+        id: &AttachmentId,
+    ) -> Result<Option<AttachmentInfo>, StorageError> {
+        if self.version < ATTACHMENT_VERSION {
+            return Ok(None);
+        }
+        let row = self
+            .conn
+            .query_row(
+                "SELECT media_type, byte_len FROM attachments WHERE id = ?1",
+                [id.as_str()],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other),
+            })?;
+        row.map(|(mime, len)| {
+            Ok(AttachmentInfo {
+                len: u64::try_from(len)
+                    .map_err(|_| StorageError::InvalidData("negative attachment size".into()))?,
+                media_type: MediaType::from_mime(&mime).ok_or_else(|| {
+                    StorageError::InvalidData(format!("attachment of type {mime}"))
+                })?,
+            })
+        })
+        .transpose()
+    }
+
+    /// A stored attachment with its bytes, checked against its recorded length.
+    pub fn attachment(&self, id: &AttachmentId) -> Result<Option<Attachment>, StorageError> {
+        if self.version < ATTACHMENT_VERSION {
+            return Ok(None);
+        }
+        let row = self
+            .conn
+            .query_row(
+                "SELECT media_type, created_at, byte_len, data FROM attachments WHERE id = ?1",
+                [id.as_str()],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, Vec<u8>>(3)?,
+                    ))
+                },
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other),
+            })?;
+        let Some((mime, created_at, len, data)) = row else {
+            return Ok(None);
+        };
+        if i64::try_from(data.len()).ok() != Some(len) {
+            return Err(StorageError::InvalidData(format!(
+                "attachment {id} records {len} bytes but holds {}",
+                data.len()
+            )));
+        }
+        let media_type = MediaType::from_mime(&mime)
+            .ok_or_else(|| StorageError::InvalidData(format!("attachment of type {mime}")))?;
+        Ok(Some(Attachment {
+            id: id.clone(),
+            media_type,
+            created_at,
+            data,
+        }))
     }
 
     /// Loads and validates the stored notebook and recovery state. A
@@ -430,6 +617,74 @@ impl Storage {
     pub fn load(&self) -> Result<Notebook, StorageError> {
         Ok(self.load_document()?.0)
     }
+}
+
+/// The version a save leaves the file at: it never goes down, and only a save that has something
+/// for the attachments table takes a version 3 file to 4.
+fn target_version(at_least: i64, has_attachments: bool) -> i64 {
+    if has_attachments {
+        at_least.max(ATTACHMENT_VERSION)
+    } else {
+        at_least
+    }
+}
+
+/// One explicit step per version. `to` is never lower than `from` and never above the newest.
+fn migrate(tx: &Transaction, from: i64, to: i64) -> Result<(), StorageError> {
+    if from < RECOVERY_VERSION && to >= RECOVERY_VERSION {
+        tx.execute_batch(RECOVERY_SCHEMA)?;
+    }
+    if from < BASE_VERSION && to >= BASE_VERSION {
+        tx.execute_batch(VIEW_SCHEMA)?;
+    }
+    if from < ATTACHMENT_VERSION && to >= ATTACHMENT_VERSION {
+        tx.execute_batch(ATTACHMENT_SCHEMA)?;
+    }
+    Ok(())
+}
+
+/// The attachment part of a save, inside its transaction: drop what an existing file held when
+/// it is being replaced, copy another file's attachments, insert the pending ones. A plain
+/// INSERT: an id that already exists fails the whole save rather than replacing data.
+fn write_attachments(
+    tx: &Transaction,
+    version: i64,
+    plan: &AttachmentPlan,
+) -> Result<(), StorageError> {
+    if version < ATTACHMENT_VERSION {
+        return Ok(());
+    }
+    if plan.replace_existing {
+        tx.execute("DELETE FROM attachments", [])?;
+    }
+    let mut insert = tx.prepare(
+        "INSERT INTO attachments (id, media_type, created_at, byte_len, data)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )?;
+    let mut put = |a: &Attachment| -> Result<(), StorageError> {
+        let len = i64::try_from(a.data.len())
+            .map_err(|_| StorageError::InvalidData("attachment too large".into()))?;
+        insert.execute(params![
+            a.id.as_str(),
+            a.media_type.mime(),
+            a.created_at,
+            len,
+            a.data
+        ])?;
+        Ok(())
+    };
+    if let Some(source) = plan.copy_from {
+        for id in source.attachment_ids()? {
+            let a = source
+                .attachment(&id)?
+                .ok_or_else(|| StorageError::InvalidData(format!("attachment {id} vanished")))?;
+            put(&a)?;
+        }
+    }
+    for a in &plan.pending {
+        put(a)?;
+    }
+    Ok(())
 }
 
 fn write_nodes(tx: &Transaction, notebook: &Notebook) -> Result<(), StorageError> {
@@ -1205,10 +1460,10 @@ mod tests {
     }
 
     #[test]
-    fn schema_versions_above_3_and_empty_files_stay_unsupported() {
+    fn schema_versions_above_4_and_empty_files_stay_unsupported() {
         let db = TempDb::new();
         Storage::create(db.path()).unwrap();
-        for version in [4, 99] {
+        for version in [5, 99] {
             write_raw(db.path(), &format!("PRAGMA user_version = {version};"));
             match Storage::open(db.path()) {
                 Err(StorageError::UnsupportedSchemaVersion(v)) => assert_eq!(v, version),

@@ -2181,6 +2181,7 @@ dependencies = [
 name = "omatree-core"
 version = "0.1.2"
 dependencies = [
+ "getrandom 0.3.4",
  "rusqlite",
  "toml",
 ]

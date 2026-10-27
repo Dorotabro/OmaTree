@@ -308,3 +308,16 @@ thread and are polled once per frame; without them a typed-path dialog asks the 
 overwrite. `files.rs` also owns the command-line check and `request_open_path`, the single entry for
 every other incoming open request, and `recent.rs` keeps the recent-notebooks paths in the user's
 configuration folder. There is still no single-instance channel: a second launch is a second process.
+
+## Attachments (E9a)
+
+Images belong to the notebook, not to any note: each is a BLOB row in the `attachments` table of the
+same SQLite file (schema version 4), named by a random 128-bit id and referenced from Markdown as
+`assets/<id>.png|jpg`. There is no foreign key to notes, Trash or checkpoints, so what an attachment
+"belongs to" is derived from the bodies, and nothing deletes one except the future, explicit Compact
+Notebook operation. A new attachment is first held in memory by the `Document` (`put_attachment`,
+readable at once, also for an untitled notebook) and is written by the next save in the *same
+checked transaction* as the notes; a file stays at schema version 3 until that first save, which
+creates the table and sets version 4 atomically. Save As copies everything stored, plus what is
+pending. The Qt build shares this core; it never writes attachments and older binaries refuse a
+version 4 file without touching it (`tools/pre-e9-compat.sh`).

@@ -1,14 +1,18 @@
 //! The open notebook: its tree, the file it came from, and whether it has
 //! unsaved changes. Pure Rust; the Qt model wraps this.
 
-use std::collections::BTreeSet;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::attachments::{
+    self, Attachment, AttachmentError, AttachmentId, AttachmentInfo, MediaType,
+};
 use crate::notebook::{MovePlan, NodeId, Notebook, NotebookError, DEFAULT_TITLE};
 use crate::recovery::{unix_now, Checkpoint, Recovery, RecoveryError, TrashEntry};
-use crate::storage::{Storage, StorageError};
+use crate::storage::{AttachmentPlan, Storage, StorageError};
 
 #[derive(Debug)]
 pub enum DocumentError {
@@ -139,6 +143,11 @@ pub struct Document {
     /// `expanded` differs from what was last written. Only an explicit save
     /// acts on this by itself; it never counts as unsaved content.
     view_dirty: bool,
+    /// Attachments put since the last save, by id. Held until a save commits them (in the same
+    /// transaction as the notes), kept through any failed save, readable at once. Interior
+    /// mutability so an attachment store can be handed out as `&Document`; this is not a second
+    /// copy of the notebook, only bytes that have no home in the file yet.
+    pending: RefCell<BTreeMap<AttachmentId, Attachment>>,
 }
 
 impl Document {
@@ -153,6 +162,7 @@ impl Document {
             recovery_dirty: false,
             expanded: BTreeSet::new(),
             view_dirty: false,
+            pending: RefCell::default(),
         }
     }
 
@@ -171,6 +181,7 @@ impl Document {
                 recovery_dirty: false,
                 expanded: BTreeSet::new(),
                 view_dirty: false,
+                pending: RefCell::default(),
             }),
             Err(e) => Err(DocumentError::Io(e)),
         }
@@ -191,6 +202,7 @@ impl Document {
             recovery_dirty: false,
             expanded,
             view_dirty: false,
+            pending: RefCell::default(),
         })
     }
 
@@ -210,19 +222,35 @@ impl Document {
         if self.storage.is_none() {
             return Err(DocumentError::NoPath);
         }
-        if !self.active_dirty && !self.recovery_dirty && !self.view_dirty {
+        let has_pending = !self.pending.borrow().is_empty();
+        if !self.active_dirty && !self.recovery_dirty && !self.view_dirty && !has_pending {
             return Ok(());
         }
         let expanded = self.valid_expanded();
         let storage = self.storage.as_mut().ok_or(DocumentError::NoPath)?;
-        if self.recovery_dirty || !storage.is_current_schema() {
-            storage.save_document_with_view(&self.notebook, &self.recovery, &expanded)?;
-            self.active_dirty = false;
-            self.recovery_dirty = false;
-        } else {
-            storage.save_active_with_view(&self.notebook, &expanded)?;
-            self.active_dirty = false;
+        {
+            // The pending attachments go into the same transaction as the notes. They are
+            // forgotten below, and only after it committed.
+            let pending = self.pending.borrow();
+            let list: Vec<&Attachment> = pending.values().collect();
+            if self.recovery_dirty || !storage.is_current_schema() {
+                storage.save_document_with_attachments(
+                    &self.notebook,
+                    &self.recovery,
+                    &expanded,
+                    &AttachmentPlan {
+                        pending: list,
+                        ..AttachmentPlan::default()
+                    },
+                )?;
+                self.active_dirty = false;
+                self.recovery_dirty = false;
+            } else {
+                storage.save_active_with_attachments(&self.notebook, &expanded, &list)?;
+                self.active_dirty = false;
+            }
         }
+        self.pending.borrow_mut().clear();
         self.view_dirty = false;
         // What was written is the whole truth now; stale ids are gone.
         self.expanded = expanded;
@@ -258,7 +286,23 @@ impl Document {
             Storage::create(path)?
         };
         let expanded = self.valid_expanded();
-        if let Err(e) = target.save_document_with_view(&self.notebook, &self.recovery, &expanded) {
+        let saved = {
+            // Everything this notebook stores (not only what its notes reference: Trash,
+            // checkpoints and orphans are kept too) is copied, with the pending attachments, in
+            // the new file's own transaction. A file being replaced keeps none of its old ones.
+            let pending = self.pending.borrow();
+            target.save_document_with_attachments(
+                &self.notebook,
+                &self.recovery,
+                &expanded,
+                &AttachmentPlan {
+                    pending: pending.values().collect(),
+                    copy_from: self.storage.as_ref(),
+                    replace_existing: existed,
+                },
+            )
+        };
+        if let Err(e) = saved {
             drop(target);
             if !existed {
                 let _ = std::fs::remove_file(path);
@@ -266,6 +310,7 @@ impl Document {
             return Err(e.into());
         }
 
+        self.pending.borrow_mut().clear();
         self.storage = Some(target);
         self.path = Some(path.to_path_buf());
         self.active_dirty = false;
@@ -299,7 +344,142 @@ impl Document {
     /// Unsaved changes of any kind. The two kinds are an internal detail
     /// that only decides how much `save` has to write.
     pub fn is_dirty(&self) -> bool {
-        self.active_dirty || self.recovery_dirty
+        self.active_dirty || self.recovery_dirty || !self.pending.borrow().is_empty()
+    }
+
+    // Attachments. Images are stored in the notebook file (schema version 4), named by random
+    // ids, and referenced from Markdown as `assets/<id>.png|jpg`. `put_attachment` only holds
+    // the bytes in memory; a save writes them with the notes; nothing here ever deletes one.
+
+    /// Hold `bytes` (a PNG or JPEG, checked and kept exactly as given) as a new attachment and
+    /// return its Markdown reference at once. Works without a file (an untitled notebook). The
+    /// notebook is then unsaved until a save commits it, and the file stays at its schema
+    /// version until then.
+    pub fn put_attachment(&self, bytes: &[u8]) -> Result<String, AttachmentError> {
+        self.put_attachment_with(bytes, &mut attachments::random_bytes)
+    }
+
+    /// `put_attachment` with the id source supplied (tests force collisions with it). An id that
+    /// is already pending or stored is never reused: another one is drawn, a few times.
+    pub(crate) fn put_attachment_with(
+        &self,
+        bytes: &[u8],
+        draw: &mut dyn FnMut() -> Result<[u8; 16], AttachmentError>,
+    ) -> Result<String, AttachmentError> {
+        let media_type = attachments::sniff(bytes)?;
+        for _ in 0..8 {
+            let id = AttachmentId::from_bytes(draw()?)?;
+            if self.pending.borrow().contains_key(&id) || self.stored_has(&id)? {
+                continue;
+            }
+            let created_at = unix_now();
+            let attachment = Attachment {
+                id: id.clone(),
+                media_type,
+                created_at,
+                data: bytes.to_vec(),
+            };
+            let reference = attachment.reference();
+            self.pending.borrow_mut().insert(id, attachment);
+            return Ok(reference);
+        }
+        Err(AttachmentError::Storage(
+            "could not find an unused attachment id".to_owned(),
+        ))
+    }
+
+    fn stored_has(&self, id: &AttachmentId) -> Result<bool, AttachmentError> {
+        match &self.storage {
+            Some(s) => s
+                .attachment_info(id)
+                .map(|i| i.is_some())
+                .map_err(|e| AttachmentError::Storage(e.to_string())),
+            None => Ok(false),
+        }
+    }
+
+    /// The size and media type behind a reference, pending or stored. Anything that is not an
+    /// exact `assets/<id>.png|jpg` reference is `InvalidReference`; an unknown id is `NotFound`;
+    /// a reference whose extension disagrees with the stored type is `NotFound` too.
+    pub fn attachment_info(&self, reference: &str) -> Result<AttachmentInfo, AttachmentError> {
+        let (id, media) = attachments::parse_reference(reference)?;
+        let missing = || AttachmentError::NotFound(reference.to_owned());
+        if let Some(a) = self.pending.borrow().get(&id) {
+            return if a.media_type == media {
+                Ok(AttachmentInfo {
+                    len: a.data.len() as u64,
+                    media_type: a.media_type,
+                })
+            } else {
+                Err(missing())
+            };
+        }
+        let info = self
+            .storage
+            .as_ref()
+            .map(|s| s.attachment_info(&id))
+            .transpose()
+            .map_err(|e| AttachmentError::Corrupt(e.to_string()))?
+            .flatten()
+            .ok_or_else(missing)?;
+        if info.media_type == media {
+            Ok(info)
+        } else {
+            Err(missing())
+        }
+    }
+
+    /// The original bytes behind a reference, pending first, then the file.
+    pub fn attachment(&self, reference: &str) -> Result<Vec<u8>, AttachmentError> {
+        let (id, media) = attachments::parse_reference(reference)?;
+        let missing = || AttachmentError::NotFound(reference.to_owned());
+        if let Some(a) = self.pending.borrow().get(&id) {
+            return if a.media_type == media {
+                Ok(a.data.clone())
+            } else {
+                Err(missing())
+            };
+        }
+        let stored = self
+            .storage
+            .as_ref()
+            .map(|s| s.attachment(&id))
+            .transpose()
+            .map_err(|e| AttachmentError::Corrupt(e.to_string()))?
+            .flatten()
+            .ok_or_else(missing)?;
+        if stored.media_type == media {
+            Ok(stored.data)
+        } else {
+            Err(missing())
+        }
+    }
+
+    /// How many attachments (and bytes) wait in memory for a save.
+    pub fn pending_attachments(&self) -> (usize, u64) {
+        let p = self.pending.borrow();
+        (p.len(), p.values().map(|a| a.data.len() as u64).sum())
+    }
+
+    /// The ids of the attachments stored in the file (not the pending ones).
+    pub fn stored_attachment_ids(&self) -> Result<Vec<String>, AttachmentError> {
+        match &self.storage {
+            Some(s) => s
+                .attachment_ids()
+                .map(|v| v.into_iter().map(|i| i.as_str().to_owned()).collect())
+                .map_err(|e| AttachmentError::Storage(e.to_string())),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// The file's schema version, if the notebook has a file.
+    pub fn schema_version(&self) -> Option<i64> {
+        self.storage.as_ref().map(Storage::schema_version)
+    }
+
+    /// The media type of attachment bytes, for callers that only have bytes.
+    pub fn sniff_attachment(bytes: &[u8]) -> Result<MediaType, AttachmentError> {
+        attachments::sniff(bytes)
     }
 
     /// (active dirty, recovery dirty). Tests only.
@@ -378,7 +558,7 @@ impl Document {
 
     /// Treats the file as it is now as seen. Tests only.
     #[cfg(test)]
-    fn resync_for_test(&mut self) {
+    pub(crate) fn resync_for_test(&mut self) {
         if let Some(storage) = self.storage.as_mut() {
             storage.resync();
         }
