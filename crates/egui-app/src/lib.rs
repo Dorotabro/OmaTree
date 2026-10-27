@@ -15,6 +15,7 @@ mod help;
 mod keymap;
 mod layout;
 mod lifecycle;
+mod note_export;
 mod ops;
 mod recent;
 mod recovery_ui;
@@ -132,7 +133,13 @@ impl Host {
             images: ImageReport::default(),
             image_retry: f64::NEG_INFINITY,
             theme: ThemeState::new(None),
-            keys: EditorKeys::omatree(),
+            keys: {
+                // The omatree profile leaves export to the host; Ctrl+Shift+E is reported by the
+                // editor (which must win over Ctrl+E, inline code) and opens the host's dialog.
+                let mut keys = EditorKeys::omatree();
+                keys.export = Some(keymap::EXPORT);
+                keys
+            },
             bold: None,
             focus: None,
             focus_tries: 0,
@@ -594,6 +601,11 @@ impl Host {
             self.status = s;
         }
         self.report_images(ctx);
+        // Ctrl+Shift+E: the editor consumes the key (so it can never reach Ctrl+E, inline code)
+        // and only reports it; what it opens is the host's business.
+        if out.export_requested && !self.dialog_open() {
+            self.start_export(ctx);
+        }
     }
 
     /// Turns what the image adapter recorded into the status bar's words. A refused paste says

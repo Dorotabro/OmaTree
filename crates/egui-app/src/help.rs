@@ -109,6 +109,10 @@ impl Host {
                     (key(&keymap::SAVE), "Save (an untitled notebook asks where)"),
                     (key(&keymap::SAVE_AS), "Save As"),
                     (
+                        key(&keymap::EXPORT),
+                        "Export the note: Markdown, folder, ZIP or PDF",
+                    ),
+                    (
                         "file menu".to_owned(),
                         "Open or Save As by typing a path, Reload from disk, recent notebooks, Quit",
                     ),

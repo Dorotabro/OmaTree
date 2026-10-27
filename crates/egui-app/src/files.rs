@@ -40,6 +40,8 @@ pub enum PickKind {
     Save {
         then: bool,
     },
+    /// Export note (E11a): a file to create, or (Markdown folder) a folder to create it in.
+    Export(note_export::ExportFormat),
 }
 
 #[derive(Clone, Debug)]
@@ -63,18 +65,30 @@ pub fn native_picker() -> Picker {
         let (tx, rx) = mpsc::channel();
         let (req, ctx) = (req.clone(), ctx.clone());
         std::thread::spawn(move || {
-            let mut dialog = rfd::FileDialog::new()
-                .add_filter("OmaTree notebooks", &["omatree"])
-                .add_filter("All files", &["*"]);
+            let mut dialog = rfd::FileDialog::new();
             if let Some(dir) = &req.dir {
                 dialog = dialog.set_directory(dir);
             }
+            let notebooks = |d: rfd::FileDialog| {
+                d.add_filter("OmaTree notebooks", &["omatree"])
+                    .add_filter("All files", &["*"])
+            };
             let picked = match req.kind {
-                PickKind::Open => dialog.set_title("Open notebook").pick_file(),
-                PickKind::Save { .. } => dialog
+                PickKind::Open => notebooks(dialog).set_title("Open notebook").pick_file(),
+                PickKind::Save { .. } => notebooks(dialog)
                     .set_title("Save notebook as")
                     .set_file_name(&req.name)
                     .save_file(),
+                PickKind::Export(note_export::ExportFormat::Folder) => dialog
+                    .set_title("Choose where to create the export folder")
+                    .pick_folder(),
+                PickKind::Export(f) => {
+                    let mut d = dialog.set_title("Export note").set_file_name(&req.name);
+                    if let Some(ext) = f.extension() {
+                        d = d.add_filter(f.label(), &[ext]);
+                    }
+                    d.save_file()
+                }
             };
             let _ = tx.send(picked);
             ctx.request_repaint();
@@ -381,6 +395,10 @@ impl Host {
                     let typed = path.to_string_lossy().into_owned();
                     self.submit_save_target(ctx, &typed, then);
                 }
+                PickKind::Export(format) => {
+                    self.dialog = Dialog::None;
+                    self.submit_picked_export(ctx, format, &path);
+                }
             },
         }
     }
@@ -465,6 +483,7 @@ impl Host {
             match self.abandon_pick() {
                 Some(PickKind::Open) => self.open_typed_open(ctx),
                 Some(PickKind::Save { then }) => self.open_typed_save_as(ctx, then),
+                Some(PickKind::Export(format)) => self.open_typed_export(ctx, format),
                 None => {}
             }
         } else if cancel || m.should_close() {

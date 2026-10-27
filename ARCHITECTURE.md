@@ -371,3 +371,15 @@ JPEG are decoded at display time by the editor's `image` dependency (the host en
 feature). The host reports refused pastes and damaged or unreadable images in the status bar and
 never treats a display problem as permission to delete an attachment. See
 `docs/EGUI_MIGRATION_PLAN.md`, "E10 implementation record".
+
+### Exporting a note (E11a)
+
+`note_export.rs` exports the selected note's current text, unsaved edits included, as Markdown, a
+Markdown folder, a ZIP or a PDF. The formats are the editor library's (`export::plan`,
+`write_dir`, `write_zip`, `pdf::export_pdf`); images are read only through `DocStore`, so pending
+and committed attachments both work and nothing outside the notebook is read. Exporting changes
+nothing in the notebook (no edit, checkpoint, save or dirty-state change). Output is staged in a
+hidden sibling and renamed into place, and an existing single file is replaced only after
+confirmation and only by a finished export; an existing folder and the notebook's own file are
+never replaced. Ctrl+Shift+E is detected by the editor (so it wins over Ctrl+E) and acted on by
+the host. See `docs/EGUI_MIGRATION_PLAN.md`, "E11a implementation record".

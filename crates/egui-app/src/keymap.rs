@@ -10,6 +10,9 @@ const CMD_SHIFT: Modifiers = Modifiers::COMMAND.plus(Modifiers::SHIFT);
 
 pub(crate) const SAVE: KeyboardShortcut = KeyboardShortcut::new(CMD, Key::S);
 pub(crate) const SAVE_AS: KeyboardShortcut = KeyboardShortcut::new(CMD_SHIFT, Key::S);
+/// Export note. The *editor* detects this key (`EditorKeys::export`, it must win over Ctrl+E) and
+/// reports it; the host opens the dialog. Declared here so the menu and F1 print it.
+pub(crate) const EXPORT: KeyboardShortcut = KeyboardShortcut::new(CMD_SHIFT, Key::E);
 pub(crate) const NEW_NOTE: KeyboardShortcut = KeyboardShortcut::new(CMD, Key::N);
 pub(crate) const NEW_CHILD: KeyboardShortcut = KeyboardShortcut::new(CMD_SHIFT, Key::N);
 pub(crate) const OPEN: KeyboardShortcut = KeyboardShortcut::new(CMD, Key::O);

@@ -57,6 +57,23 @@ pub enum Dialog {
     Conflict,
     /// Replace the notebook in memory, edits included, with what is on disk?
     ConfirmReload,
+    /// Export note: the format question (`note_export.rs`). `images` is how many notebook
+    /// images the note refers to.
+    Export {
+        format: note_export::ExportFormat,
+        images: usize,
+    },
+    /// Typing the destination of an export, with the last refusal, if any.
+    ExportPath {
+        format: note_export::ExportFormat,
+        path: String,
+        error: Option<String>,
+    },
+    /// The export destination exists; replacing it needs a yes.
+    ExportOverwrite {
+        format: note_export::ExportFormat,
+        path: PathBuf,
+    },
 }
 
 pub(crate) fn is_conflict(e: &DocumentError) -> bool {
@@ -170,7 +187,7 @@ impl Host {
         self.set_dialog(d);
     }
 
-    fn set_dialog(&mut self, d: Dialog) {
+    pub(crate) fn set_dialog(&mut self, d: Dialog) {
         self.dialog = d;
         self.dialog_fresh = true;
     }
@@ -513,6 +530,18 @@ impl Host {
             }
             Dialog::ConfirmReload => {
                 self.show_confirm_reload(ctx, first_frame);
+                return;
+            }
+            Dialog::Export { .. } => {
+                self.show_export(ctx, first_frame);
+                return;
+            }
+            Dialog::ExportPath { .. } => {
+                self.show_export_path(ctx, first_frame);
+                return;
+            }
+            Dialog::ExportOverwrite { .. } => {
+                self.show_export_overwrite(ctx, first_frame);
                 return;
             }
             Dialog::Unsaved { error } => {

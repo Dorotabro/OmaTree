@@ -8,7 +8,7 @@ use omatree_editor::assets::encode_png;
 use std::sync::Arc;
 
 /// A deterministic picture (a gradient, so no two sizes encode alike).
-fn shot(w: usize, h: usize) -> egui::ColorImage {
+pub(super) fn shot(w: usize, h: usize) -> egui::ColorImage {
     let mut img = egui::ColorImage::filled([w, h], egui::Color32::WHITE);
     for y in 0..h {
         for x in 0..w {
@@ -23,7 +23,7 @@ fn id_only(reference: &str) -> String {
     reference["assets/".len()..][..32].to_owned()
 }
 
-fn paste(h: &mut H, img: &egui::ColorImage) {
+pub(super) fn paste(h: &mut H, img: &egui::ColorImage) {
     h.frame(
         vec![Event::PasteImage(Arc::new(img.clone()))],
         Modifiers::NONE,
@@ -32,7 +32,7 @@ fn paste(h: &mut H, img: &egui::ColorImage) {
 }
 
 /// The image references in `text`, in order.
-fn refs(text: &str) -> Vec<String> {
+pub(super) fn refs(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = text;
     while let Some(i) = rest.find("assets/") {
@@ -46,7 +46,7 @@ fn refs(text: &str) -> Vec<String> {
 }
 
 /// Decoded images the editor holds as textures: (name, size).
-fn textures(h: &H) -> Vec<(String, [usize; 2])> {
+pub(super) fn textures(h: &H) -> Vec<(String, [usize; 2])> {
     let mut v: Vec<_> = h
         .ctx
         .tex_manager()
@@ -59,7 +59,7 @@ fn textures(h: &H) -> Vec<(String, [usize; 2])> {
     v
 }
 
-fn stored_bytes(path: &Path, reference: &str) -> Vec<u8> {
+pub(super) fn stored_bytes(path: &Path, reference: &str) -> Vec<u8> {
     Document::open_existing(path)
         .unwrap()
         .attachment(reference)
@@ -267,7 +267,7 @@ fn padded_png(total: usize, variant: u8) -> Vec<u8> {
 }
 
 /// A real baseline JPEG from the `image` crate's encoder.
-fn jpeg_of(w: u32, h: u32) -> Vec<u8> {
+pub(super) fn jpeg_of(w: u32, h: u32) -> Vec<u8> {
     let mut rgb = Vec::new();
     for y in 0..h {
         for x in 0..w {
@@ -282,7 +282,7 @@ fn jpeg_of(w: u32, h: u32) -> Vec<u8> {
 }
 
 /// The same JPEG with an EXIF (APP1) segment right after SOI, as a camera or phone writes it.
-fn with_exif(jpeg: &[u8]) -> Vec<u8> {
+pub(super) fn with_exif(jpeg: &[u8]) -> Vec<u8> {
     let mut exif = b"Exif\0\0MM\0*\0\0\0\x08\0\0".to_vec();
     exif.extend_from_slice(&[0; 6]);
     let len = (exif.len() + 2) as u16;

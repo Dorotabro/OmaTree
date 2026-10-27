@@ -44,6 +44,7 @@ enum Cmd {
     ReloadDisk,
     OpenTyped,
     SaveAsTyped,
+    ExportNote,
     OpenRecent(PathBuf),
     ClearRecent,
     Quit,
@@ -612,6 +613,7 @@ impl Host {
                 Cmd::ReloadDisk => self.request_reload(ctx),
                 Cmd::OpenTyped => self.request_leave(ctx, Leave::OpenTyped),
                 Cmd::SaveAsTyped => self.start_save_as_typed(ctx),
+                Cmd::ExportNote => self.start_export(ctx),
                 Cmd::OpenRecent(path) => self.request_open_path(ctx, path),
                 Cmd::ClearRecent => self.clear_recent(),
                 // The window's own close path: it comes back as a close request and meets the
@@ -924,6 +926,14 @@ fn file_entries(ui: &mut egui::Ui, ch: &theme::Chrome, recent: &[PathBuf], cmds:
         "Reload from disk\u{2026}",
         String::new(),
         Cmd::ReloadDisk,
+    );
+    ui.separator();
+    pick(
+        ui,
+        cmds,
+        "Export note\u{2026}",
+        keys(&keymap::EXPORT),
+        Cmd::ExportNote,
     );
     ui.separator();
     pick(

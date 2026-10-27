@@ -780,6 +780,7 @@ fn timings() {
 mod lifecycle_tests;
 
 mod drag_tests;
+mod export_tests;
 mod files_tests;
 mod hardening_tests;
 mod image_tests;
