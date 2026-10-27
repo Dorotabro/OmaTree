@@ -53,6 +53,10 @@ The v0.1.2 release contains these files (Linux and Windows are x86-64; the Mac b
 
 To check a download, compare its SHA-256 with the line in `SHA256SUMS`: on Linux, `grep <file name> SHA256SUMS | sha256sum -c -`; on macOS, the `shasum` command shown below; on Windows, `Get-FileHash` as shown below.
 
+### egui version (pre-release, Linux only)
+
+OmaTree is being migrated from Qt to egui. The egui version (`omatree-egui`, no Qt) is built as separate Linux packages that install **next to** the Qt version and share none of its files: `omatree-egui-0.1.2-1-x86_64.pkg.tar.zst` (Arch / Omarchy), `omatree-egui_0.1.2_amd64.deb` (Debian 13+, Ubuntu 24.04+) and `OmaTree-egui-0.1.2-x86_64.AppImage` (other x86_64 Linux, glibc 2.30+). They are not published yet; see [`docs/PACKAGING_EGUI.md`](docs/PACKAGING_EGUI.md) for what was verified, how to build, install, run and remove them, and the known limits. **Notebooks saved by the egui version use schema version 4, which OmaTree releases before this branch (including the released Qt 0.1.2) refuse to open**, so keep a copy of anything you still need to open with them.
+
 ### Omarchy / Arch Linux
 
 The native package uses the system Qt 6:

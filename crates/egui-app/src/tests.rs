@@ -793,6 +793,7 @@ mod export_tests;
 mod files_tests;
 mod hardening_tests;
 mod image_tests;
+mod packaging_tests;
 mod polish_tests;
 mod recovery_tests;
 mod search_tests;

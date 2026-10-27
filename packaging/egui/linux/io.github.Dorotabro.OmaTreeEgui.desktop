@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=OmaTree (egui)
+GenericName=Tree notebook
+Comment=A local-first notebook for people who think in trees
+Exec=omatree-egui %f
+Icon=io.github.Dorotabro.OmaTreeEgui
+Terminal=false
+Categories=Office;
+MimeType=application/x-omatree;
+Keywords=notes;notebook;tree;markdown;
+StartupWMClass=io.github.Dorotabro.OmaTreeEgui

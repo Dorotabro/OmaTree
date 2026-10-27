@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.Dorotabro.OmaTreeEgui</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <name>OmaTree (egui)</name>
+  <summary>A local-first notebook for people who think in trees</summary>
+  <description>
+    <p>
+      OmaTree is a deliberately simple note-taking application: a tree of
+      notes on the left and the selected note on the right. Every note can have
+      child notes, so ideas branch the way your thinking does.
+    </p>
+    <p>
+      Notes are Markdown that you edit in place. A notebook is a single local
+      .omatree file on your computer. There is no account and no cloud service.
+    </p>
+    <p>
+      This is the egui version of OmaTree, installable next to the Qt version while
+      the two coexist. Notebooks it saves use schema version 4, which older OmaTree
+      versions refuse to open.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.Dorotabro.OmaTreeEgui.desktop</launchable>
+  <provides>
+    <binary>omatree-egui</binary>
+    <mediatype>application/x-omatree</mediatype>
+  </provides>
+  <url type="homepage">https://github.com/Dorotabro/OmaTree</url>
+  <url type="vcs-browser">https://github.com/Dorotabro/OmaTree</url>
+  <url type="bugtracker">https://github.com/Dorotabro/OmaTree/issues</url>
+  <keywords>
+    <keyword>notes</keyword>
+    <keyword>notebook</keyword>
+    <keyword>tree</keyword>
+    <keyword>markdown</keyword>
+  </keywords>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.2" date="2026-10-27" type="development">
+      <description>
+        <p>Pre-release packaging of the egui version, for testing next to the Qt version.</p>
+      </description>
+    </release>
+  </releases>
+</component>

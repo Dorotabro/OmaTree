@@ -5,11 +5,15 @@ use std::path::PathBuf;
 
 fn main() -> eframe::Result {
     let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_inner_size(launch_size())
+        .with_title("OmaTree")
+        .with_app_id(omatree_egui::APP_ID);
+    if let Some(icon) = omatree_egui::window_icon() {
+        viewport = viewport.with_icon(icon);
+    }
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size(launch_size())
-            .with_title("OmaTree")
-            .with_app_id("omatree-egui"),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(

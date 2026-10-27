@@ -1,0 +1,32 @@
+#!/usr/bin/make -f
+# Debian packaging for the egui OmaTree. No Qt; Rust comes from the toolchain on PATH (see
+# packaging/egui/debian/Dockerfile).
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# Keep the build machine's paths out of the binary.
+CARGO_HOME_DIR := $(or $(CARGO_HOME),$(HOME)/.cargo)
+REMAP := $(HOME)=/build/home $(CARGO_HOME_DIR)=/build/cargo $(CURDIR)=/build/omatree-egui
+export RUSTFLAGS := $(foreach m,$(REMAP),--remap-path-prefix=$(m))
+
+%:
+	dh $@
+
+override_dh_auto_clean:
+override_dh_auto_configure:
+override_dh_auto_test:
+
+override_dh_auto_build:
+	cargo build --release --locked -p omatree-egui
+
+override_dh_auto_install:
+	packaging/egui/linux/stage.sh debian/omatree-egui target/release/omatree-egui
+	# Debian keeps licence texts under /usr/share/doc/<package>, not /usr/share/licenses.
+	mkdir -p debian/omatree-egui/usr/share/doc/omatree-egui
+	mv debian/omatree-egui/usr/share/licenses/omatree-egui/third-party-licenses.txt debian/omatree-egui/usr/share/doc/omatree-egui/
+	mv debian/omatree-egui/usr/share/licenses/omatree-egui/THIRD_PARTY.md debian/omatree-egui/usr/share/doc/omatree-egui/
+	rm -rf debian/omatree-egui/usr/share/licenses
+
+# Not worth a -dbgsym package for this release.
+override_dh_strip:
+	dh_strip --no-automatic-dbgsym

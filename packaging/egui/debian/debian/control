@@ -1,0 +1,46 @@
+Source: omatree-egui
+Section: utils
+Priority: optional
+Maintainer: OmaTree project <261649146+Dorotabro@users.noreply.github.com>
+# cargo and rustc are deliberately not listed: Debian's are too old. The build wrapper
+# (packaging/egui/debian/build-package.sh) provides a pinned Rust toolchain. Qt is not needed.
+Build-Depends: debhelper-compat (= 13),
+               pkg-config,
+               python3
+Standards-Version: 4.6.2
+Homepage: https://github.com/Dorotabro/OmaTree
+Rules-Requires-Root: no
+
+Package: omatree-egui
+Architecture: amd64
+# ${shlibs:Depends} only sees the libraries the executable links (libc, libm, libgcc_s). The
+# graphics, input, font and D-Bus libraries are opened at run time, so they are listed by hand
+# (measured with LD_DEBUG=libs; see docs/PACKAGING.md, "egui package: runtime libraries").
+Depends: ${shlibs:Depends},
+         ${misc:Depends},
+         libwayland-client0,
+         libwayland-egl1,
+         libxkbcommon0,
+         libxkbcommon-x11-0,
+         libegl1,
+         libgl1,
+         libx11-6,
+         libxcb1,
+         libxcursor1,
+         libxi6,
+         libfontconfig1,
+         libdbus-1-3
+Recommends: xdg-desktop-portal,
+            libgl1-mesa-dri,
+            hicolor-icon-theme,
+            at-spi2-core
+Description: local-first tree-structured note-taking application (egui version)
+ OmaTree is a deliberately simple note-taking application: a tree of notes
+ on the left and the selected note on the right. Every note can have child
+ notes, so ideas branch the way your thinking does.
+ .
+ Notes are Markdown that you edit in place. A notebook is a single local
+ file with the extension .omatree; there is no account and no cloud service.
+ This is the egui version, which can be installed next to the Qt version
+ ("omatree"). It saves notebooks as schema version 4, which older versions
+ refuse to open.

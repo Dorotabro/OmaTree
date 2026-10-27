@@ -27,6 +27,22 @@ mod theme;
 mod tree;
 mod tree_ui;
 
+/// The Linux application identity (ticket E12b): the Wayland `app_id`, the X11 `WM_CLASS`, the
+/// desktop file's name and `StartupWMClass`, the icon name and the AppStream id all use this one
+/// string. It differs from the Qt application's `io.github.Dorotabro.OmaTree` only while both are
+/// installable side by side; E13 renames it (docs/EGUI_MIGRATION_PLAN.md, "E12b implementation record").
+pub const APP_ID: &str = "io.github.Dorotabro.OmaTreeEgui";
+
+/// The 256 px application icon, embedded so the window icon needs no file at run time. (Wayland
+/// ignores window icons and takes the icon from the desktop file that matches [`APP_ID`]; X11
+/// window managers use this one.)
+const WINDOW_ICON_PNG: &[u8] = include_bytes!("../../../assets/logo/omatree-icon-256.png");
+
+/// The window icon, or `None` if the embedded PNG did not decode (it is a test that it does).
+pub fn window_icon() -> Option<eframe::egui::IconData> {
+    eframe::icon_data::from_png_bytes(WINDOW_ICON_PNG).ok()
+}
+
 pub use files::{
     check_args, default_picker, native_picker, scripted_picker, Leave, PickKind, PickRequest,
     PickResult, Picker,

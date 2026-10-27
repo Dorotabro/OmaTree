@@ -1,0 +1,58 @@
+# Maintainer: the OmaTree project <https://github.com/Dorotabro/OmaTree>
+#
+# Template for the egui version (omatree-egui). build-package.sh turns it into a PKGBUILD by
+# filling in @PKGVER@, @SOURCE@ and @SHA256@. For a validation build the source is a snapshot
+# tarball of the working tree. For a public release @SOURCE@ becomes the URL of the tagged GitHub
+# archive and @SHA256@ its real checksum; never SKIP the checksum for a release.
+#
+# The Qt package (packaging/arch/PKGBUILD.in, name "omatree") is separate and untouched. Nothing
+# here depends on it, and the two packages share no file path, so both can be installed.
+
+pkgname=omatree-egui
+pkgver=@PKGVER@
+pkgrel=1
+pkgdesc='A local-first notebook for people who think in trees (egui version)'
+arch=('x86_64')
+url='https://github.com/Dorotabro/OmaTree'
+license=('MIT' 'Apache-2.0')
+# The executable links only glibc, libm and libgcc_s. Everything graphical is opened at run time
+# (docs/PACKAGING.md, "egui package: runtime libraries", measured with LD_DEBUG=libs): wayland
+# (libwayland-client, libwayland-egl), libxkbcommon, libglvnd (EGL/GL), and for X11 libx11, libxcb,
+# libxcursor, libxi and libxkbcommon-x11, fontconfig for system fonts, and libdbus for the portal
+# dialogs. Rust compiles in everything else, SQLite included. No Qt. A GL/EGL driver (mesa or the
+# GPU vendor driver) is an optdepend because several providers satisfy it.
+depends=('glibc' 'gcc-libs' 'wayland' 'libxkbcommon' 'libxkbcommon-x11' 'libglvnd' 'fontconfig'
+         'libx11' 'libxcb' 'libxcursor' 'libxi' 'dbus' 'hicolor-icon-theme')
+makedepends=('cargo' 'gcc' 'python')
+optdepends=('mesa: OpenGL/EGL driver (or the GPU vendor driver); one is required to open a window'
+            'xdg-desktop-portal: native file dialogs (a typed-path dialog is used without it)'
+            'at-spi2-core: screen-reader support (AT-SPI)')
+options=('!debug' '!lto')
+source=("@SOURCE@")
+sha256sums=('@SHA256@')
+
+prepare() {
+    cd "$pkgname-$pkgver"
+    # Only what Cargo.lock names, and nothing else; the editor library is fetched at the exact
+    # commit pinned in Cargo.lock, not from a sibling checkout.
+    cargo fetch --locked --target "$CARCH-unknown-linux-gnu"
+}
+
+build() {
+    cd "$pkgname-$pkgver"
+    # Keep the build machine's paths out of the binary: the source tree, the Cargo home
+    # (dependency sources) and the home directory are rewritten.
+    local srcroot="$PWD"
+    local cargohome="${CARGO_HOME:-$HOME/.cargo}"
+    export RUSTFLAGS="${RUSTFLAGS:-} \
+        --remap-path-prefix=$HOME=/build/home \
+        --remap-path-prefix=$cargohome=/build/cargo \
+        --remap-path-prefix=$srcroot=/build/$pkgname-$pkgver"
+    export CARGO_TARGET_DIR=target
+    cargo build --release --locked --frozen -p omatree-egui
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    packaging/egui/linux/stage.sh "$pkgdir" target/release/omatree-egui
+}

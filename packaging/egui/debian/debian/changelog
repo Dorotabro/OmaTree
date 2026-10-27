@@ -1,0 +1,7 @@
+omatree-egui (0.1.2) unstable; urgency=low
+
+  * First package of the egui version of OmaTree (migration ticket E12b), a
+    pre-release for testing next to the Qt package "omatree". It installs no
+    file that the Qt package installs.
+
+ -- OmaTree project <261649146+Dorotabro@users.noreply.github.com>  Tue, 27 Oct 2026 00:00:00 +0000

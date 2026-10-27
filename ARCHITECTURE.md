@@ -411,3 +411,7 @@ the note's editor has never had a caret. A doubled extension from the desktop po
 collapsed. AccessKit is enabled (`eframe` feature `accesskit`): the tree rows, the tree, the title
 field and the editor have roles and names. The window's launch size can be set with
 `OMATREE_WINDOW_SIZE=WxH` for diagnostics. See `docs/EGUI_MIGRATION_PLAN.md`, "E12a record".
+
+## Linux distribution of the egui version (E12b)
+
+The egui application is packaged from its own tree, `packaging/egui/`, independent of the Qt packaging, which is unchanged until E13. One staging script feeds the Arch, Debian and AppImage builds. The application identity is the single constant `omatree_egui::APP_ID` (`io.github.Dorotabro.OmaTreeEgui`), which equals the window's Wayland app_id, the desktop file name and `StartupWMClass`, the icon name and the AppStream id, so it can coexist with the Qt version (`io.github.Dorotabro.OmaTree`) and is renamed at E13. The executable links only glibc; windowing, GL, font and D-Bus libraries are opened at run time from the host, so packages declare them by hand and the AppImage bundles none. The pinned editor library is private, so container builds are seeded from the already-fetched Cargo cache after checking the commit. Details and results: `docs/PACKAGING_EGUI.md`.
