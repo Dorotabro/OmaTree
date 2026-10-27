@@ -92,6 +92,7 @@ impl H {
             Focus::Editor => {
                 key_of(self.host.notebook_id(), self.host.selected().unwrap()).widget_id()
             }
+            Focus::Search => Host::search_id(),
         };
         self.ctx.memory(|m| m.has_focus(id))
     }

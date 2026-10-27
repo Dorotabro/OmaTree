@@ -264,3 +264,11 @@ axis that equals the editor's own document padding, bar and row heights, pane li
 colours that are not a palette role as such (selected/hover fills, guides, a label that reads on the
 danger fill, text pulled to a legibility floor) are derived once per palette change by
 `theme::Chrome` from the E6a palette; nothing in the host holds a theme-specific colour.
+
+## Search (E7a)
+
+`crates/egui-app/src/search.rs` holds the query, the derived result list and its drawing; the searching
+itself is `omatree_core::search::search` over the in-memory `Document`, so there is no second engine or
+index. Results are throwaway: invalidated by query, structure or body changes (a debounce for bodies),
+never trusted on activation (the note is looked up again by `NodeId`), and chosen through
+`Host::select`, so pending-title validation and hierarchy reveal stay in one place.

@@ -13,6 +13,7 @@ mod drag;
 mod layout;
 mod lifecycle;
 mod ops;
+mod search;
 mod store;
 mod theme;
 mod tree;
@@ -62,6 +63,8 @@ pub struct Host {
     /// What the status bar last showed and since when, so ordinary feedback can fade away.
     status_seen: (String, bool),
     status_since: f64,
+    /// Notebook-wide Search: the field, the query and the results derived from it.
+    search: search::Search,
     scroll_to: Option<NodeId>,
     /// Open the keyboard context menu on the selected row.
     menu_request: bool,
@@ -118,6 +121,7 @@ impl Host {
             note_has_image: false,
             status_seen: (String::new(), false),
             status_since: 0.0,
+            search: search::Search::default(),
             scroll_to: None,
             menu_request: false,
             menu_pos: None,
@@ -231,6 +235,8 @@ impl Host {
                 self.title_text.clear();
                 self.loaded_title.clear();
                 self.dialog = Dialog::None;
+                // Results name notes of the notebook that is going away.
+                self.search = search::Search::default();
                 if let Some(first) = self.tree.rows().first().map(|r| r.id) {
                     self.load(first);
                 }
@@ -296,7 +302,12 @@ impl Host {
             return;
         }
         match doc.set_body(id, &self.text) {
-            Ok(changed) => self.edited |= changed,
+            Ok(changed) => {
+                self.edited |= changed;
+                if changed {
+                    self.search.body_changed();
+                }
+            }
             Err(e) => self.status = format!("Could not update the note: {e}"),
         }
     }
@@ -329,6 +340,9 @@ impl Host {
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::ALT, Key::ArrowDown)) {
             self.move_selected(ctx, 1);
+        }
+        if self.drag.is_none() && ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::F)) {
+            self.start_search();
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F2)) && self.selected.is_some() {
             self.set_focus(Focus::Title);

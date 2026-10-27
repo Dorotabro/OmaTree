@@ -23,43 +23,43 @@ bright_foreground = \"#9a9ea6\"\nred = \"#8c6468\"\ngreen = \"#6c8a6c\"\nmagenta
 yellow = \"#9a8a68\"\n";
 
 #[derive(Clone, Debug)]
-struct Text {
-    text: String,
-    pos: Pos2,
-    size: Vec2,
-    colour: Color32,
-    elided: bool,
-    rows: usize,
+pub(super) struct Text {
+    pub(super) text: String,
+    pub(super) pos: Pos2,
+    pub(super) size: Vec2,
+    pub(super) colour: Color32,
+    pub(super) elided: bool,
+    pub(super) rows: usize,
 }
 
 impl Text {
-    fn centre_y(&self) -> f32 {
+    pub(super) fn centre_y(&self) -> f32 {
         self.pos.y + self.size.y / 2.0
     }
 
-    fn right(&self) -> f32 {
+    pub(super) fn right(&self) -> f32 {
         self.pos.x + self.size.x
     }
 }
 
 #[derive(Clone, Debug)]
-struct Fill {
-    rect: Rect,
-    fill: Color32,
-    stroke: egui::Stroke,
+pub(super) struct Fill {
+    pub(super) rect: Rect,
+    pub(super) fill: Color32,
+    pub(super) stroke: egui::Stroke,
 }
 
 #[derive(Clone, Debug)]
-struct Line {
-    a: Pos2,
-    b: Pos2,
+pub(super) struct Line {
+    pub(super) a: Pos2,
+    pub(super) b: Pos2,
 }
 
 #[derive(Default)]
-struct Painted {
-    texts: Vec<Text>,
-    fills: Vec<Fill>,
-    lines: Vec<Line>,
+pub(super) struct Painted {
+    pub(super) texts: Vec<Text>,
+    pub(super) fills: Vec<Fill>,
+    pub(super) lines: Vec<Line>,
 }
 
 fn collect(shape: &Shape, out: &mut Painted) {
@@ -94,7 +94,7 @@ fn collect(shape: &Shape, out: &mut Painted) {
 }
 
 impl H {
-    fn painted(&self) -> Painted {
+    pub(super) fn painted(&self) -> Painted {
         let mut p = Painted::default();
         for s in &self.shapes {
             collect(&s.shape, &mut p);
@@ -102,21 +102,21 @@ impl H {
         p
     }
 
-    fn chrome(&self) -> Chrome {
+    pub(super) fn chrome(&self) -> Chrome {
         *self.host.theme.chrome()
     }
 
     /// The right edge of the tree pane.
-    fn tree_right(&self) -> f32 {
+    pub(super) fn tree_right(&self) -> f32 {
         self.host.tree_geom.1.right()
     }
 
-    fn tree_width(&self) -> f32 {
+    pub(super) fn tree_width(&self) -> f32 {
         self.host.tree_geom.1.width()
     }
 
     /// Painted text equal to `s`, in the tree pane (`true`) or to its right.
-    fn text_in(&self, s: &str, tree: bool) -> Text {
+    pub(super) fn text_in(&self, s: &str, tree: bool) -> Text {
         let split = self.tree_right();
         self.painted()
             .texts
@@ -125,7 +125,7 @@ impl H {
             .unwrap_or_else(|| panic!("no painted {s:?} (tree: {tree})"))
     }
 
-    fn texts_starting(&self, s: &str) -> Vec<Text> {
+    pub(super) fn texts_starting(&self, s: &str) -> Vec<Text> {
         self.painted()
             .texts
             .into_iter()
@@ -134,7 +134,7 @@ impl H {
     }
 
     /// The filled row rectangle painted for visible row `i` (selection or hover), if any.
-    fn row_fill(&self, i: usize, colour: Color32) -> Option<Fill> {
+    pub(super) fn row_fill(&self, i: usize, colour: Color32) -> Option<Fill> {
         let top = self.host.tree_geom.0.y + i as f32 * ROW_H;
         self.painted().fills.into_iter().find(|f| {
             f.fill == colour
@@ -143,7 +143,7 @@ impl H {
         })
     }
 
-    fn row_of(&self, title: &str) -> usize {
+    pub(super) fn row_of(&self, title: &str) -> usize {
         self.host
             .tree()
             .visible_position(self.id(title))

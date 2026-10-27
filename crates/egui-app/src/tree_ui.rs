@@ -81,7 +81,12 @@ impl Host {
                 });
             });
 
-        if self.tree.rows().is_empty() {
+        if self.search.open {
+            self.search_header(ui, &chrome);
+        }
+        if self.search_showing_results() {
+            self.search_results_ui(ui, &chrome);
+        } else if self.tree.rows().is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(24.0);
                 ui.weak("No notes yet");

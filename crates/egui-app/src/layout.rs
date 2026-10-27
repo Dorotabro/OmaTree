@@ -37,3 +37,15 @@ pub(crate) const TREE_START_SHARE: f32 = 0.4;
 /// How long a status message about an action stays in the bar, and how long a failure does.
 pub(crate) const FEEDBACK_SECS: f64 = 6.0;
 pub(crate) const PROBLEM_SECS: f64 = 15.0;
+/// Search results: text sizes, the room around a result and between its lines. A result is two
+/// lines (title, snippet) or three when it lives inside a branch (title, path, snippet).
+pub(crate) const RESULT_TITLE_PX: f32 = 14.5;
+pub(crate) const RESULT_SUB_PX: f32 = 12.5;
+pub(crate) const RESULT_PAD_Y: f32 = 6.0;
+pub(crate) const RESULT_TITLE_H: f32 = 19.0;
+pub(crate) const RESULT_SUB_H: f32 = 16.0;
+/// An edit made while Search is open refreshes the results after this long (one scan, however
+/// many keys were typed meanwhile).
+pub(crate) const SEARCH_DEBOUNCE: f64 = 0.12;
+/// A scan that takes longer than this (seconds) makes typing wait for a pause before searching.
+pub(crate) const SLOW_SCAN: f64 = 0.008;

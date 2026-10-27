@@ -124,6 +124,8 @@ impl Host {
         if let Some(id) = ctx.memory(|m| m.focused()) {
             if id == Host::tree_id() {
                 self.focus_back = Focus::Tree;
+            } else if id == Host::search_id() {
+                self.focus_back = Focus::Search;
             } else if id == self.title_id() {
                 self.focus_back = Focus::Title;
             } else if self

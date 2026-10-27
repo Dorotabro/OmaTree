@@ -14,6 +14,8 @@ pub enum Focus {
     /// The title field, text selected (F2, or right after a note was created).
     Title,
     Editor,
+    /// The search field (Ctrl+F).
+    Search,
 }
 
 /// What the Qt app says when a rename is refused (`rename_error_message` in `tree_model.rs`).
@@ -43,6 +45,7 @@ impl Host {
     fn rebuild_tree(&mut self) {
         if let Some(doc) = &self.doc {
             self.tree = Tree::build(doc);
+            self.search.structure_changed();
         }
     }
 
