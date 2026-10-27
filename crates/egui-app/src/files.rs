@@ -25,8 +25,12 @@ pub enum Leave {
     Close,
     /// Replace the notebook with a new, untitled one.
     New,
-    /// Choose a notebook and open it.
+    /// Choose a notebook (native dialog, or typed path when there is none) and open it.
     Open,
+    /// Ask for a typed path and open that, whether or not a native dialog exists.
+    OpenTyped,
+    /// Open this notebook (a recent file, or a request from the system).
+    OpenPath(PathBuf),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,6 +112,19 @@ impl Host {
         self.picker = picker;
     }
 
+    /// Keep the recent-notebooks list in `file` (none: only in memory).
+    pub fn set_recent_file(&mut self, file: Option<PathBuf>) {
+        self.recent = recent::Recent::load(file);
+    }
+
+    pub fn recent_notebooks(&self) -> &[PathBuf] {
+        self.recent.items()
+    }
+
+    pub fn clear_recent(&mut self) {
+        self.recent.clear();
+    }
+
     /// The action waiting for an answer, if any.
     pub fn pending_leave(&self) -> Option<&Leave> {
         self.pending.as_ref()
@@ -129,6 +146,31 @@ impl Host {
                 eprintln!("omatree-egui: {}", self.status);
             }
         }
+    }
+
+    /// Start from the command line (the arguments after the program name, already as paths).
+    /// One path opens that notebook. OmaTree shows one notebook at a time, so several paths, or
+    /// something that looks like an option, open nothing and say so, as the Qt app does; an
+    /// untitled notebook is what is left. The window never replaces a notebook it has not been
+    /// asked to.
+    pub fn start_with_args(&mut self, ctx: &egui::Context, args: &[PathBuf]) {
+        match check_args(args) {
+            Ok(path) => self.start_with(ctx, path),
+            Err(message) => {
+                self.start_untitled(ctx);
+                eprintln!("omatree-egui: {message}");
+                self.status.clone_from(&message);
+                self.focus_back = Focus::Tree;
+                self.open_dialog(ctx, Dialog::Error(message));
+            }
+        }
+    }
+
+    /// An outside request to open `path` (a recent entry, or an operating-system open request):
+    /// the same guard and the same opening as File ▸ Open, so unsaved changes are asked about
+    /// first and an unreadable file changes nothing. Ignored while a question is open.
+    pub fn request_open_path(&mut self, ctx: &egui::Context, path: PathBuf) {
+        self.request_leave(ctx, Leave::OpenPath(path));
     }
 
     // --- The one guard ----------------------------------------------------------------------
@@ -177,6 +219,10 @@ impl Host {
             Leave::Close => self.finish_close(ctx),
             Leave::New => self.start_untitled(ctx),
             Leave::Open => self.begin_open(ctx),
+            Leave::OpenTyped => self.open_typed_open(ctx),
+            Leave::OpenPath(path) => {
+                self.open_or_report(ctx, &path);
+            }
         }
     }
 
@@ -189,6 +235,16 @@ impl Host {
     }
 
     /// Ask which notebook to open: the system dialog, or a typed path without one.
+    fn open_typed_open(&mut self, ctx: &egui::Context) {
+        self.open_dialog(
+            ctx,
+            Dialog::Open {
+                path: String::new(),
+                error: None,
+            },
+        );
+    }
+
     fn begin_open(&mut self, ctx: &egui::Context) {
         if self.picker.is_some() {
             let dir = self
@@ -205,13 +261,7 @@ impl Host {
                 },
             );
         } else {
-            self.open_dialog(
-                ctx,
-                Dialog::Open {
-                    path: String::new(),
-                    error: None,
-                },
-            );
+            self.open_typed_open(ctx);
         }
     }
 
@@ -220,9 +270,14 @@ impl Host {
     /// notebook may hold are explained once, as Qt does.
     pub fn open_or_report(&mut self, ctx: &egui::Context, path: &Path) -> bool {
         if self.open(ctx, path) {
+            self.recent.push(path);
             self.warn_about_duplicates(ctx);
             true
         } else {
+            // A recent file that is gone is forgotten; anything else stays listed.
+            if !path.exists() {
+                self.recent.remove(path);
+            }
             let message = self.status.clone();
             self.focus_back = Focus::Tree;
             self.open_dialog(ctx, Dialog::Error(message));
@@ -280,6 +335,10 @@ impl Host {
     // --- File dialogs -----------------------------------------------------------------------------
 
     pub(crate) fn begin_pick(&mut self, ctx: &egui::Context, req: PickRequest) {
+        // One file dialog at a time: a second request while one is open is ignored.
+        if self.pick.is_some() {
+            return;
+        }
         let Some(picker) = self.picker.as_mut() else {
             return;
         };
@@ -368,16 +427,48 @@ impl Host {
         }
     }
 
-    pub(crate) fn show_picking(&mut self, ctx: &egui::Context) {
+    /// Stop waiting for the native dialog. Whatever it answers later goes nowhere (its channel is
+    /// dropped), so a late result can never open or save anything.
+    fn abandon_pick(&mut self) -> Option<PickKind> {
+        self.pick.take().map(|p| p.kind)
+    }
+
+    pub(crate) fn show_picking(&mut self, ctx: &egui::Context, first_frame: bool) {
         let ch = *self.theme.chrome();
         let bold = self.bold.clone();
-        egui::Modal::new(egui::Id::unique("dlg-picking"))
+        let (mut cancel, mut typed) = (false, false);
+        let m = egui::Modal::new(egui::Id::unique("dlg-picking"))
             .frame(dialog_frame(ctx))
             .show(ctx, |ui| {
-                dialog_open(ui, ctx, 340.0);
+                dialog_open(ui, ctx, 380.0);
                 dialog_heading(ui, "Choose a file", bold.as_ref(), &ch);
                 ui.label("Waiting for the system file dialog\u{2026}");
+                ui.label(
+                    egui::RichText::new(
+                        "If it does not appear, or you would rather type the path, use the second button.",
+                    )
+                    .size(12.5)
+                    .color(ch.muted),
+                );
+                dialog_buttons(ui, |ui| {
+                    let c = ui.button("Cancel");
+                    if first_frame {
+                        c.request_focus();
+                    }
+                    cancel = c.clicked();
+                    typed = ui.button("Type a path instead\u{2026}").clicked();
+                });
             });
+        if typed {
+            match self.abandon_pick() {
+                Some(PickKind::Open) => self.open_typed_open(ctx),
+                Some(PickKind::Save { then }) => self.open_typed_save_as(ctx, then),
+                None => {}
+            }
+        } else if cancel || m.should_close() {
+            self.abandon_pick();
+            self.cancel_dialog();
+        }
     }
 
     pub(crate) fn show_open_path(&mut self, ctx: &egui::Context, first_frame: bool) {
@@ -423,5 +514,21 @@ impl Host {
         } else if submit {
             self.submit_open_path(ctx);
         }
+    }
+}
+
+/// The path to open from the command line, if any; an error message when the arguments cannot be
+/// one notebook.
+pub fn check_args(args: &[PathBuf]) -> Result<Option<&Path>, String> {
+    if let Some(flag) = args.iter().find(|a| a.to_string_lossy().starts_with('-')) {
+        return Err(format!(
+            "OmaTree does not know the option \u{201c}{}\u{201d}. Start it with at most one notebook path.",
+            flag.display()
+        ));
+    }
+    match args {
+        [] => Ok(None),
+        [one] => Ok(Some(one.as_path())),
+        _ => Err("OmaTree takes at most one notebook path.".to_owned()),
     }
 }

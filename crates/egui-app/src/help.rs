@@ -108,6 +108,10 @@ impl Host {
                     (key(&keymap::OPEN), "Open a notebook"),
                     (key(&keymap::SAVE), "Save (an untitled notebook asks where)"),
                     (key(&keymap::SAVE_AS), "Save As"),
+                    (
+                        "file menu".to_owned(),
+                        "Open or Save As by typing a path, Reload from disk, recent notebooks, Quit",
+                    ),
                 ],
             ),
             (

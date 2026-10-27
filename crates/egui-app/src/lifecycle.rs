@@ -53,6 +53,10 @@ pub enum Dialog {
     },
     /// A native file dialog is open in another window; nothing here reacts until it answers.
     Picking,
+    /// The file changed behind the notebook's back and a save was refused (`reload.rs`).
+    Conflict,
+    /// Replace the notebook in memory, edits included, with what is on disk?
+    ConfirmReload,
 }
 
 pub(crate) fn is_conflict(e: &DocumentError) -> bool {
@@ -126,9 +130,22 @@ impl Host {
             self.quit = true;
             return true;
         }
-        if self.dialog == Dialog::None {
+        let yields = matches!(
+            self.dialog,
+            Dialog::Recovery
+                | Dialog::Shortcuts
+                | Dialog::Error(_)
+                | Dialog::ConfirmDelete(_)
+                | Dialog::Open { .. }
+        );
+        if self.dialog == Dialog::None || yields {
+            // A dialog that is only a view or a question about something else gives way to
+            // the one about the unsaved changes; questions already about leaving or saving
+            // (and a file dialog in flight) keep the keyboard, and the window stays.
             self.pending = Some(Leave::Close);
             self.open_dialog(ctx, Dialog::Unsaved { error: None });
+        } else {
+            self.status = "Finish or cancel the open question before closing.".to_owned();
         }
         false
     }
@@ -212,7 +229,12 @@ impl Host {
                 self.saved();
                 self.status = "Saved".to_owned();
             }
-            Err(e) => self.status = self.note_save_failure(&e),
+            Err(e) => {
+                self.status = self.note_save_failure(&e);
+                if is_conflict(&e) {
+                    self.open_conflict(ctx);
+                }
+            }
         }
     }
 
@@ -256,7 +278,12 @@ impl Host {
             Err(e) => {
                 let msg = self.note_save_failure(&e);
                 self.status = msg.clone();
-                self.set_dialog(Dialog::Unsaved { error: Some(msg) });
+                if is_conflict(&e) {
+                    // The pending action (close, New, Open) waits while the user chooses.
+                    self.set_dialog(Dialog::Conflict);
+                } else {
+                    self.set_dialog(Dialog::Unsaved { error: Some(msg) });
+                }
             }
         }
     }
@@ -288,13 +315,6 @@ impl Host {
         if self.doc.is_none() {
             return;
         }
-        let dir = self
-            .path
-            .as_deref()
-            .and_then(Path::parent)
-            .map(Path::to_path_buf)
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_default();
         let name = self.path.as_deref().and_then(Path::file_stem).map_or_else(
             || "Untitled".to_owned(),
             |s| format!("{} copy", s.to_string_lossy()),
@@ -314,6 +334,22 @@ impl Host {
             );
             return;
         }
+        self.open_typed_save_as(ctx, then);
+    }
+
+    /// Save As by typing the path (no native dialog, or the user chose to type).
+    pub(crate) fn open_typed_save_as(&mut self, ctx: &egui::Context, then: bool) {
+        let dir = self
+            .path
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_default();
+        let name = self.path.as_deref().and_then(Path::file_stem).map_or_else(
+            || "Untitled".to_owned(),
+            |s| format!("{} copy", s.to_string_lossy()),
+        );
         let suggested = dir.join(format!("{name}.omatree"));
         self.open_dialog(
             ctx,
@@ -323,6 +359,15 @@ impl Host {
                 then,
             },
         );
+    }
+
+    /// Save As from the File menu, always by typing the path.
+    pub fn start_save_as_typed(&mut self, ctx: &egui::Context) {
+        if self.doc.is_none() || self.dialog_open() || !self.commit_title(ctx) {
+            return;
+        }
+        self.leave(ctx);
+        self.open_typed_save_as(ctx, false);
     }
 
     /// The text field of the Save As dialog.
@@ -459,7 +504,15 @@ impl Host {
                 return;
             }
             Dialog::Picking => {
-                self.show_picking(ctx);
+                self.show_picking(ctx, first_frame);
+                return;
+            }
+            Dialog::Conflict => {
+                self.show_conflict(ctx, first_frame);
+                return;
+            }
+            Dialog::ConfirmReload => {
+                self.show_confirm_reload(ctx, first_frame);
                 return;
             }
             Dialog::Unsaved { error } => {

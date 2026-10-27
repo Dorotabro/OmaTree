@@ -16,7 +16,9 @@ mod keymap;
 mod layout;
 mod lifecycle;
 mod ops;
+mod recent;
 mod recovery_ui;
+mod reload;
 mod search;
 mod store;
 mod theme;
@@ -24,11 +26,12 @@ mod tree;
 mod tree_ui;
 
 pub use files::{
-    default_picker, native_picker, scripted_picker, Leave, PickKind, PickRequest, PickResult,
-    Picker,
+    check_args, default_picker, native_picker, scripted_picker, Leave, PickKind, PickRequest,
+    PickResult, Picker,
 };
 pub use lifecycle::{Dialog, AUTOSAVE_DELAY};
 pub use ops::Focus;
+pub use recent::{default_file as default_recent_file, Recent};
 pub use recovery_ui::Tab as RecoveryTab;
 pub use store::UnavailableStore;
 pub use tree::{Row, Tree};
@@ -80,6 +83,8 @@ pub struct Host {
     /// The native file dialog starter (none: typed paths) and the one in flight.
     picker: Option<Picker>,
     pick: Option<files::Pick>,
+    /// Recently opened notebooks (paths only, kept in the user's configuration folder).
+    recent: recent::Recent,
     scroll_to: Option<NodeId>,
     /// Open the keyboard context menu on the selected row.
     menu_request: bool,
@@ -141,6 +146,7 @@ impl Host {
             pending: None,
             picker: None,
             pick: None,
+            recent: recent::Recent::default(),
             scroll_to: None,
             menu_request: false,
             menu_pos: None,
@@ -529,7 +535,9 @@ impl Host {
                 let label = ui.label(egui::RichText::new(text).size(12.5).color(colour));
                 if stopped {
                     if let Some(e) = &self.autosave_error {
-                        label.on_hover_text(e);
+                        label.on_hover_text(format!(
+                            "{e}\n\nfile \u{25b8} Reload from disk\u{2026} or Save As\u{2026} resolves it."
+                        ));
                     }
                 }
             }
@@ -607,13 +615,14 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, path: Option<PathBuf>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, args: Vec<PathBuf>) -> Self {
         let mut host = Host::new();
         host.set_bold(omatree_editor::fonts::install_bold(&cc.egui_ctx));
         host.follow_omarchy(omatree_core::theme::default_omarchy_colors_path());
         host.theme.update(&cc.egui_ctx);
         host.set_picker(files::default_picker());
-        host.start_with(&cc.egui_ctx, path.as_deref());
+        host.set_recent_file(recent::default_file());
+        host.start_with_args(&cc.egui_ctx, &args);
         App { host }
     }
 }

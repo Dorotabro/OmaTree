@@ -4,7 +4,7 @@ use omatree_egui::App;
 use std::path::PathBuf;
 
 fn main() -> eframe::Result {
-    let path = std::env::args_os().nth(1).map(PathBuf::from);
+    let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1000.0, 700.0])
@@ -15,6 +15,6 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "OmaTree",
         options,
-        Box::new(move |cc| Ok(Box::new(App::new(cc, path)))),
+        Box::new(move |cc| Ok(Box::new(App::new(cc, args)))),
     )
 }

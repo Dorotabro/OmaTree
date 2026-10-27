@@ -10,10 +10,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::rc::Rc;
 use std::time::SystemTime;
 
-type Log = Rc<RefCell<Vec<PickRequest>>>;
+pub(super) type Log = Rc<RefCell<Vec<PickRequest>>>;
 
 /// A picker that records every request and answers from `answers`, then cancels.
-fn recording(answers: Vec<PickResult>) -> (Picker, Log) {
+pub(super) fn recording(answers: Vec<PickResult>) -> (Picker, Log) {
     let log: Log = Rc::default();
     let mut inner = scripted_picker(answers);
     let seen = Rc::clone(&log);
@@ -26,7 +26,7 @@ fn recording(answers: Vec<PickResult>) -> (Picker, Log) {
 
 /// A notebook file of top-level notes `(title, body)`; ids start from the beginning, so two of
 /// them have overlapping `NodeId`s.
-fn notebook(path: &Path, notes: &[(&str, &str)]) {
+pub(super) fn notebook(path: &Path, notes: &[(&str, &str)]) {
     let mut doc = Document::open(path).unwrap();
     for (t, b) in notes {
         let id = doc.create_root(t).unwrap();
@@ -35,7 +35,7 @@ fn notebook(path: &Path, notes: &[(&str, &str)]) {
     doc.save().unwrap();
 }
 
-fn stamp(p: &Path) -> (Vec<u8>, SystemTime) {
+pub(super) fn stamp(p: &Path) -> (Vec<u8>, SystemTime) {
     (
         fs::read(p).unwrap(),
         fs::metadata(p).unwrap().modified().unwrap(),
@@ -44,7 +44,7 @@ fn stamp(p: &Path) -> (Vec<u8>, SystemTime) {
 
 impl H {
     /// The application as it starts with no path: an untitled notebook, tree focused.
-    fn blank() -> Self {
+    pub(super) fn blank() -> Self {
         let mut h = H::bare(Vec2::new(1000.0, 700.0));
         let ctx = h.ctx.clone();
         h.host.start_untitled(&ctx);
@@ -53,36 +53,36 @@ impl H {
         h
     }
 
-    fn with_picker(&mut self, answers: Vec<PickResult>) -> Log {
+    pub(super) fn with_picker(&mut self, answers: Vec<PickResult>) -> Log {
         let (p, log) = recording(answers);
         self.host.set_picker(Some(p));
         log
     }
 
-    fn ctrl_o(&mut self) {
+    pub(super) fn ctrl_o(&mut self) {
         self.key(Key::O, CTRL);
         self.settle();
     }
 
-    fn ctrl_alt_n(&mut self) {
+    pub(super) fn ctrl_alt_n(&mut self) {
         self.key(Key::N, CTRL | Modifiers::ALT);
         self.settle();
     }
 
-    fn named(&self) -> String {
+    pub(super) fn named(&self) -> String {
         self.host.document().unwrap().display_name()
     }
 
-    fn has_path(&self) -> bool {
+    pub(super) fn has_path(&self) -> bool {
         self.host.document().unwrap().has_path()
     }
 
-    fn dialog_now(&self) -> Dialog {
+    pub(super) fn dialog_now(&self) -> Dialog {
         self.host.dialog().clone()
     }
 
     /// Make the notebook dirty by typing into the selected note.
-    fn make_dirty(&mut self) {
+    pub(super) fn make_dirty(&mut self) {
         self.host.focus(Focus::Editor);
         self.settle();
         let end = self.host.buffer().len();
@@ -93,7 +93,7 @@ impl H {
         self.settle();
     }
 
-    fn trash_note(&mut self, title: &str) {
+    pub(super) fn trash_note(&mut self, title: &str) {
         let ctx = self.ctx.clone();
         let id = self.id(title);
         self.host.select(&ctx, id);
@@ -101,20 +101,26 @@ impl H {
         self.settle();
     }
 
-    fn recovery_open_close(&mut self) {
+    pub(super) fn recovery_open_close(&mut self) {
         self.key(Key::R, CTRL | Modifiers::SHIFT);
         self.settle();
         assert_eq!(*self.host.dialog(), Dialog::Recovery);
         self.press(Key::Escape);
     }
 
-    fn answer_save(&mut self) {
+    /// Open Recovery and leave it open.
+    pub(super) fn recovery_open_close_keep(&mut self) {
+        self.key(Key::R, CTRL | Modifiers::SHIFT);
+        self.settle();
+    }
+
+    pub(super) fn answer_save(&mut self) {
         let ctx = self.ctx.clone();
         self.host.unsaved_save(&ctx);
         self.settle();
     }
 
-    fn answer_discard(&mut self) {
+    pub(super) fn answer_discard(&mut self) {
         let ctx = self.ctx.clone();
         self.host.unsaved_discard();
         self.host.confirm_discard(&ctx);
@@ -122,7 +128,7 @@ impl H {
     }
 }
 
-fn two(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+pub(super) fn two(name: &str) -> (PathBuf, PathBuf, PathBuf) {
     let d = dir(name);
     let (a, b) = (d.join("first.omatree"), d.join("second.omatree"));
     notebook(&a, &[("Alpha", "alpha body\n"), ("Beta", "beta body\n")]);
@@ -509,7 +515,7 @@ fn an_externally_modified_notebook_cannot_be_saved_over_by_a_replacement() {
     let theirs = stamp(&a);
     h.ctrl_o();
     h.answer_save();
-    assert!(matches!(h.dialog_now(), Dialog::Unsaved { error: Some(_) }));
+    assert_eq!(h.dialog_now(), Dialog::Conflict);
     assert_eq!(stamp(&a), theirs, "their version was not overwritten");
     assert_eq!(h.named(), "first.omatree");
     assert!(h.host.is_dirty());

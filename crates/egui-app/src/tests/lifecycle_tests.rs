@@ -160,9 +160,12 @@ fn an_external_modification_blocks_saves_keeps_edits_and_requires_resolution_to_
     h.host.unsaved_save(&h.ctx.clone());
     h.settle();
     assert!(!h.closed);
-    let Dialog::Unsaved { error: Some(e) } = h.host.dialog().clone() else {
-        panic!()
-    };
+    assert_eq!(
+        *h.host.dialog(),
+        Dialog::Conflict,
+        "E8b: the choices are Save As / Reload / Keep"
+    );
+    let e = h.host.autosave_problem().unwrap().to_owned();
     assert!(e.contains("Save As"), "the message points to Save As: {e}");
 
     // Explicit resolution: keep my version under another name; then the window closes.

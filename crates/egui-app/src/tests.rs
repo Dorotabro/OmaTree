@@ -806,6 +806,7 @@ mod lifecycle_tests;
 
 mod drag_tests;
 mod files_tests;
+mod hardening_tests;
 mod polish_tests;
 mod recovery_tests;
 mod search_tests;

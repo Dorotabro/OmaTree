@@ -41,6 +41,12 @@ enum Cmd {
     Save,
     SaveAs,
     Help,
+    ReloadDisk,
+    OpenTyped,
+    SaveAsTyped,
+    OpenRecent(PathBuf),
+    ClearRecent,
+    Quit,
     ExpandAll(bool),
     ExpandSubtree(NodeId, bool),
     /// The drag ended (dropped, cancelled or lost): close what hovering opened.
@@ -88,7 +94,8 @@ impl Host {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let file = flat_action(ui, "file", true, &chrome)
                             .on_hover_text("Notebook: new, open, save, recovery");
-                        egui::Popup::menu(&file).show(|ui| file_entries(ui, &chrome, &mut cmds));
+                        egui::Popup::menu(&file)
+                            .show(|ui| file_entries(ui, &chrome, self.recent.items(), &mut cmds));
                     });
                 });
             });
@@ -602,6 +609,14 @@ impl Host {
                 Cmd::Save => self.save(ctx),
                 Cmd::SaveAs => self.start_save_as(ctx, false),
                 Cmd::Help => self.open_dialog(ctx, Dialog::Shortcuts),
+                Cmd::ReloadDisk => self.request_reload(ctx),
+                Cmd::OpenTyped => self.request_leave(ctx, Leave::OpenTyped),
+                Cmd::SaveAsTyped => self.start_save_as_typed(ctx),
+                Cmd::OpenRecent(path) => self.request_open_path(ctx, path),
+                Cmd::ClearRecent => self.clear_recent(),
+                // The window's own close path: it comes back as a close request and meets the
+                // unsaved-changes guard like the close button does.
+                Cmd::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                 Cmd::ExpandAll(open) => self.set_all_expanded(ctx, open),
                 Cmd::ExpandSubtree(id, open) => self.set_subtree_expanded(ctx, id, open),
                 Cmd::EndDrag(opened) => self.end_drag(opened),
@@ -825,14 +840,14 @@ fn menu_entries(
 }
 
 /// The notebook menu behind "file": the commands that are about the whole notebook.
-fn file_entries(ui: &mut egui::Ui, ch: &theme::Chrome, cmds: &mut Vec<Cmd>) {
-    ui.set_min_width(240.0);
+fn file_entries(ui: &mut egui::Ui, ch: &theme::Chrome, recent: &[PathBuf], cmds: &mut Vec<Cmd>) {
+    ui.set_min_width(260.0);
     ui.spacing_mut().button_padding = Vec2::new(10.0, 4.0);
     ui.spacing_mut().item_spacing.y = 2.0;
     let _ = ch;
     let ctx = ui.ctx().clone();
     let keys = |s: &egui::KeyboardShortcut| ctx.format_shortcut(s);
-    let mut pick = |ui: &mut egui::Ui, label: &str, hint: String, cmd: Cmd| {
+    let pick = |ui: &mut egui::Ui, cmds: &mut Vec<Cmd>, label: &str, hint: String, cmd: Cmd| {
         if ui
             .add(egui::Button::new(label).shortcut_text(hint))
             .clicked()
@@ -843,20 +858,88 @@ fn file_entries(ui: &mut egui::Ui, ch: &theme::Chrome, cmds: &mut Vec<Cmd>) {
     };
     pick(
         ui,
+        cmds,
         "New notebook",
         keys(&keymap::NEW_NOTEBOOK),
         Cmd::NewNotebook,
     );
-    pick(ui, "Open\u{2026}", keys(&keymap::OPEN), Cmd::OpenNotebook);
+    pick(
+        ui,
+        cmds,
+        "Open\u{2026}",
+        keys(&keymap::OPEN),
+        Cmd::OpenNotebook,
+    );
+    pick(
+        ui,
+        cmds,
+        "Open by path\u{2026}",
+        String::new(),
+        Cmd::OpenTyped,
+    );
+    if recent.is_empty() {
+        ui.add_enabled(false, egui::Button::new("Open recent"));
+    } else {
+        ui.menu_button("Open recent", |ui| {
+            ui.set_min_width(260.0);
+            for path in recent {
+                let name = path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                );
+                let r = ui
+                    .add(egui::Button::new(name))
+                    .on_hover_text(path.display().to_string());
+                if r.clicked() {
+                    cmds.push(Cmd::OpenRecent(path.clone()));
+                    ui.close();
+                }
+            }
+            ui.separator();
+            if ui.button("Clear recent files").clicked() {
+                cmds.push(Cmd::ClearRecent);
+                ui.close();
+            }
+        });
+    }
     ui.separator();
-    pick(ui, "Save", keys(&keymap::SAVE), Cmd::Save);
-    pick(ui, "Save As\u{2026}", keys(&keymap::SAVE_AS), Cmd::SaveAs);
+    pick(ui, cmds, "Save", keys(&keymap::SAVE), Cmd::Save);
+    pick(
+        ui,
+        cmds,
+        "Save As\u{2026}",
+        keys(&keymap::SAVE_AS),
+        Cmd::SaveAs,
+    );
+    pick(
+        ui,
+        cmds,
+        "Save As by path\u{2026}",
+        String::new(),
+        Cmd::SaveAsTyped,
+    );
+    pick(
+        ui,
+        cmds,
+        "Reload from disk\u{2026}",
+        String::new(),
+        Cmd::ReloadDisk,
+    );
     ui.separator();
     pick(
         ui,
+        cmds,
         "Recovery\u{2026}",
         keys(&keymap::RECOVERY),
         Cmd::Recovery,
     );
-    pick(ui, "Keyboard shortcuts", keys(&keymap::HELP), Cmd::Help);
+    pick(
+        ui,
+        cmds,
+        "Keyboard shortcuts",
+        keys(&keymap::HELP),
+        Cmd::Help,
+    );
+    ui.separator();
+    pick(ui, cmds, "Quit", String::new(), Cmd::Quit);
 }

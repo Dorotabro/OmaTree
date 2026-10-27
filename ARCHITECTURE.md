@@ -300,3 +300,11 @@ successful save or a confirmed discard; the waiting action is a single `Option<L
 once. A notebook is only ever replaced by `Host::install`, which resets editor state, Search,
 Recovery and autosave state together. The system file dialogs (`rfd`, desktop portal) run on a
 thread and are polled once per frame; without them a typed-path dialog asks the same questions.
+
+### Conflicts, reload and open requests (E8b)
+
+`reload.rs` is the way out of an external-modification conflict: Save As, or Reload from Disk through
+`Document::open_existing` and `Host::install` (nothing is reset unless the load worked), never an
+overwrite. `files.rs` also owns the command-line check and `request_open_path`, the single entry for
+every other incoming open request, and `recent.rs` keeps the recent-notebooks paths in the user's
+configuration folder. There is still no single-instance channel: a second launch is a second process.
