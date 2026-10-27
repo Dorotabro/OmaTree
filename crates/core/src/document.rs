@@ -156,6 +156,32 @@ pub struct Document {
     pending: RefCell<BTreeMap<AttachmentId, Attachment>>,
 }
 
+/// How a storage failure while reading an attachment is told to the caller: damage to what is
+/// stored (a row that is inconsistent, a database that is malformed) is `Corrupt`; a failure that
+/// says nothing about the file (no memory, a lock, an I/O error) is `Storage`, so that a
+/// transient problem is never reported as a damaged notebook.
+fn attachment_error(e: StorageError) -> AttachmentError {
+    use rusqlite::ErrorCode;
+    match &e {
+        StorageError::InvalidData(_) => AttachmentError::Corrupt(e.to_string()),
+        StorageError::Sqlite(rusqlite::Error::SqliteFailure(f, _))
+            if matches!(f.code, ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase) =>
+        {
+            AttachmentError::Corrupt(e.to_string())
+        }
+        _ => AttachmentError::Storage(e.to_string()),
+    }
+}
+
+/// Removes a notebook file this process just created, and the rollback journal SQLite may have
+/// left beside it. Only ever called for a path `save_as` itself claimed.
+fn remove_new_target(path: &Path) {
+    let _ = std::fs::remove_file(path);
+    let mut journal = path.as_os_str().to_owned();
+    journal.push("-journal");
+    let _ = std::fs::remove_file(journal);
+}
+
 impl Document {
     /// Empty in-memory notebook with no file.
     pub fn untitled() -> Self {
@@ -289,7 +315,27 @@ impl Document {
             }
             Storage::open(path).map_err(DocumentError::NotANotebook)?
         } else {
-            Storage::create(path)?
+            // Claim the path atomically first, so that what is removed on a failure below is
+            // certainly a file this call made (a notebook that appeared in the meantime is never
+            // touched), including when `create` itself fails, for instance on a full disk.
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+            {
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                    return Err(DocumentError::TargetExists)
+                }
+                Err(e) => return Err(DocumentError::Io(e)),
+            }
+            match Storage::create(path) {
+                Ok(target) => target,
+                Err(e) => {
+                    remove_new_target(path);
+                    return Err(e.into());
+                }
+            }
         };
         let expanded = self.valid_expanded();
         let saved = {
@@ -311,7 +357,7 @@ impl Document {
         if let Err(e) = saved {
             drop(target);
             if !existed {
-                let _ = std::fs::remove_file(path);
+                remove_new_target(path);
             }
             return Err(e.into());
         }
@@ -383,7 +429,7 @@ impl Document {
                 id: id.clone(),
                 media_type,
                 created_at,
-                data: bytes.to_vec(),
+                data: attachments::try_copy(bytes)?,
             };
             let reference = attachment.reference();
             self.pending.borrow_mut().insert(id, attachment);
@@ -425,7 +471,7 @@ impl Document {
             .as_ref()
             .map(|s| s.attachment_info(&id))
             .transpose()
-            .map_err(|e| AttachmentError::Corrupt(e.to_string()))?
+            .map_err(attachment_error)?
             .flatten()
             .ok_or_else(missing)?;
         if info.media_type == media {
@@ -441,7 +487,7 @@ impl Document {
         let missing = || AttachmentError::NotFound(reference.to_owned());
         if let Some(a) = self.pending.borrow().get(&id) {
             return if a.media_type == media {
-                Ok(a.data.clone())
+                attachments::try_copy(&a.data)
             } else {
                 Err(missing())
             };
@@ -451,7 +497,7 @@ impl Document {
             .as_ref()
             .map(|s| s.attachment(&id))
             .transpose()
-            .map_err(|e| AttachmentError::Corrupt(e.to_string()))?
+            .map_err(attachment_error)?
             .flatten()
             .ok_or_else(missing)?;
         if stored.media_type == media {
@@ -476,6 +522,22 @@ impl Document {
                 .map_err(|e| AttachmentError::Storage(e.to_string())),
             None => Ok(Vec::new()),
         }
+    }
+
+    /// The document's own storage, for failure injection. Tests only.
+    #[cfg(test)]
+    pub(crate) fn storage_for_test(&self) -> Option<&Storage> {
+        self.storage.as_ref()
+    }
+
+    /// The explicit full health check of the notebook's file (see `Storage::verify_integrity`).
+    /// Reads the whole file and writes nothing; `NoPath` for a notebook that has none.
+    pub fn verify_integrity(&self) -> Result<crate::storage::IntegrityReport, DocumentError> {
+        Ok(self
+            .storage
+            .as_ref()
+            .ok_or(DocumentError::NoPath)?
+            .verify_integrity()?)
     }
 
     /// The file's schema version, if the notebook has a file.

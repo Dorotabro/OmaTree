@@ -140,6 +140,23 @@ pub struct PhysicalStats {
     pub journal_mode: String,
 }
 
+/// What `verify_integrity` found. Empty lists mean nothing was found, not that nothing was checked.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct IntegrityReport {
+    /// Lines from SQLite's `integrity_check` and `foreign_key_check` (none when healthy).
+    pub sqlite: Vec<String>,
+    /// Problems with attachment rows and images (none when healthy).
+    pub attachments: Vec<String>,
+    /// How many stored images had their bytes read and checked.
+    pub checked_attachments: usize,
+}
+
+impl IntegrityReport {
+    pub fn is_healthy(&self) -> bool {
+        self.sqlite.is_empty() && self.attachments.is_empty()
+    }
+}
+
 #[derive(Debug)]
 pub enum StorageError {
     Sqlite(rusqlite::Error),
@@ -245,6 +262,9 @@ impl Storage {
         if !(OLDEST_READABLE_VERSION..=SCHEMA_VERSION).contains(&version) {
             return Err(StorageError::UnsupportedSchemaVersion(version));
         }
+        if version >= ATTACHMENT_VERSION {
+            check_attachment_table(&conn)?;
+        }
         let observed = data_version(&conn)?;
         Ok(Storage {
             conn,
@@ -284,7 +304,11 @@ impl Storage {
         plan: &AttachmentPlan,
     ) -> Result<(), StorageError> {
         let from = self.version;
-        let wants = !plan.pending.is_empty() || plan.copy_from.is_some_and(Storage::has_stored);
+        let copies = match plan.copy_from {
+            Some(source) => source.has_stored()?,
+            None => false,
+        };
+        let wants = !plan.pending.is_empty() || copies;
         let to = target_version(from.max(BASE_VERSION), wants);
         let tx = self.begin_checked_write()?;
         migrate(&tx, from, to)?;
@@ -309,6 +333,18 @@ impl Storage {
         tx.commit()?;
         self.version = to;
         Ok(())
+    }
+
+    /// The connection itself, for failure injection. Tests only.
+    #[cfg(test)]
+    pub(crate) fn connection(&self) -> &Connection {
+        &self.conn
+    }
+
+    /// The baseline, for tests that check it is not moved by failures. Tests only.
+    #[cfg(test)]
+    pub(crate) fn baseline(&self) -> (i64, i64) {
+        (self.observed, data_version(&self.conn).unwrap())
     }
 
     /// Accepts the file as it is now as the baseline. Tests only: the test
@@ -436,33 +472,26 @@ impl Storage {
         self.version
     }
 
-    /// Whether the attachments table holds anything.
-    pub fn has_stored(&self) -> bool {
-        self.version >= ATTACHMENT_VERSION
-            && self
-                .conn
-                .query_row("SELECT EXISTS (SELECT 1 FROM attachments)", [], |r| {
-                    r.get(0)
-                })
-                .unwrap_or(false)
+    /// Whether the attachments table holds anything. An unreadable table is an error, never
+    /// "nothing": Save As would otherwise leave stored images behind without a word.
+    pub fn has_stored(&self) -> Result<bool, StorageError> {
+        if self.version < ATTACHMENT_VERSION {
+            return Ok(false);
+        }
+        Ok(self
+            .conn
+            .query_row("SELECT EXISTS (SELECT 1 FROM attachments)", [], |r| {
+                r.get(0)
+            })?)
     }
 
-    /// The ids of every stored attachment (none before version 4).
+    /// The ids of every stored attachment (none before version 4). Every row is validated, so
+    /// a damaged row is an error here and never a quietly shorter list.
     pub fn attachment_ids(&self) -> Result<Vec<AttachmentId>, StorageError> {
-        if self.version < ATTACHMENT_VERSION {
-            return Ok(Vec::new());
-        }
-        let mut q = self
-            .conn
-            .prepare("SELECT id FROM attachments ORDER BY id")?;
-        let rows = q.query_map([], |r| r.get::<_, String>(0))?;
-        let mut ids = Vec::new();
-        for row in rows {
-            ids.push(
-                AttachmentId::parse(&row?).map_err(|e| StorageError::InvalidData(e.to_string()))?,
-            );
-        }
-        Ok(ids)
+        Ok(inventory(&self.conn, self.version)?
+            .into_iter()
+            .map(|a| a.0)
+            .collect())
     }
 
     /// Size and media type of a stored attachment, without reading the bytes.
@@ -476,16 +505,28 @@ impl Storage {
         let row = self
             .conn
             .query_row(
-                "SELECT media_type, byte_len FROM attachments WHERE id = ?1",
+                "SELECT media_type, byte_len, length(data) FROM attachments WHERE id = ?1",
                 [id.as_str()],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, Option<i64>>(2)?,
+                    ))
+                },
             )
             .map(Some)
             .or_else(|e| match e {
                 rusqlite::Error::QueryReturnedNoRows => Ok(None),
                 other => Err(other),
             })?;
-        row.map(|(mime, len)| {
+        row.map(|(mime, len, stored)| {
+            if stored != Some(len) {
+                return Err(StorageError::InvalidData(format!(
+                    "attachment {id} records {len} bytes but holds {}",
+                    stored.map_or("none".to_owned(), |n| n.to_string())
+                )));
+            }
             Ok(AttachmentInfo {
                 len: u64::try_from(len)
                     .map_err(|_| StorageError::InvalidData("negative attachment size".into()))?,
@@ -512,7 +553,20 @@ impl Storage {
                         r.get::<_, String>(0)?,
                         r.get::<_, i64>(1)?,
                         r.get::<_, i64>(2)?,
-                        r.get::<_, Vec<u8>>(3)?,
+                        // `as_blob` borrows SQLite's buffer; the copy is fallible (out of
+                        // memory is an error, not an abort).
+                        {
+                            let blob = r.get_ref(3)?.as_blob()?;
+                            let mut copy = Vec::new();
+                            copy.try_reserve_exact(blob.len()).map_err(|_| {
+                                rusqlite::Error::SqliteFailure(
+                                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_NOMEM),
+                                    Some("not enough memory to read the attachment".into()),
+                                )
+                            })?;
+                            copy.extend_from_slice(blob);
+                            copy
+                        },
                     ))
                 },
             )
@@ -532,6 +586,23 @@ impl Storage {
         }
         let media_type = MediaType::from_mime(&mime)
             .ok_or_else(|| StorageError::InvalidData(format!("attachment of type {mime}")))?;
+        // The bytes are in hand anyway: a structural check (signature, chunk or segment layout,
+        // end marker) is cheap and catches truncation and a type that disagrees with the content.
+        // Decoding the pixels is the display boundary's job, not storage's.
+        match crate::attachments::sniff(&data) {
+            Ok(found) if found == media_type => {}
+            Ok(found) => {
+                return Err(StorageError::InvalidData(format!(
+                    "attachment {id} is recorded as {mime} but holds {}",
+                    found.mime()
+                )))
+            }
+            Err(e) => {
+                return Err(StorageError::InvalidData(format!(
+                    "attachment {id} is damaged: {e}"
+                )))
+            }
+        }
         Ok(Some(Attachment {
             id: id.clone(),
             media_type,
@@ -619,6 +690,64 @@ impl Storage {
         }))
     }
 
+    /// The explicit, full health check: SQLite's own `integrity_check` and `foreign_key_check`,
+    /// the attachments table's shape, every row's identity, type and recorded size, duplicate
+    /// ids, and the structure of every stored image (read one at a time, never all at once).
+    /// Writes nothing. It costs a pass over the whole file, so it is not part of an ordinary
+    /// open or save; a damaged-but-readable notebook is reported, never repaired.
+    pub fn verify_integrity(&self) -> Result<IntegrityReport, StorageError> {
+        let mut report = IntegrityReport::default();
+        let mut q = self.conn.prepare("PRAGMA integrity_check(20)")?;
+        for line in q.query_map([], |r| r.get::<_, String>(0))? {
+            let line = line?;
+            if line != "ok" {
+                report.sqlite.push(line);
+            }
+        }
+        let mut q = self.conn.prepare("PRAGMA foreign_key_check")?;
+        let violations = q.query_map([], |_| Ok(()))?.count();
+        if violations > 0 {
+            report
+                .sqlite
+                .push(format!("{violations} foreign key violation(s)"));
+        }
+        if self.version < ATTACHMENT_VERSION {
+            return Ok(report);
+        }
+        if let Err(e) = check_attachment_table(&self.conn) {
+            report.attachments.push(e.to_string());
+            return Ok(report);
+        }
+        let duplicates: i64 = self.conn.query_row(
+            "SELECT count(*) FROM (SELECT id FROM attachments GROUP BY id HAVING count(*) > 1)",
+            [],
+            |r| r.get(0),
+        )?;
+        if duplicates > 0 {
+            report.attachments.push(format!(
+                "{duplicates} attachment id(s) stored more than once"
+            ));
+        }
+        let mut valid = Vec::new();
+        {
+            let mut q = self.conn.prepare(ROW_SHAPE_SQL)?;
+            let mut rows = q.query([])?;
+            while let Some(row) = rows.next()? {
+                match RowShape::read(row)?.check() {
+                    Ok(entry) => valid.push(entry),
+                    Err(why) => report.attachments.push(why),
+                }
+            }
+        }
+        for (id, _, _) in valid {
+            report.checked_attachments += 1;
+            if let Err(e) = self.attachment(&id) {
+                report.attachments.push(e.to_string());
+            }
+        }
+        Ok(report)
+    }
+
     /// Page counts and journal mode of the file, from SQLite itself.
     pub fn physical_stats(&self) -> Result<PhysicalStats, StorageError> {
         let n = |name: &str| -> Result<u64, StorageError> {
@@ -653,10 +782,13 @@ impl Storage {
         path: &Path,
         busy: Duration,
     ) -> Result<(), StorageError> {
+        // The change counter is read *before* the `data_version` check: a commit by someone else
+        // between the two is then caught by the check (a refusal), and one after both makes the
+        // counter move, so it can never be mistaken for "nobody wrote" below.
+        let counter_before = change_counter(path);
         if data_version(&self.conn)? != self.observed {
             return Err(StorageError::ExternallyModified);
         }
-        let counter_before = change_counter(path);
         self.conn.busy_timeout(busy)?;
         let ran = self.conn.execute_batch("VACUUM");
         // Always put the default wait back, whatever happened.
@@ -1033,26 +1165,125 @@ fn inventory(
     if version < ATTACHMENT_VERSION {
         return Ok(Vec::new());
     }
-    let mut q = conn.prepare("SELECT id, byte_len, media_type FROM attachments ORDER BY id")?;
-    let rows = q.query_map([], |r| {
-        Ok((
-            r.get::<_, String>(0)?,
-            r.get::<_, i64>(1)?,
-            r.get::<_, String>(2)?,
-        ))
-    })?;
+    // `typeof` and `length` of a BLOB come from the record header: no payload is read.
+    let mut q = conn.prepare(ROW_SHAPE_SQL)?;
+    let mut rows = q.query([])?;
     let mut all = Vec::new();
-    for row in rows {
-        let (id, len, mime) = row?;
-        all.push((
-            AttachmentId::parse(&id).map_err(|e| StorageError::InvalidData(e.to_string()))?,
-            u64::try_from(len)
-                .map_err(|_| StorageError::InvalidData("negative attachment size".into()))?,
-            MediaType::from_mime(&mime)
-                .ok_or_else(|| StorageError::InvalidData(format!("attachment of type {mime}")))?,
-        ));
+    while let Some(row) = rows.next()? {
+        let shape = RowShape::read(row)?;
+        match shape.check() {
+            Ok(entry) => all.push(entry),
+            Err(why) => return Err(StorageError::InvalidData(why)),
+        }
     }
     Ok(all)
+}
+
+const ROW_SHAPE_SQL: &str = "SELECT id, media_type, byte_len, typeof(id), typeof(media_type),
+        typeof(byte_len), typeof(data), length(data) FROM attachments ORDER BY id";
+
+/// One attachments row as stored, without its BLOB.
+struct RowShape {
+    id: Option<String>,
+    media_type: Option<String>,
+    len: Option<i64>,
+    types: [String; 4],
+    data_len: Option<i64>,
+}
+
+impl RowShape {
+    fn read(row: &rusqlite::Row<'_>) -> Result<Self, StorageError> {
+        // Values of a surprising type must not make reading fail: that is for `check` to name.
+        let text = |i: usize| -> Option<String> {
+            match row.get_ref(i) {
+                Ok(rusqlite::types::ValueRef::Text(t)) => {
+                    std::str::from_utf8(t).ok().map(str::to_owned)
+                }
+                _ => None,
+            }
+        };
+        let int = |i: usize| -> Option<i64> {
+            match row.get_ref(i) {
+                Ok(rusqlite::types::ValueRef::Integer(n)) => Some(n),
+                _ => None,
+            }
+        };
+        Ok(RowShape {
+            id: text(0),
+            media_type: text(1),
+            len: int(2),
+            types: [
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+            ],
+            data_len: int(7),
+        })
+    }
+
+    /// The validated entry, or what is wrong with the row (naming its id when it has a sane one).
+    fn check(&self) -> Result<(AttachmentId, u64, MediaType), String> {
+        let shown = self.id.as_deref().unwrap_or("(unreadable id)");
+        let bad = |why: &str| format!("attachment row {shown}: {why}");
+        let [t_id, t_media, t_len, t_data] = &self.types;
+        if t_id != "text" || t_media != "text" || t_len != "integer" || t_data != "blob" {
+            return Err(bad("a column holds a value of the wrong type"));
+        }
+        let id = self
+            .id
+            .as_deref()
+            .ok_or_else(|| bad("unreadable id"))
+            .and_then(|t| AttachmentId::parse(t).map_err(|e| bad(&e.to_string())))?;
+        let media = self
+            .media_type
+            .as_deref()
+            .and_then(MediaType::from_mime)
+            .ok_or_else(|| bad("unsupported media type"))?;
+        let len = self
+            .len
+            .and_then(|n| u64::try_from(n).ok())
+            .filter(|n| *n > 0 && *n <= crate::attachments::MAX_ATTACHMENT_BYTES)
+            .ok_or_else(|| bad("recorded size is not between 1 byte and the limit"))?;
+        if self.data_len != i64::try_from(len).ok() {
+            return Err(bad("recorded size differs from the stored bytes"));
+        }
+        Ok((id, len, media))
+    }
+}
+
+/// The attachments table must have the columns, types and primary key this program writes.
+/// (The CHECK constraints are not readable this way; every row is validated on its own anyway.)
+fn check_attachment_table(conn: &Connection) -> Result<(), StorageError> {
+    let mut q = conn.prepare("PRAGMA table_info(attachments)")?;
+    let found: Vec<(String, String, bool, i64)> = q
+        .query_map([], |r| {
+            Ok((r.get(1)?, r.get::<_, String>(2)?, r.get(3)?, r.get(5)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    if found.is_empty() {
+        return Err(StorageError::InvalidData(
+            "the attachments table is missing".into(),
+        ));
+    }
+    const WANT: [(&str, &str, bool, bool); 5] = [
+        ("id", "TEXT", false, true),
+        ("media_type", "TEXT", true, false),
+        ("created_at", "INTEGER", true, false),
+        ("byte_len", "INTEGER", true, false),
+        ("data", "BLOB", true, false),
+    ];
+    let same = found.len() == WANT.len()
+        && found.iter().zip(WANT).all(|(f, w)| {
+            f.0 == w.0 && f.1.eq_ignore_ascii_case(w.1) && (f.2 || !w.2) && ((f.3 == 1) == w.3)
+        });
+    if same {
+        Ok(())
+    } else {
+        Err(StorageError::InvalidData(
+            "the attachments table does not have the expected columns or primary key".into(),
+        ))
+    }
 }
 
 fn references(conn: &Connection, version: i64) -> Result<StoredReferences, StorageError> {

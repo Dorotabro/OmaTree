@@ -18,3 +18,6 @@ pub mod theme;
 mod attachment_tests;
 #[cfg(test)]
 mod compact_tests;
+// Unix only, like the E9a/E9b helpers it builds on: permissions, `unshare`, `ulimit`, SIGKILL.
+#[cfg(all(test, unix))]
+mod integrity_tests;

@@ -624,3 +624,91 @@ fn spaced_and_unicode_paths_save_autosave_and_reopen() {
 fn a_notebook_opened_by_the_system_asks_before_replacing_unsaved_work() {
     scenario("systemopen");
 }
+
+/// The smallest valid PNG (1x1, transparent) and a minimal structurally valid JPEG, as bytes.
+const PNG_1X1: [u8; 67] = [
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+    0x42, 0x60, 0x82,
+];
+const JPEG_MIN: [u8; 23] = [
+    0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x03, 0x00,
+    0x02, 0x01, 0x01, 0x11, 0x00, 0xFF, 0xD9,
+];
+
+/// E9c: the Qt application, headless, opens a copy of a schema-version-4 notebook, edits a note
+/// and saves it in place (the ordinary save path of this build). The stored images, read with
+/// plain SQLite afterwards, are byte-for-byte what they were, and nothing else changed.
+#[test]
+fn the_qt_application_saves_a_version_4_notebook_without_touching_its_attachments() {
+    let sandbox = Sandbox::new("attachments");
+    let path = sandbox.path("v4.omatree");
+    let (png_ref, jpeg_ref) = {
+        let mut doc = omatree_core::document::Document::open(&path).unwrap();
+        let png_ref = doc.put_attachment(&PNG_1X1).unwrap();
+        let jpeg_ref = doc.put_attachment(&JPEG_MIN).unwrap();
+        let images = doc.create_root("Obrázky 🖼").unwrap();
+        doc.set_body(images, &format!("![a]({png_ref})\n![b]({jpeg_ref})\n"))
+            .unwrap();
+        let other = doc.create_root("Druhá").unwrap();
+        doc.set_body(other, "beze změny").unwrap();
+        // An orphan: Qt's ordinary save must not prune it either.
+        doc.put_attachment(&PNG_1X1).unwrap();
+        doc.save().unwrap();
+        (png_ref, jpeg_ref)
+    };
+    let read_rows = |p: &Path| -> Vec<(String, String, i64, Vec<u8>)> {
+        let c = rusqlite::Connection::open(p).unwrap();
+        let mut q = c
+            .prepare("SELECT id, media_type, byte_len, data FROM attachments ORDER BY id")
+            .unwrap();
+        let rows = q
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap();
+        rows.map(Result::unwrap).collect()
+    };
+    let before = read_rows(&path);
+    assert_eq!(before.len(), 3);
+
+    let new_body = "ahoj z Qt, žluťoučký kůň";
+    let outcome = run_in(
+        &sandbox,
+        "attachments",
+        &[
+            ("notebook", json_string(&portable(&path))),
+            ("mode", json_string("edit")),
+            ("newBody", json_string(new_body)),
+            ("otherBody", json_string("beze změny")),
+        ],
+        None,
+    );
+    assert_clean(&outcome);
+
+    // Read independently of the application.
+    assert_eq!(read_rows(&path), before, "attachment rows changed");
+    let c = rusqlite::Connection::open(&path).unwrap();
+    let version: i64 = c
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 4, "the Qt save must keep the file at version 4");
+    let integrity: String = c
+        .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(integrity, "ok");
+    let body: String = c
+        .query_row(
+            "SELECT body FROM nodes WHERE title = 'Obrázky 🖼'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(body, new_body);
+    drop(c);
+    // And the core still serves the images the removed references pointed to.
+    let doc = omatree_core::document::Document::open(&path).unwrap();
+    assert_eq!(doc.attachment(&png_ref).unwrap(), PNG_1X1);
+    assert_eq!(doc.attachment(&jpeg_ref).unwrap(), JPEG_MIN);
+    assert!(doc.verify_integrity().unwrap().is_healthy());
+}

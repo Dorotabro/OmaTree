@@ -337,3 +337,21 @@ unreferenced set from the file and refuses unless it is exactly the reviewed one
 supply ids. Reclaiming file space (`preview_reclaim` / `reclaim_space`, a `VACUUM` on the same
 connection) has its own token and never runs by itself, not even after a prune: deleting rows does
 not shrink the file. See `docs/EGUI_MIGRATION_PLAN.md`, "E9b implementation record".
+
+### Attachment integrity (E9c)
+
+Storage trusts nothing it reads back about an attachment. Opening a version 4 file checks the
+shape of the `attachments` table (columns, types, primary key) and refuses a file that has it
+wrong or missing, leaving the file untouched. Every row that is listed, copied or considered for
+pruning is validated without reading its BLOB (id format, media type, recorded size, the type of
+each column, `length(data)` equal to `byte_len`), and a row that fails is an *error*, never
+"unreferenced": no prune or Save As proceeds past it. Reading an image's bytes also checks its
+structure (signature, chunk or segment layout, end marker) and that it matches the recorded
+media type; decoding the pixels is the display boundary's job (E10), not storage's.
+`Document::verify_integrity` is the explicit, whole-file check (SQLite `integrity_check`,
+`foreign_key_check`, duplicate ids, every row, every image's structure); it is never run by an
+ordinary open or save. `Save As` claims a new target atomically (`create_new`) so that exactly the
+file it made is removed on any failure. Attachment reads and the in-memory copy of an image are
+fallible allocations: running out of memory is an `AttachmentError::Storage`, never an abort, and a
+transient failure (memory, lock, I/O) is not reported as a damaged notebook. See
+`docs/EGUI_MIGRATION_PLAN.md`, "E9c implementation record".

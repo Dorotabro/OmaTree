@@ -92,6 +92,21 @@ impl fmt::Display for AttachmentError {
 
 impl std::error::Error for AttachmentError {}
 
+/// A copy of `bytes` whose allocation can fail: a refusal the caller can report (`Storage`), where
+/// `to_vec` would abort the whole process when memory runs out. Attachments are the one place the
+/// program holds tens of megabytes in a single buffer.
+pub(crate) fn try_copy(bytes: &[u8]) -> Result<Vec<u8>, AttachmentError> {
+    let mut copy = Vec::new();
+    copy.try_reserve_exact(bytes.len()).map_err(|_| {
+        AttachmentError::Storage(format!(
+            "not enough memory for an image of {} bytes",
+            bytes.len()
+        ))
+    })?;
+    copy.extend_from_slice(bytes);
+    Ok(copy)
+}
+
 /// A 128-bit identifier as 32 lowercase hex digits.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AttachmentId(String);
@@ -369,6 +384,44 @@ pub(crate) mod fixtures {
         z.extend_from_slice(&((b << 16) | a).to_be_bytes());
         chunk(&mut out, b"IDAT", &z);
         chunk(&mut out, b"IEND", &[]);
+        out
+    }
+
+    /// A structurally valid PNG of exactly `total` bytes: a real 2x2 image padded with an ancillary
+    /// `tEXt` chunk before `IEND`, built in one allocation of `total` bytes (so a measurement of the
+    /// code under test is not drowned by the fixture). `total` must exceed a 2x2 PNG plus 12.
+    pub fn png_of_len(total: usize) -> Vec<u8> {
+        fn crc(bytes: &[u8]) -> u32 {
+            // Table-driven: the padding can be tens of megabytes.
+            let mut table = [0u32; 256];
+            for (n, slot) in table.iter_mut().enumerate() {
+                let mut c = n as u32;
+                for _ in 0..8 {
+                    c = if c & 1 == 1 {
+                        0xEDB8_8320 ^ (c >> 1)
+                    } else {
+                        c >> 1
+                    };
+                }
+                *slot = c;
+            }
+            let mut c = 0xFFFF_FFFFu32;
+            for b in bytes {
+                c = table[((c ^ u32::from(*b)) & 0xFF) as usize] ^ (c >> 8);
+            }
+            !c
+        }
+        let base = png(2, 2);
+        let pad = total - base.len() - 12;
+        let iend = base.len() - 12;
+        let mut out = base[..iend].to_vec();
+        let mut body = b"tEXt".to_vec();
+        body.extend(std::iter::repeat_n(b'x', pad));
+        out.extend_from_slice(&(pad as u32).to_be_bytes());
+        out.extend_from_slice(&body);
+        out.extend_from_slice(&crc(&body).to_be_bytes());
+        out.extend_from_slice(&base[iend..]);
+        assert_eq!(out.len(), total);
         out
     }
 
