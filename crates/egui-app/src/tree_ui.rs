@@ -10,8 +10,8 @@ use super::*;
 use egui::{Color32, FontId, Key, Pos2, Rect, Sense, Shape, Stroke, Vec2};
 
 use super::layout::{
-    BAR_H, GUTTER, INDENT, PAD, ROW_H, TITLE_NOTE_H, TITLE_PX, TITLE_TOP, TREE_LEFT as LEFT,
-    TREE_TOP,
+    BAR_H, GUTTER, HEADER_H, INDENT, PAD, ROW_H, SMALL_PX, TITLE_NOTE_H, TITLE_PX, TITLE_ROW_H,
+    TITLE_TOP, TREE_LEFT as LEFT, TREE_TOP, UI_PX,
 };
 /// A pointer resting this long on a collapsed note while dragging opens it.
 const HOVER_OPEN: f64 = 0.6;
@@ -65,10 +65,14 @@ impl Host {
     pub(crate) fn tree_pane(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let mut cmds: Vec<Cmd> = Vec::new();
+        let chrome = *self.theme.chrome();
+
+        // The search field is the first stop of the pane (Tab order follows creation order):
+        // search, the command strip, then the tree.
+        self.search_header(ui, &chrome);
 
         // The command strip: quiet, fixed commands (as the Qt footer). Flat text actions that only
         // show a fill under the pointer or the keyboard, on the same bar height as the status bar.
-        let chrome = *self.theme.chrome();
         let bar = egui::Frame::NONE
             .inner_margin(egui::Margin::symmetric(PAD as i8 - 2, 0))
             .fill(theme::colour(self.theme.palette().surface));
@@ -94,17 +98,14 @@ impl Host {
                     }
                     // The notebook's own commands, one stop at the other end of the strip.
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let file = flat_action(ui, "file", true, &chrome)
-                            .on_hover_text("Notebook: new, open, save, recovery");
-                        egui::Popup::menu(&file)
+                        let menu = flat_action(ui, "menu", true, &chrome)
+                            .on_hover_text("Notebook: new, open, save, export, recovery, compact");
+                        egui::Popup::menu(&menu)
                             .show(|ui| file_entries(ui, &chrome, self.recent.items(), &mut cmds));
                     });
                 });
             });
 
-        if self.search.open {
-            self.search_header(ui, &chrome);
-        }
         if self.search_showing_results() {
             self.search_results_ui(ui, &chrome);
         } else if self.tree.rows().is_empty() {
@@ -131,8 +132,8 @@ impl Host {
         let (text_color, muted, accent, guide) = (ch.text, ch.muted, ch.accent, ch.guide);
         let danger = ch.danger_text;
         let has_focus = ctx.memory(|m| m.has_focus(tree_id));
-        let font = FontId::proportional(14.5);
-        let bold = self.bold.clone().map(|f| FontId::new(14.5, f));
+        let font = FontId::proportional(UI_PX);
+        let bold = self.bold.clone().map(|f| FontId::new(UI_PX, f));
 
         // Escape closes a menu that is open (egui's own handling leaves the keyboard-opened one).
         if egui::Popup::is_any_open(&ctx)
@@ -674,27 +675,49 @@ impl Host {
         );
         let mut resp = None;
         let enabled = !self.dialog_open();
+        // Nothing is added to the header's fixed height: its rule is drawn on `HEADER_H`.
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let header_top = ui.max_rect().top();
         ui.add_space(TITLE_TOP);
-        ui.add_enabled_ui(enabled, |ui| {
-            // The inset is a frame around the field: a text edit without its own frame ignores
-            // its margin, and this is what puts the first letter on the editor's axis.
-            egui::Frame::NONE
-                .inner_margin(egui::Margin::symmetric(GUTTER as i8, 0))
-                .show(ui, |ui| {
-                    resp = Some(
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.title_text)
-                                .id(id)
-                                .frame(egui::Frame::NONE)
-                                .font(font)
-                                .text_color(ch.text)
-                                .hint_text(egui::RichText::new("Title").color(ch.muted))
-                                .desired_width(f32::INFINITY)
-                                .margin(egui::Margin::ZERO),
-                        ),
-                    );
+        // The title sits in a row of fixed height, centred, so it shares a centre line with the
+        // search field on the other side of the window whatever the title's size.
+        let row = Rect::from_min_size(
+            ui.cursor().min,
+            Vec2::new(ui.available_width(), TITLE_ROW_H),
+        );
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(row)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            |ui| {
+                ui.add_enabled_ui(enabled, |ui| {
+                    // The inset is a frame around the field: a text edit without its own frame
+                    // ignores its margin, and this is what puts the first letter on the
+                    // editor's axis.
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin::symmetric(GUTTER as i8, 0))
+                        .show(ui, |ui| {
+                            resp = Some(
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.title_text)
+                                        .id(id)
+                                        .frame(egui::Frame::NONE)
+                                        .font(font)
+                                        .text_color(ch.text)
+                                        .hint_text(
+                                            egui::RichText::new("Title")
+                                                .size(TITLE_PX)
+                                                .color(ch.muted),
+                                        )
+                                        .desired_width(f32::INFINITY)
+                                        .margin(egui::Margin::ZERO),
+                                ),
+                            );
+                        });
                 });
-        });
+            },
+        );
+        ui.allocate_rect(row, Sense::hover());
         // One line for the validation message of this title, then the rule: the message stays
         // beside the field it is about, and the editor below never moves when it appears.
         let (note, note_resp) = ui.allocate_exact_size(
@@ -725,7 +748,7 @@ impl Host {
         } else {
             ch.hairline
         };
-        paint_inset_rule(ui, note.bottom(), rule);
+        paint_inset_rule(ui, header_top + HEADER_H, rule);
         if resp.changed() {
             self.title_error = None;
         }
@@ -756,7 +779,7 @@ pub(crate) fn flat_action(
 ) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
-        FontId::proportional(12.5),
+        FontId::proportional(SMALL_PX),
         Color32::PLACEHOLDER,
     );
     let size = Vec2::new(galley.size().x + 16.0, BAR_H - 8.0);
@@ -799,7 +822,7 @@ pub(crate) fn paint_hairline(ui: &egui::Ui, colour: Color32, bleed: f32) {
 }
 
 /// A one-pixel rule at `y`, inset by the gutter on both sides (the title's axis).
-fn paint_inset_rule(ui: &egui::Ui, y: f32, colour: Color32) {
+pub(crate) fn paint_inset_rule(ui: &egui::Ui, y: f32, colour: Color32) {
     let r = ui.max_rect();
     ui.painter().hline(
         (r.left() + GUTTER)..=(r.right() - GUTTER),
@@ -856,7 +879,7 @@ fn menu_entries(
     pick(ui, "Recovery\u{2026}", &recovery_keys, true, Cmd::Recovery);
 }
 
-/// The notebook menu behind "file": the commands that are about the whole notebook.
+/// The notebook menu behind "menu": the commands that are about the whole notebook.
 fn file_entries(ui: &mut egui::Ui, ch: &theme::Chrome, recent: &[PathBuf], cmds: &mut Vec<Cmd>) {
     ui.set_min_width(260.0);
     ui.spacing_mut().button_padding = Vec2::new(10.0, 4.0);

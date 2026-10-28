@@ -8,7 +8,9 @@ use super::drag_tests::{open_deep, ALL};
 use super::theme_tests::{core_of, install, rich_notebook, LATTE, TOKYO};
 use super::tree_tests::shape;
 use super::*;
-use crate::layout::{BAR_H, GUTTER, INDENT, ROW_H, TREE_LEFT, TREE_MAX_SHARE, TREE_MIN};
+use crate::layout::{
+    BAR_H, GUTTER, HEADER_H, INDENT, ROW_H, TREE_DEFAULT, TREE_LEFT, TREE_MAX_SHARE, TREE_MIN,
+};
 use crate::theme::{colour, readable, Chrome, MUTED_MIN, TEXT_MIN};
 use eframe::egui::epaint::Shape;
 use eframe::egui::Color32;
@@ -168,18 +170,56 @@ fn rich(name: &str) -> (crate::tests::TestDir, PathBuf) {
 // --- Alignment -----------------------------------------------------------------------------------
 
 #[test]
-fn the_first_tree_row_and_the_note_title_share_a_centre_line() {
+fn the_search_field_and_the_note_title_share_a_header_line() {
     let d = dir("polish-centre");
     let p = d.join("n.omatree");
     make_fixture(&p);
     let h = H::open_tree(&p);
-    let row = h.text_in("Projects", true);
+    let hint = h.text_in("search notes", true);
     let title = h.text_in("Projects", false);
+    eprintln!(
+        "DBG hint {:?} title {:?}",
+        (hint.pos, hint.centre_y()),
+        (title.pos, title.centre_y())
+    );
     assert!(
-        (row.centre_y() - title.centre_y()).abs() <= 2.0,
-        "row {} vs title {}",
-        row.centre_y(),
+        (hint.centre_y() - title.centre_y()).abs() <= 1.5,
+        "search {} vs title {}",
+        hint.centre_y(),
         title.centre_y()
+    );
+    // Both sit on the same left axis: the gutter.
+    let search_left = h.text_in("/", true).pos.x;
+    assert!(
+        (search_left - GUTTER).abs() <= 1.0,
+        "prompt at {search_left}"
+    );
+    assert!((title.pos.x - h.tree_right() - GUTTER).abs() <= 2.0);
+    // Their rules are one line across the window, and the first tree row is under it.
+    let split = h.tree_right();
+    let rule_y = |left: bool| -> Vec<f32> {
+        h.painted()
+            .lines
+            .iter()
+            .filter(|l| {
+                (l.a.y - l.b.y).abs() < 0.01
+                    && (l.a.y - HEADER_H).abs() < 3.0
+                    && (l.a.x < split) == left
+            })
+            .map(|l| l.a.y)
+            .collect()
+    };
+    let (left, right) = (rule_y(true), rule_y(false));
+    assert!(!left.is_empty() && !right.is_empty(), "{left:?} {right:?}");
+    assert!(
+        left.iter().any(|y| right.contains(y)),
+        "rules at {left:?} and {right:?}"
+    );
+    let row = h.text_in("Projects", true);
+    assert!(
+        row.pos.y > HEADER_H,
+        "first row {} under the header",
+        row.pos.y
     );
 }
 
@@ -479,7 +519,7 @@ fn small_windows_keep_a_usable_tree_and_editor() {
     // A window that shrinks keeps the tree within its limits too.
     let mut h = H::open(&p);
     h.settle();
-    assert!(h.tree_width() <= 260.5);
+    assert!(h.tree_width() <= TREE_DEFAULT + 0.5);
     h.screen = Vec2::new(360.0, 300.0);
     h.settle();
     assert!(h.tree_width() <= (360.0 * TREE_MAX_SHARE).max(TREE_MIN) + 0.5);
@@ -1007,7 +1047,7 @@ fn the_sidebar_actions_are_flat_text_reachable_by_keyboard_and_disabled_means_mu
         })
         .count();
     assert_eq!(small, 0, "a flat action has no box");
-    // Shift+Tab from the tree reaches "file", then "+ child"; Enter does what its click does.
+    // Shift+Tab from the tree reaches "menu", then "+ child"; Enter does what its click does.
     let n = h.host.rows().len();
     h.key(Key::Tab, Modifiers::SHIFT);
     h.key(Key::Tab, Modifiers::SHIFT);

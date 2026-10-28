@@ -157,6 +157,19 @@ fn starting_without_a_path_gives_an_untitled_notebook_and_creates_no_file() {
         .collect();
     assert_eq!(before, after, "nothing was created");
     assert!(h.painted().texts.iter().any(|t| t.text == "No notes yet"));
+    // The editor pane says what to do, in words, instead of a bare line; the strip's menu is
+    // called "menu" because it holds more than file operations (recovery, compact, export).
+    let texts: Vec<String> = h.painted().texts.into_iter().map(|t| t.text).collect();
+    assert!(
+        texts.iter().any(|t| t == "This notebook is empty"),
+        "{texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t.starts_with("Press Ctrl+N")),
+        "{texts:?}"
+    );
+    assert!(texts.iter().any(|t| t == "menu"), "{texts:?}");
+    assert!(!texts.iter().any(|t| t == "file"), "{texts:?}");
 }
 
 #[test]
@@ -784,7 +797,7 @@ fn the_file_menu_lists_the_notebook_commands_and_works_from_the_keyboard() {
     let (_d, a, b) = two("files-menu");
     let mut h = H::open_tree(&a);
     let log = h.with_picker(vec![Some(b)]);
-    h.key(Key::Tab, Modifiers::SHIFT); // "file" is the last stop of the strip
+    h.key(Key::Tab, Modifiers::SHIFT); // "menu" is the last stop of the strip
     h.press(Key::Enter);
     h.advance(0.3);
     let texts: Vec<String> = h.painted().texts.into_iter().map(|t| t.text).collect();

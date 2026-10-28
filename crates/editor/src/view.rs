@@ -1456,7 +1456,11 @@ impl EditorView {
                                 dim_color: pal.reveal,
                                 accent: pal.link,
                                 code_bg: pal.code_bg,
+                                pixels_per_point: ui.ctx().pixels_per_point(),
                                 bold_family: bold_c.clone(),
+                                bold_drop: bold_c
+                                    .as_ref()
+                                    .map_or(0.0, |b| crate::fonts::bold_drop(ui.ctx(), b)),
                                 selection: a.min(b)..a.max(b),
                                 image_height: &height,
                                 table_height: &table_h,

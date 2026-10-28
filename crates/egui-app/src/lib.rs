@@ -536,6 +536,7 @@ impl Host {
             let frame = egui::Frame::NONE.fill(ctx.global_style().visuals.panel_fill);
             egui::Panel::top("note-title")
                 .frame(frame)
+                .exact_size(layout::HEADER_H)
                 .show_separator_line(false)
                 .show(root, |ui| self.title_field(ui));
         }
@@ -551,7 +552,24 @@ impl Host {
             .frame(frame)
             .show(root, |ui| {
                 let (Some(id), Some(doc)) = (self.selected, self.doc.as_ref()) else {
-                    ui.weak("Select or create a note");
+                    let new_note = ui.ctx().format_shortcut(&keymap::NEW_NOTE);
+                    if self.tree.rows().is_empty() {
+                        empty_state(
+                            ui,
+                            &ch,
+                            "This notebook is empty",
+                            &format!("Press {new_note} to write the first note."),
+                        );
+                    } else {
+                        empty_state(
+                            ui,
+                            &ch,
+                            "No note selected",
+                            &format!(
+                                "Choose a note on the left, or press {new_note} for a new one."
+                            ),
+                        );
+                    }
                     return None;
                 };
                 // A pasted image goes where the caret is. A note whose editor has never had the
@@ -641,7 +659,7 @@ impl Host {
                 } else {
                     ("\u{25cf} Unsaved changes", ch.warning_text)
                 };
-                let label = ui.label(egui::RichText::new(text).size(12.5).color(colour));
+                let label = ui.label(egui::RichText::new(text).size(layout::SMALL_PX).color(colour));
                 if stopped {
                     if let Some(e) = &self.autosave_error {
                         label.on_hover_text(format!(
@@ -666,7 +684,7 @@ impl Host {
             };
             let mut job = egui::text::LayoutJob::single_section(
                 self.status.clone(),
-                egui::TextFormat::simple(egui::FontId::proportional(12.5), colour),
+                egui::TextFormat::simple(egui::FontId::proportional(layout::SMALL_PX), colour),
             );
             job.wrap = egui::text::TextWrapping {
                 max_width: rect.width(),
@@ -742,6 +760,25 @@ impl Host {
 
 /// Gives `key`'s text edit a caret at the end of `text` if it has none (it never had the focus).
 /// A caret the user left behind is kept.
+/// What the editor pane shows when there is no note to edit: a short statement and the one thing
+/// to do about it, centred a little above the middle, in the chrome's quiet colours.
+fn empty_state(ui: &mut egui::Ui, ch: &theme::Chrome, title: &str, hint: &str) {
+    ui.vertical_centered(|ui| {
+        ui.add_space((ui.available_height() * 0.36).max(24.0));
+        ui.label(
+            egui::RichText::new(title)
+                .size(layout::TITLE_PX - 3.0)
+                .color(ch.secondary),
+        );
+        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new(hint)
+                .size(layout::UI_PX)
+                .color(ch.muted),
+        );
+    });
+}
+
 fn place_caret_at_end_if_none(ctx: &egui::Context, key: NoteKey, text: &str) {
     use egui::text::{CCursor, CCursorRange};
     let id = key.widget_id();

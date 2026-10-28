@@ -44,6 +44,11 @@ pub struct Params<'a> {
     pub accent: Color32,
     pub code_bg: Color32,
     pub bold_family: Option<FontFamily>,
+    /// `fonts::bold_drop` for `bold_family`: how far (in ems) bold text must sit lower on its line
+    /// to share the default face's baseline. Zero when there is no bold family.
+    pub bold_drop: f32,
+    /// Physical pixels per point: line boxes are a whole number of pixels (see `format_for`).
+    pub pixels_per_point: f32,
     /// Caret / selection as a byte range (start == end for a bare caret).
     pub selection: Range<usize>,
     /// Display height of an image for a destination, `None` if it cannot be shown.
@@ -199,6 +204,11 @@ pub fn compute_flags(src: &str, spans: &[Span], p: &Params) -> (Vec<Flags>, Vec<
     (flags, images)
 }
 
+/// Line height as a multiple of the font size.
+const BODY_LEADING: f32 = 1.42;
+const HEADING_LEADING: f32 = 1.25;
+const CODE_LEADING: f32 = 1.38;
+
 fn heading_scale(l: u8) -> f32 {
     match l {
         1 => 1.8,
@@ -269,6 +279,44 @@ fn format_for(f: &Flags, p: &Params) -> TextFormat {
         fmt.underline = egui::Stroke::new(1.0, p.accent);
     }
     fmt.color = color;
+    // Leading: a little air between lines of text, tighter in headings (a heading that wraps is
+    // one unit) and in code. Concealed source keeps the height its row asks for (below).
+    let leading = size
+        * if f.heading > 0 {
+            HEADING_LEADING
+        } else if f.code_block {
+            CODE_LEADING
+        } else {
+            BODY_LEADING
+        };
+    // A whole number of pixels, as egui rounds the row height to one: glyphs that are centred
+    // in the row (links, below) and glyphs that are placed from their own line box (everything
+    // else) then agree on where the baseline is, instead of differing by the rounding.
+    let leading = (leading * p.pixels_per_point).round() / p.pixels_per_point;
+    fmt.line_height = Some(leading);
+    if bold && f.heading == 0 && p.bold_family.is_some() && p.bold_drop != 0.0 {
+        // The bold face's baseline is not the default face's: egui hangs each glyph from the top
+        // of its line box by its own face's ascent. A glyph sits `(row height - line height)`
+        // times the vertical alignment, plus half of `line_height - face height`, below the top,
+        // so a shorter line box aligned to the bottom (or the top, to go up) moves the bold glyphs
+        // by exactly the difference between the faces, before egui rounds the baseline to a
+        // pixel. Plain text in the row is untouched; the row stays as tall as it was, because
+        // the plain text still sets it. (A row of bold text only is `2 * shift` shorter.)
+        let shift = p.bold_drop * size;
+        fmt.line_height = Some(leading - 2.0 * shift.abs());
+        fmt.valign = if shift > 0.0 {
+            egui::Align::Max
+        } else {
+            egui::Align::Min
+        };
+    }
+    if f.link && !bold {
+        // egui draws an underline on the bottom of the glyph's line box, which the leading would
+        // push away from the text: a link keeps its natural line box and is centred in the
+        // leading instead, so the underline stays under its letters.
+        fmt.line_height = None;
+        fmt.valign = egui::Align::Center;
+    }
     if f.strike {
         fmt.strikethrough = egui::Stroke::new(1.0, color);
     }
@@ -341,6 +389,8 @@ mod tests {
             accent: Color32::BLUE,
             code_bg: Color32::DARK_GRAY,
             bold_family: None,
+            bold_drop: 0.0,
+            pixels_per_point: 1.0,
             selection: sel,
             image_height: img,
             table_height: &|_| 90.0,
@@ -704,9 +754,9 @@ mod tests {
             });
             o.textures_delta.clear();
         }
-        // Rendered: reserved 90 pt row replaces four ~18 pt source rows.
+        // Rendered: reserved 90 pt row replaces four source rows of body leading (15 pt text).
         assert!(
-            (heights.0 - heights.1 - (90.0 - 4.0 * 18.0)).abs() < 12.0,
+            (heights.0 - heights.1 - (90.0 - 4.0 * 15.0 * BODY_LEADING)).abs() < 12.0,
             "{heights:?}"
         );
     }

@@ -854,6 +854,8 @@ fn measure(bytes: usize, typing_frames: usize) {
         accent: pal.link,
         code_bg: pal.code_bg,
         bold_family: None,
+        bold_drop: 0.0,
+        pixels_per_point: 1.0,
         selection: 0..0,
         image_height: &image_h,
         table_height: &table_h,

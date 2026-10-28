@@ -92,6 +92,45 @@ impl H {
 // --- Invoking, dismissing, empty and no-result states -----------------------------------------
 
 #[test]
+fn the_search_field_is_always_shown_and_an_empty_one_shows_the_tree() {
+    let (_d, _p, mut h) = H::open_search("search-permanent");
+    let hint = |h: &H| h.painted().texts.iter().any(|t| t.text == "search notes");
+    assert!(hint(&h), "the field is there before anything is pressed");
+    assert!(!h.searching_has_focus());
+    assert!(h.host.search_results().is_empty());
+    assert!(!h.host.rows().is_empty(), "the tree is what shows");
+    let first = h.host.rows()[0].title.clone();
+    h.text_in(&first, true);
+    // Ctrl+F only moves the keyboard to it; the tree stays until something is typed.
+    h.ctrl_f();
+    assert!(h.searching_has_focus());
+    h.text_in(&first, true);
+    assert!(hint(&h));
+    // Clicking the field with the mouse works as well, and typing there searches.
+    h.press(Key::Escape);
+    let at = h.text_in("search notes", true);
+    let p = Pos2::new(at.pos.x + 4.0, at.centre_y());
+    h.press_at(p);
+    h.release_at(p);
+    h.settle();
+    assert!(
+        h.searching_has_focus(),
+        "a click puts the keyboard in the field"
+    );
+    h.type_text("zebra");
+    assert_eq!(h.host.search_query(), "zebra");
+    assert!(h.host.search_open());
+    // Clearing the text brings the tree back, and the field stays.
+    for _ in 0..5 {
+        h.press(Key::Backspace);
+    }
+    h.settle();
+    assert!(h.host.search_results().is_empty());
+    h.text_in(&first, true);
+    assert!(hint(&h));
+}
+
+#[test]
 fn ctrl_f_opens_search_with_the_keyboard_and_escape_dismisses_it() {
     let (_d, _p, mut h) = H::open_search("search-invoke");
     assert!(!h.host.search_open());

@@ -41,7 +41,7 @@ and `XDG_DATA_DIRS`, using disposable notebooks:
 - launch with a notebook whose name has spaces and non-ASCII (`Poznámky č. 1 ✓.omatree`): opens, title
   and recent list correct, file bytes unchanged;
 - launch with no notebook: empty window;
-- search (`Ctrl+F`), Recovery (`Ctrl+Shift+R`), Compact Notebook (File menu, by mouse), File menu itself;
+- search (`Ctrl+F`), Recovery (`Ctrl+Shift+R`), Compact Notebook (the menu at the end of the command strip, by mouse), that menu itself;
 - native **Save As** through the xdg-desktop-portal GTK dialog (a name with `✓`), then **Cancel** with
   Escape (the app is unaffected);
 - **pasting a clipboard image** (`wl-copy`), saving, closing, reopening: the image is still there and the
@@ -144,7 +144,7 @@ association. It contains the same desktop entry, icons and MIME data.
 File dialogs go through the XDG desktop portal over D-Bus (`libdbus-1`, opened when the first dialog is
 requested; the toolkit's own dialogs are not used and no GTK or Qt is linked). The packages recommend
 `xdg-desktop-portal` and a backend; with none, or without a session bus, the dialog shows "Waiting for the
-system file dialog…" with **Type a path instead…** (verified for Open; Save As and Export use the same mechanism; the File menu also has **Open by path…**
+system file dialog…" with **Type a path instead…** (verified for Open; Save As and Export use the same mechanism; the menu also has **Open by path…**
 and **Save As by path…**) and the typed path works the same. `OMATREE_FILE_DIALOG=typed`
 forces typed dialogs. Known limits, carried to E12c: the native dialogs are not parented to the OmaTree
 window, and a portal that fails looks like a cancel in some cases.

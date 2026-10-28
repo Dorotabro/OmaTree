@@ -88,9 +88,9 @@ impl Host {
             ("Editor", "While you are editing a note", editor),
             (
                 "Search",
-                "Ctrl+F opens it from anywhere",
+                "The field at the top of the tree; Ctrl+F goes to it from anywhere",
                 vec![
-                    (key(&keymap::FIND), "Open Search"),
+                    (key(&keymap::FIND), "Go to the search field"),
                     ("Up / Down".to_owned(), "Choose a result"),
                     ("Page Up / Page Down".to_owned(), "Move a page of results"),
                     ("Enter".to_owned(), "Open the result"),

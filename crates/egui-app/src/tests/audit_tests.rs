@@ -229,13 +229,13 @@ fn the_tree_exposes_each_row_with_its_title_level_state_and_selection() {
     let sel = h.host.selected().unwrap();
     let title = &h.host.rows().iter().find(|r| r.id == sel).unwrap().title;
     assert_eq!(label(selected[0]), title.as_str());
-    // The File menu button and the note buttons have names.
+    // The notebook menu button and the note buttons have names.
     let names: Vec<&str> = nodes
         .iter()
         .filter(|n| n.role() == Role::Button)
         .map(|n| label(n))
         .collect();
-    for want in ["+ note", "+ child", "file"] {
+    for want in ["+ note", "+ child", "menu"] {
         assert!(names.contains(&want), "{names:?}");
     }
 }

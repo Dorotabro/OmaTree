@@ -45,7 +45,11 @@ const CTRL_SHIFT: Modifiers = Modifiers::COMMAND.plus(Modifiers::SHIFT);
 impl H {
     fn open_rec(name: &str) -> (crate::tests::TestDir, PathBuf, H) {
         let (d, p) = rec_nb(name);
-        let h = H::open_tree(&p);
+        let mut h = H::open_tree(&p);
+        // Wide enough that the centred dialog starts to the right of the tree pane, which the
+        // `text_in(.., false)` lookups take as "not in the tree".
+        h.screen = Vec2::new(1300.0, 700.0);
+        h.settle();
         (d, p, h)
     }
 
@@ -838,7 +842,7 @@ fn f1_lists_the_real_shortcuts_and_not_the_retired_ones() {
         (keymap::SAVE_AS, "Save As"),
         (keymap::NEW_NOTE, "New note"),
         (keymap::NEW_CHILD, "New child note"),
-        (keymap::FIND, "Open Search"),
+        (keymap::FIND, "Go to the search field"),
         (keymap::RECOVERY, "Recovery: Trash and checkpoints"),
         (keymap::HELP, "This reference"),
         (keymap::MOVE_UP, "Move the note up among its siblings"),

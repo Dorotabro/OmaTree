@@ -11,11 +11,11 @@
 //! for a short debounce. Nothing is scanned on a frame where none of these happened.
 
 use super::layout::{
-    BAR_H, GUTTER, PAD, RESULT_PAD_Y, RESULT_SUB_H, RESULT_SUB_PX, RESULT_TITLE_H, RESULT_TITLE_PX,
-    SEARCH_DEBOUNCE, SLOW_SCAN,
+    GUTTER, HEADER_H, RESULT_PAD_Y, RESULT_SUB_H, RESULT_SUB_PX, RESULT_TITLE_H, RESULT_TITLE_PX,
+    SEARCH_DEBOUNCE, SLOW_SCAN, SMALL_PX, TITLE_ROW_H, TITLE_TOP, UI_PX,
 };
 use super::*;
-use egui::{FontId, Pos2, Rect, Sense, Stroke, Vec2};
+use egui::{FontId, Pos2, Rect, Sense, Vec2};
 use omatree_core::search::{self, SearchResult};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -254,14 +254,18 @@ impl Host {
             self.search.keep_query = true;
             self.set_focus(Focus::Search);
         }
-        let frame = egui::Frame::NONE
-            .inner_margin(egui::Margin::symmetric(PAD as i8 + 2, 0))
-            .fill(theme::colour(self.theme.palette().surface));
+        let frame = egui::Frame::NONE.fill(theme::colour(self.theme.palette().surface));
+        if !self.search.query.trim().is_empty() {
+            self.search.open = true;
+        } else if !self.search.results.is_empty() || self.search.stale != Stale::No {
+            // The query was cleared by hand: the field stays, the old answer goes.
+            self.search.clear_results();
+        }
         let mut leave_to_tree = false;
         let mut chosen = false;
         egui::Panel::top("search-bar")
             .frame(frame)
-            .exact_size(BAR_H)
+            .exact_size(HEADER_H)
             .show_separator_line(false)
             .show(ui, |ui| {
                 if self.wants_focus(Focus::Search) {
@@ -309,74 +313,114 @@ impl Host {
                     }
                 }
                 let enabled = !self.dialog_open();
-                ui.add_enabled_ui(enabled, |ui| {
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 6.0;
-                        let prompt = if focused { ch.accent } else { ch.muted };
-                        ui.label(
-                            egui::RichText::new("/")
-                                .monospace()
-                                .size(15.0)
-                                .color(prompt),
-                        );
-                        let count = self.search.results.len();
-                        let count_text =
-                            (self.search.showing_results() && count > 0).then(|| count.to_string());
-                        let reserve = count_text.as_ref().map_or(0.0, |t| {
-                            ui.painter()
-                                .layout_no_wrap(t.clone(), FontId::proportional(12.5), ch.muted)
-                                .size()
-                                .x
-                                + 12.0
+                // The same distance from the top, the same row height and the same left axis as
+                // the note title, so the two read as one header across the window.
+                let panel = ui.max_rect();
+                let row = Rect::from_min_max(
+                    Pos2::new(panel.left() + GUTTER, panel.top() + TITLE_TOP),
+                    Pos2::new(
+                        panel.right() - GUTTER,
+                        panel.top() + TITLE_TOP + TITLE_ROW_H,
+                    ),
+                );
+                ui.scope_builder(
+                    egui::UiBuilder::new()
+                        .max_rect(row)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                    |ui| {
+                        ui.add_enabled_ui(enabled, |ui| {
+                            ui.with_layout(
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.set_height(TITLE_ROW_H);
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    let prompt = if focused { ch.accent } else { ch.muted };
+                                    ui.label(
+                                        egui::RichText::new("/")
+                                            .monospace()
+                                            .size(15.0)
+                                            .color(prompt),
+                                    );
+                                    let count = self.search.results.len();
+                                    let count_text = (self.search.showing_results() && count > 0)
+                                        .then(|| count.to_string());
+                                    let reserve = count_text.as_ref().map_or(0.0, |t| {
+                                        ui.painter()
+                                            .layout_no_wrap(
+                                                t.clone(),
+                                                FontId::proportional(SMALL_PX),
+                                                ch.muted,
+                                            )
+                                            .size()
+                                            .x
+                                            + 12.0
+                                    });
+                                    let resp = ui.add(
+                                        egui::TextEdit::singleline(&mut self.search.query)
+                                            .id(id)
+                                            .frame(egui::Frame::NONE)
+                                            .font(FontId::proportional(UI_PX))
+                                            .text_color(ch.text)
+                                            .hint_text(
+                                                egui::RichText::new("search notes")
+                                                    .size(UI_PX)
+                                                    .color(ch.muted),
+                                            )
+                                            .desired_width(
+                                                (ui.available_width() - reserve).max(20.0),
+                                            )
+                                            .align(egui::Align2::LEFT_CENTER)
+                                            .margin(egui::Margin::ZERO),
+                                    );
+                                    if let Some(text) = count_text {
+                                        // The number of results, also named for assistive technology.
+                                        let spoken = if count == 1 {
+                                            "1 result".to_owned()
+                                        } else {
+                                            format!("{count} results")
+                                        };
+                                        ui.add(egui::Label::new(
+                                            egui::RichText::new(text)
+                                                .size(SMALL_PX)
+                                                .color(ch.muted),
+                                        ))
+                                        .widget_info(
+                                            || {
+                                                egui::WidgetInfo::labeled(
+                                                    egui::Role::Label,
+                                                    true,
+                                                    spoken.as_str(),
+                                                )
+                                            },
+                                        );
+                                    }
+                                    if resp.has_focus() {
+                                        // Up, Down and Escape are this field's: egui must not use them to
+                                        // move the keyboard to another widget.
+                                        ctx.memory_mut(|m| {
+                                            m.set_focus_lock_filter(
+                                                id,
+                                                egui::EventFilter {
+                                                    horizontal_arrows: true,
+                                                    vertical_arrows: true,
+                                                    tab: false,
+                                                    escape: true,
+                                                },
+                                            );
+                                        });
+                                        self.focus_reached(Focus::Search);
+                                        self.search.seen_focus = true;
+                                        self.search.open = true;
+                                    }
+                                },
+                            );
                         });
-                        let resp = ui.add(
-                            egui::TextEdit::singleline(&mut self.search.query)
-                                .id(id)
-                                .frame(egui::Frame::NONE)
-                                .font(FontId::proportional(14.5))
-                                .text_color(ch.text)
-                                .hint_text(egui::RichText::new("search notes").color(ch.muted))
-                                .desired_width((ui.available_width() - reserve).max(20.0))
-                                .margin(egui::Margin::ZERO),
-                        );
-                        if let Some(text) = count_text {
-                            // The number of results, also named for assistive technology.
-                            let spoken = if count == 1 {
-                                "1 result".to_owned()
-                            } else {
-                                format!("{count} results")
-                            };
-                            ui.add(egui::Label::new(
-                                egui::RichText::new(text).size(12.5).color(ch.muted),
-                            ))
-                            .widget_info(|| {
-                                egui::WidgetInfo::labeled(egui::Role::Label, true, spoken.as_str())
-                            });
-                        }
-                        if resp.has_focus() {
-                            // Up, Down and Escape are this field's: egui must not use them to
-                            // move the keyboard to another widget.
-                            ctx.memory_mut(|m| {
-                                m.set_focus_lock_filter(
-                                    id,
-                                    egui::EventFilter {
-                                        horizontal_arrows: true,
-                                        vertical_arrows: true,
-                                        tab: false,
-                                        escape: true,
-                                    },
-                                );
-                            });
-                            self.focus_reached(Focus::Search);
-                            self.search.seen_focus = true;
-                        }
-                    });
-                });
-                // The rule under the field, quietly accent while it has the keyboard.
+                    },
+                );
+                // The rule under the field, quietly accent while it has the keyboard; on the
+                // same line as the title's rule.
                 let rule = if focused { ch.accent } else { ch.hairline };
-                let r = ui.max_rect().expand2(Vec2::new(PAD + 2.0, 0.0));
-                ui.painter()
-                    .hline(r.x_range(), r.bottom() - 0.5, Stroke::new(1.0, rule));
+                super::tree_ui::paint_inset_rule(ui, panel.top() + HEADER_H, rule);
             });
         if chosen && !leave_to_tree {
             // What was typed this frame counts: look again before choosing.
