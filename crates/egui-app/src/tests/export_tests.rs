@@ -602,8 +602,10 @@ fn a_failed_export_never_replaces_a_valid_existing_zip_and_the_notebook_file_is_
     assert_eq!(fs::read(&p).unwrap(), before);
 }
 
+#[cfg(unix)]
 #[test]
 fn an_unwritable_destination_fails_cleanly_and_a_retry_works() {
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     let (d, _p, mut h, _png, _jpg, _body) = rich_host("exp-readonly");
     let ro = d.join("ro");
@@ -965,6 +967,12 @@ fn write_export_gui_fixture() {
     rich(&dir.join("export.omatree"));
 }
 
+#[cfg(not(target_os = "linux"))]
+fn rss_kib() -> i64 {
+    0 // `/proc` is Linux-only
+}
+
+#[cfg(target_os = "linux")]
 fn rss_kib() -> i64 {
     fs::read_to_string("/proc/self/status")
         .unwrap()

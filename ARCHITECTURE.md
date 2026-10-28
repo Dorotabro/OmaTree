@@ -10,7 +10,7 @@ It is deliberately small and may evolve.
 > implementation**, which stays buildable and tested until the cut-over (ticket E13, the
 > maintainer's decision). The section "Target architecture (egui)" at the end describes the
 > **egui application, which is implemented** on Linux through ticket E12a; what remains is
-> packaging (E12b), cross-platform validation (E12c) and the cut-over itself.
+> the cut-over itself (E13). Packaging (E12b) and the cross-platform audit (E12c) are done; Windows and macOS remain unverified.
 
 ## Current implementation (Qt)
 
@@ -173,7 +173,8 @@ consumed as a Git dependency pinned to an exact commit (see the E4.1 record in
     omatree (Qt)     [legacy, implemented] the Qt application at the repository root; depends on
                      omatree-core; behaviour unchanged; still built and tested
     omatree-egui     [implemented on Linux] the egui application over core + editor; Windows and
-                     macOS are not yet verified (E12c); packaging is E12b
+                     macOS are **unverified** (E12c audited them: Windows type-checks for
+                     `x86_64-pc-windows-gnu`, nothing was run); Linux packages are E12b
 
 The standalone editor keeps a runnable demo binary built on the same library.
 
@@ -411,6 +412,13 @@ the note's editor has never had a caret. A doubled extension from the desktop po
 collapsed. AccessKit is enabled (`eframe` feature `accesskit`): the tree rows, the tree, the title
 field and the editor have roles and names. The window's launch size can be set with
 `OMATREE_WINDOW_SIZE=WxH` for diagnostics. See `docs/EGUI_MIGRATION_PLAN.md`, "E12a record".
+
+## Cross-platform audit (E12c)
+
+Platform differences live in small, tested seams: `recent.rs` (`Platform`, `config_base`: where the recent list is stored on Windows, macOS and elsewhere),
+`files.rs` (`Launcher`: native dialogs are built on the UI thread with the window as parent, then awaited in a thread), `startup.rs` (plain-language start-up failures, original text kept),
+`recovery_ui.rs` (local time with offset, UTC stored), and a Linux-only IME filter in `lib.rs`. Windows and macOS were compiled for (`x86_64-pc-windows-gnu`, type-check only) but never run;
+macOS Finder "Open With" needs an app-registered `NSApplicationDelegate` that does not exist yet. The record, checklists and matrix are in `docs/EGUI_MIGRATION_PLAN.md`, "E12c record".
 
 ## Linux distribution of the egui version (E12b)
 

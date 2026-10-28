@@ -5,6 +5,7 @@
 use super::files_tests::{notebook, recording, stamp, two};
 use super::*;
 use std::cell::RefCell;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::rc::Rc;
 use std::sync::mpsc;
@@ -609,6 +610,7 @@ fn closing_while_another_question_is_open_is_handled_by_what_that_question_is() 
     assert!(c.request_close(), "nothing to lose");
 }
 
+#[cfg(unix)]
 #[test]
 fn a_failing_save_keeps_the_window_for_close_new_and_open_alike() {
     for what in ["close", "new", "open"] {
@@ -694,6 +696,7 @@ fn recent_notebooks_keep_paths_only_and_follow_successful_opens() {
     assert_eq!(fs::read_to_string(&store).unwrap(), "");
 }
 
+#[cfg(unix)]
 #[test]
 fn a_missing_malformed_or_unwritable_recent_file_is_harmless() {
     let d = dir("hard-recent-bad");

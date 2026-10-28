@@ -94,9 +94,38 @@ impl RecoveryUi {
     }
 }
 
-/// `1970-01-01 00:00 UTC` for 0. The notebook stores UTC seconds and the standard library has no
-/// time zones, so the zone is named rather than guessed.
+/// `1970-01-01 00:00 UTC` for 0: the stored instant written as UTC. This is what is shown when the
+/// operating system's zone cannot be determined for that instant (see [`format_local`]).
 pub(crate) fn format_utc(secs: i64) -> String {
+    format!("{} UTC", civil(secs))
+}
+
+/// The instant as local time with its numeric offset, `2023-11-14 23:13 +01:00`, using the zone the
+/// operating system reports for *that instant* (so daylight saving is right on both sides of a
+/// change). The stored value is UTC seconds and is never altered; if the zone cannot be had (an
+/// instant outside the platform's range, no zone data) the UTC form is shown instead, still labelled.
+pub(crate) fn format_local(secs: i64) -> String {
+    use chrono::{Local, Offset, TimeZone};
+    match Local.timestamp_opt(secs, 0).single() {
+        Some(t) => format_at_offset(secs, t.offset().fix().local_minus_utc()),
+        None => format_utc(secs),
+    }
+}
+
+/// `secs` (UTC) shown at `offset_secs` east of UTC, labelled with that offset.
+pub(crate) fn format_at_offset(secs: i64, offset_secs: i32) -> String {
+    let sign = if offset_secs < 0 { '-' } else { '+' };
+    let o = offset_secs.unsigned_abs();
+    format!(
+        "{} {sign}{:02}:{:02}",
+        civil(secs + i64::from(offset_secs)),
+        o / 3600,
+        o % 3600 / 60
+    )
+}
+
+/// `YYYY-MM-DD HH:MM` of `secs` counted from 1970-01-01 00:00 (a civil calendar date, proleptic Gregorian).
+fn civil(secs: i64) -> String {
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);
     let (hour, minute) = (rem / 3600, rem % 3600 / 60);
@@ -109,7 +138,7 @@ pub(crate) fn format_utc(secs: i64) -> String {
     let day = doy - (153 * mp + 2) / 5 + 1;
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = yoe + era * 400 + i64::from(month <= 2);
-    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02} UTC")
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
 }
 
 fn hash_of(text: &str) -> u64 {
@@ -220,7 +249,7 @@ impl Host {
                         Line {
                             text: format!(
                                 "Deleted {} \u{b7} {}",
-                                format_utc(e.deleted_at()),
+                                format_local(e.deleted_at()),
                                 notes(e.node_count())
                             ),
                             tone: Tone::Secondary,
@@ -237,7 +266,7 @@ impl Host {
             .map(|c| Row {
                 title: c.reason().to_owned(),
                 lines: vec![Line {
-                    text: format_utc(c.created_at()),
+                    text: format_local(c.created_at()),
                     tone: Tone::Secondary,
                 }],
             })
@@ -426,7 +455,7 @@ impl Host {
                     ui.label(format!(
                         "The whole notebook will be replaced with the checkpoint \u{201c}{reason}\u{201d} \
                          from {}.",
-                        format_utc(when)
+                        format_local(when)
                     ));
                     ui.label(
                         egui::RichText::new(

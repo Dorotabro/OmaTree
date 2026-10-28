@@ -22,6 +22,7 @@ mod recent;
 mod recovery_ui;
 mod reload;
 mod search;
+mod startup;
 mod store;
 mod theme;
 mod tree;
@@ -32,6 +33,8 @@ mod tree_ui;
 /// string. It differs from the Qt application's `io.github.Dorotabro.OmaTree` only while both are
 /// installable side by side; E13 renames it (docs/EGUI_MIGRATION_PLAN.md, "E12b implementation record").
 pub const APP_ID: &str = "io.github.Dorotabro.OmaTreeEgui";
+
+pub use startup::{explain as explain_startup_failure, report as startup_failure_report};
 
 /// The 256 px application icon, embedded so the window icon needs no file at run time. (Wayland
 /// ignores window icons and takes the icon from the desktop file that matches [`APP_ID`]; X11
@@ -358,6 +361,11 @@ impl Host {
     /// tree is "Notes" (a tree), the title field "Note title" and the Markdown editor "Note text".
     /// The nodes exist only while the control is on screen; this changes nothing visible.
     fn name_controls_for_assistive_technology(&self, ctx: &egui::Context) {
+        // The window itself: egui gives the root node no name, so a screen reader announced an
+        // unnamed window. It is the title bar text, which is rewritten from the live notebook name.
+        ctx.accesskit_node_builder(egui::accesskit_root_id(), |node| {
+            node.set_label(self.title.as_str());
+        });
         ctx.accesskit_node_builder(Host::tree_id(), |node| {
             node.set_role(egui::accesskit::Role::Tree);
             node.set_label("Notes");
@@ -381,7 +389,20 @@ impl Host {
     /// of a core, with nothing moving). An empty pre-edit while no composition is in progress
     /// clears nothing, so it is dropped; real composition (a non-empty pre-edit, its commit, or
     /// the empty pre-edit that cancels it) is passed through untouched.
+    ///
+    /// Applied on Linux only (E12c): the loop was measured and traced on Linux text-input-v3, and
+    /// Windows and macOS input methods have not been observed, so there egui and winit's events pass
+    /// through exactly as they arrive. Where it does apply it can only ever suppress the empty
+    /// "nothing is being composed" event: a stuck `composing` flag (focus lost mid-composition) merely
+    /// lets idle empty events through again.
     pub fn filter_input(&mut self, raw: &mut egui::RawInput) {
+        if cfg!(target_os = "linux") {
+            self.drop_idle_preedit(raw);
+        }
+    }
+
+    /// The filter itself, on every platform so that it is testable everywhere.
+    pub(crate) fn drop_idle_preedit(&mut self, raw: &mut egui::RawInput) {
         use egui::{Event, ImeEvent};
         let composing = &mut self.composing;
         raw.events.retain(|e| match e {
@@ -742,6 +763,8 @@ fn file_name(path: &Path) -> String {
 /// The eframe application: a [`Host`] plus window set-up.
 pub struct App {
     host: Host,
+    /// Starts the native file dialogs the host asks for, as children of this window.
+    dialogs: files::Launcher,
 }
 
 impl App {
@@ -750,10 +773,16 @@ impl App {
         host.set_bold(omatree_editor::fonts::install_bold(&cc.egui_ctx));
         host.follow_omarchy(omatree_core::theme::default_omarchy_colors_path());
         host.theme.update(&cc.egui_ctx);
-        host.set_picker(files::default_picker());
+        let dialogs = match files::default_picker() {
+            Some((picker, launcher)) => {
+                host.set_picker(Some(picker));
+                launcher
+            }
+            None => files::Launcher::default(),
+        };
         host.set_recent_file(recent::default_file());
         host.start_with_args(&cc.egui_ctx, &args);
-        App { host }
+        App { host, dialogs }
     }
 }
 
@@ -766,8 +795,10 @@ impl eframe::App for App {
         self.host.logic(ctx);
     }
 
-    fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, root: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.host.ui(root);
+        // Dialogs the frame asked for open now, with this window as their parent.
+        self.dialogs.launch(Some(&*frame));
     }
 }
 

@@ -50,13 +50,17 @@ files (each distinct text once, with the crates it came from).
    maintainer's own code, so it is presumably under the same terms as OmaTree, but no file says so;
    the maintainer should add a licence to that repository (a new pin, outside E12b). Nothing is
    assumed in the package.
-2. Seventeen crates declare a licence expression but ship no licence file inside the published crate
-   (the egui family: `egui`, `eframe`, `epaint`, `emath`, `ecolor`, `egui-winit`, `egui_glow`,
+2. Sixteen crates declare a licence expression but ship no licence file inside the published crate (the
+   egui family: `egui`, `eframe`, `epaint`, `emath`, `ecolor`, `egui-winit`, `egui_glow`,
    `egui_system_font_provider`; the `accesskit` family: `accesskit`, `accesskit_consumer`,
-   `accesskit_atspi_common`, `accesskit_unix`, `accesskit_winit`; `krilla`, `profiling`,
-   `gl_generator`, `khronos_api`). Their upstream repositories carry the files. The bundle lists
-   them with a marker; the MIT/Apache-2.0 texts are present in it from other crates, but those
-   crates' own copyright lines are not, and should be added from upstream before a public release.
+   `accesskit_atspi_common`, `accesskit_unix`, `accesskit_winit`; `krilla`, `profiling`, `gl_generator`,
+   `khronos_api`). **Status after E12c: notice material supplied.** The upstream repositories' own licence
+   texts were copied unmodified into `packaging/egui/licences/` (provenance, refs and hashes-by-source in
+   `SOURCES.md`) and are included in `third-party-licenses.txt`, marked as upstream copies. For egui (tag
+   `0.37.0`, the locked version) and accesskit (tag `accesskit-v0.25.1`) the ref is the release; for
+   `krilla`, `profiling` and `gl-rs` no matching tag was found, so the default branch's text was used and
+   its copyright line may differ from the published crate's. AccessKit's MIT file carries no copyright
+   line upstream either. This is attribution material, not a legal conclusion.
 
 The crates directly depended on by `omatree-egui` that matter most: `eframe`/`egui` 0.37 (UI, with
 the `accesskit` feature added in E12a: AccessKit, AT-SPI through `zbus`/`atspi`), `omatree_editor`
@@ -65,7 +69,7 @@ no GTK), `image` 0.25 (JPEG), `rusqlite` 0.40 (via `omatree-core`), `krilla` and
 export, via `omatree-core`).
 
 <!-- BEGIN GENERATED: egui-crates -->
-299 crates are compiled into `omatree-egui` (excluding `omatree-egui` and `omatree-core`, which are OmaTree's own); 4 are direct dependencies (**bold**).
+301 crates are compiled into `omatree-egui` (excluding `omatree-egui` and `omatree-core`, which are OmaTree's own); 6 are direct dependencies (**bold**).
 
 | Crate | Version | License expression | Source |
 |---|---|---|---|
@@ -109,6 +113,7 @@ export, via `omatree-core`).
 | cc | 1.5.1 | MIT OR Apache-2.0 | crates.io |
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 | crates.io |
 | cfg_aliases | 0.2.2 | MIT | crates.io |
+| **chrono** | 0.4.45 | MIT OR Apache-2.0 | crates.io |
 | color | 0.3.3 | Apache-2.0 OR MIT | crates.io |
 | color_quant | 1.1.0 | MIT | crates.io |
 | concurrent-queue | 2.5.0 | Apache-2.0 OR MIT | crates.io |
@@ -178,6 +183,7 @@ export, via `omatree-core`).
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 | crates.io |
 | hashlink | 0.12.2 | MIT OR Apache-2.0 | crates.io |
 | hex | 0.4.3 | MIT OR Apache-2.0 | crates.io |
+| iana-time-zone | 0.1.65 | MIT OR Apache-2.0 | crates.io |
 | icu_collections | 2.4.0 | Unicode-3.0 | crates.io |
 | icu_locale_core | 2.4.0 | Unicode-3.0 | crates.io |
 | icu_normalizer | 2.4.0 | Unicode-3.0 | crates.io |
@@ -250,7 +256,7 @@ export, via `omatree-core`).
 | quick-error | 2.0.1 | MIT/Apache-2.0 | crates.io |
 | quick-xml | 0.41.0 | MIT | crates.io |
 | quote | 1.0.47 | MIT OR Apache-2.0 | crates.io |
-| raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib | crates.io |
+| **raw-window-handle** | 0.6.2 | MIT OR Apache-2.0 OR Zlib | crates.io |
 | read-fonts | 0.39.2 | MIT OR Apache-2.0 | crates.io |
 | read-fonts | 0.41.0 | MIT OR Apache-2.0 | crates.io |
 | **rfd** | 0.17.2 | MIT | crates.io |

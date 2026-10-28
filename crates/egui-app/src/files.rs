@@ -17,6 +17,8 @@
 
 use super::lifecycle::{dialog_buttons, dialog_frame, dialog_heading, dialog_open};
 use super::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::mpsc;
 
 /// What is waiting for the unsaved-changes question to be answered.
@@ -59,42 +61,107 @@ pub type PickResult = Option<PathBuf>;
 /// Starts a file dialog and returns the channel its answer arrives on. It must not block.
 pub type Picker = Box<dyn FnMut(&PickRequest, &egui::Context) -> mpsc::Receiver<PickResult>>;
 
-/// The system file dialog on its own thread (xdg-desktop-portal on Wayland, as `rfd` chooses).
-pub fn native_picker() -> Picker {
-    Box::new(|req, ctx| {
-        let (tx, rx) = mpsc::channel();
-        let (req, ctx) = (req.clone(), ctx.clone());
-        std::thread::spawn(move || {
-            let mut dialog = rfd::FileDialog::new();
-            if let Some(dir) = &req.dir {
-                dialog = dialog.set_directory(dir);
+/// What a dialog can be parented to: any window `rfd` accepts (eframe's `Frame` is one).
+pub trait Parent: raw_window_handle::HasWindowHandle + raw_window_handle::HasDisplayHandle {}
+impl<T: raw_window_handle::HasWindowHandle + raw_window_handle::HasDisplayHandle + ?Sized> Parent
+    for T
+{
+}
+
+/// A dialog asked for by the native picker and not yet started.
+struct Queued {
+    req: PickRequest,
+    tx: mpsc::Sender<PickResult>,
+    ctx: egui::Context,
+}
+
+/// Starts the dialogs that the native picker has queued, as children of the application window.
+///
+/// The picker runs inside `Host`, which has no window handle; the handle lives in eframe's `Frame`,
+/// which exists only inside `App::ui`. So the picker only queues the request (and hands out the
+/// channel its answer will come on, exactly as before) and `App::ui` calls [`Launcher::launch`] with
+/// the `Frame` right after the frame's work. `launch` builds each dialog *on the UI thread* with
+/// `set_parent(frame)` (a safe borrow, no raw handle is kept or converted back) and only then hands
+/// the finished dialog to a thread to wait for the answer, which `rfd` supports (`FileDialog` is
+/// `Send`). Asking, cancelling, the typed-path fallback and every guard are untouched: this only
+/// decides which window the dialog belongs to.
+#[derive(Clone, Default)]
+pub struct Launcher {
+    queue: Rc<RefCell<Vec<Queued>>>,
+}
+
+impl Launcher {
+    /// Starts every queued dialog, parented to `parent` when there is one. Does not block.
+    pub fn launch(&self, parent: Option<&dyn Parent>) {
+        let queued: Vec<Queued> = self.queue.borrow_mut().drain(..).collect();
+        for Queued { req, tx, ctx } in queued {
+            let dialog = build_dialog(&req, parent);
+            std::thread::spawn(move || {
+                let _ = tx.send(dialog());
+                ctx.request_repaint();
+            });
+        }
+    }
+
+    /// How many dialogs are waiting to be started (for tests).
+    pub fn queued(&self) -> usize {
+        self.queue.borrow().len()
+    }
+}
+
+/// The dialog for `req`, built here (so that the parent is borrowed on the calling thread) and
+/// run, blocking, by whoever calls the returned function.
+fn build_dialog(
+    req: &PickRequest,
+    parent: Option<&dyn Parent>,
+) -> Box<dyn FnOnce() -> PickResult + Send> {
+    let mut dialog = rfd::FileDialog::new();
+    if let Some(parent) = parent {
+        dialog = dialog.set_parent(parent);
+    }
+    if let Some(dir) = &req.dir {
+        dialog = dialog.set_directory(dir);
+    }
+    let notebooks = |d: rfd::FileDialog| {
+        d.add_filter("OmaTree notebooks", &["omatree"])
+            .add_filter("All files", &["*"])
+    };
+    let (kind, name) = (req.kind, req.name.clone());
+    Box::new(move || match kind {
+        PickKind::Open => notebooks(dialog).set_title("Open notebook").pick_file(),
+        PickKind::Save { .. } => notebooks(dialog)
+            .set_title("Save notebook as")
+            .set_file_name(&name)
+            .save_file(),
+        PickKind::Export(note_export::ExportFormat::Folder) => dialog
+            .set_title("Choose where to create the export folder")
+            .pick_folder(),
+        PickKind::Export(f) => {
+            let mut d = dialog.set_title("Export note").set_file_name(&name);
+            if let Some(ext) = f.extension() {
+                d = d.add_filter(f.label(), &[ext]);
             }
-            let notebooks = |d: rfd::FileDialog| {
-                d.add_filter("OmaTree notebooks", &["omatree"])
-                    .add_filter("All files", &["*"])
-            };
-            let picked = match req.kind {
-                PickKind::Open => notebooks(dialog).set_title("Open notebook").pick_file(),
-                PickKind::Save { .. } => notebooks(dialog)
-                    .set_title("Save notebook as")
-                    .set_file_name(&req.name)
-                    .save_file(),
-                PickKind::Export(note_export::ExportFormat::Folder) => dialog
-                    .set_title("Choose where to create the export folder")
-                    .pick_folder(),
-                PickKind::Export(f) => {
-                    let mut d = dialog.set_title("Export note").set_file_name(&req.name);
-                    if let Some(ext) = f.extension() {
-                        d = d.add_filter(f.label(), &[ext]);
-                    }
-                    d.save_file()
-                }
-            };
-            let _ = tx.send(picked);
-            ctx.request_repaint();
+            d.save_file()
+        }
+    })
+}
+
+/// The system file dialog (xdg-desktop-portal on Linux, as `rfd` chooses), and the [`Launcher`] that
+/// starts it as a child of the window. The picker returns at once; nothing is shown until
+/// `Launcher::launch` runs.
+pub fn native_picker() -> (Picker, Launcher) {
+    let launcher = Launcher::default();
+    let queue = launcher.queue.clone();
+    let picker: Picker = Box::new(move |req, ctx| {
+        let (tx, rx) = mpsc::channel();
+        queue.borrow_mut().push(Queued {
+            req: req.clone(),
+            tx,
+            ctx: ctx.clone(),
         });
         rx
-    })
+    });
+    (picker, launcher)
 }
 
 /// A picker that answers from a list, in order (and cancels when it runs out): for tests.
@@ -109,7 +176,7 @@ pub fn scripted_picker(answers: Vec<PickResult>) -> Picker {
 }
 
 /// The picker the application uses: native, unless typed dialogs are asked for.
-pub fn default_picker() -> Option<Picker> {
+pub fn default_picker() -> Option<(Picker, Launcher)> {
     match std::env::var("OMATREE_FILE_DIALOG").as_deref() {
         Ok("typed") => None,
         _ => Some(native_picker()),

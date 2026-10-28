@@ -541,8 +541,10 @@ fn trash_checkpoint_save_as_and_reload_all_keep_and_show_the_original_image() {
     assert_eq!(textures(&h).len(), 1);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_failed_or_conflicting_save_keeps_the_pending_image_and_nothing_is_lost() {
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     let d = dir("img-failed-save");
     let p = d.join("n.omatree");
@@ -775,6 +777,12 @@ fn write_gui_fixtures() {
         .unwrap();
 }
 
+#[cfg(not(target_os = "linux"))]
+fn rss_kib() -> i64 {
+    0 // `/proc` is Linux-only
+}
+
+#[cfg(target_os = "linux")]
 fn rss_kib() -> i64 {
     fs::read_to_string("/proc/self/status")
         .unwrap()

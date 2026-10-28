@@ -197,7 +197,7 @@ is built in the Ubuntu 20.04 container (pinned by digest) and not on the host.
 
 ## Third-party licences
 
-`THIRD_PARTY.md` has an egui section with a table generated from the resolved dependency graph (299 crates,
+`THIRD_PARTY.md` has an egui section with a table generated from the resolved dependency graph (301 crates,
 direct ones in bold) and the licensing decisions; `packaging/egui/third-party.py` generates it and
 `verify-sources.sh` fails if it is stale. Every package ships `THIRD_PARTY.md` and
 `third-party-licenses.txt` (every crate's licence and notice files from its own source, each distinct text
@@ -206,9 +206,11 @@ once). The compiled fonts' licences (SIL OFL-1.1, Ubuntu Font Licence) are in it
 Two things need the maintainer, and are flagged, not resolved, in `THIRD_PARTY.md`:
 
 1. the pinned **editor library has no licence metadata and no licence file**;
-2. seventeen crates (egui, eframe and their family, accesskit and its family, a few others) declare a licence
-   but do not ship the licence file inside the published crate, so their own copyright lines are not in the
-   bundle.
+2. sixteen crates (egui, eframe and their family, accesskit and its family, a few others) declare a licence
+   but do not ship the licence file inside the published crate. E12c copied the upstream licence texts
+   (`packaging/egui/licences/`, with `SOURCES.md` giving repository, tag or branch) and the bundle includes them
+   marked as upstream copies. That supplies the notice text; it does not make their copyright lines
+   crate-authoritative, and some of the sources are branch references (krilla, profiling, gl-rs), not tags.
 
 ## Building
 
@@ -288,15 +290,18 @@ re-verified; they were built once.
 ## Known limitations and E12c handoff
 
 - **Private editor repository** (above): blocks any build without credentials and any public release.
-- **Licence of the editor library, and 17 crates' own licence files** (above): maintainer action.
+- **Licence of the editor library** (above): maintainer action. The sixteen crates' notices are supplied (E12c).
 - **No `namcap` run** (not installed); the Arch package is otherwise verified. No man page (lintian warning).
 - **Debian 12 / Ubuntu 22.04**: the `.deb` is refused (glibc ≥ 2.39 needed). Build the `.deb` in an older
   container if those are wanted; the AppImage covers them.
-- **Not tried**: native X11, hi-DPI, a screen reader, Fedora/openSUSE/other glibc distributions, AppImage on
+- **Not tried**: a screen reader, a real input method, a physical Hi-DPI monitor, Fedora/openSUSE/other glibc distributions, AppImage on
   Wayland, `appimaged`/AppImageLauncher integration, update information in the AppImage.
 - **No single-instance IPC**: opening a second notebook from the file manager starts a second process.
-- **Start-up errors for missing libraries** are the toolkit's text, not a plain-language message.
-- **Unparented native dialogs; portal failure shown as a cancel; recovery timestamps in UTC** (E12a items).
-- **Windows and macOS** are not covered here at all; E12c.
+- **Start-up errors** (E12c): no display, no Wayland library and no X11 library each print a plain sentence, then the
+  toolkit's full text under `Details:`, exit status 1. Other failures (for example GL) still show only the toolkit's text.
+- **Native dialogs are parented** (E12c: wire-level `parent_window` `wayland:<handle>` / `x11:<xid>` seen on the portal
+  call). A missing portal is still shown as a cancel (rfd returns `None` for both). **Recovery timestamps** are local time
+  with the offset (`+01:00`); stored values stay UTC.
+- **Windows and macOS** packaging is not implemented; see `docs/EGUI_MIGRATION_PLAN.md`, "E12c record", for the checklists.
 - **Release signing/checksums**: no `SHA256SUMS` for the egui packages beyond the local
   `dist/SHA256SUMS-egui-arch`; the Qt release flow was deliberately not extended.

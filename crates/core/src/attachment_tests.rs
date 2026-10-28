@@ -39,6 +39,7 @@ impl Dir {
 
 impl Drop for Dir {
     fn drop(&mut self) {
+        #[cfg(unix)]
         let _ =
             std::fs::set_permissions(&self.0, std::os::unix::fs::PermissionsExt::from_mode(0o755));
         let _ = std::fs::remove_dir_all(&self.0);
@@ -652,6 +653,7 @@ fn save_as_keeps_attachments_that_only_trash_or_a_checkpoint_references_and_orph
     assert_eq!(stored(&target).len(), 3);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_failed_save_as_leaves_source_destination_and_pending_data_safe() {
     let d = Dir::new();
@@ -910,6 +912,7 @@ fn unsaved_images_are_capped_in_total_and_a_refusal_changes_nothing() {
     assert_eq!(doc.attachment(&b).unwrap(), big);
 }
 
+#[cfg(unix)]
 #[test]
 fn the_budget_is_released_by_a_committed_save_and_kept_by_a_failed_one() {
     use crate::attachments::fixtures::png_of_len;

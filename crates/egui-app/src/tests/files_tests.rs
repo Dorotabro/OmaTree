@@ -6,6 +6,7 @@
 use super::tree_tests::shape;
 use super::*;
 use std::cell::RefCell;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::rc::Rc;
 use std::time::SystemTime;
@@ -474,6 +475,7 @@ fn opening_an_invalid_file_leaves_the_current_notebook_exactly_as_it_was() {
 
 // --- Failures during replacement -------------------------------------------------------------------
 
+#[cfg(unix)]
 #[test]
 fn a_failing_save_keeps_the_notebook_and_the_question_until_it_works() {
     let (d, a, b) = two("files-save-fails");

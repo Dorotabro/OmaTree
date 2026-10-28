@@ -1062,10 +1062,12 @@ fn lock_contention_makes_reclaiming_fail_cleanly_and_a_retry_succeeds() {
     assert!(r.ran && r.size_after < r.size_before);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_reclaim_that_cannot_write_leaves_a_valid_readable_notebook() {
     // The directory refuses new files (the rollback journal cannot be created), as a full or
     // read-only disk would.
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     let d = Dir::new();
     let p = d.join("n.omatree");

@@ -1242,6 +1242,118 @@ E12b builds and verifies Linux packages of the egui version. Qt, its packaging, 
 
 **Validation.** `cargo fmt --all -- --check` clean; `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo test --workspace` passes (Qt 43, core 357 plus 4 ignored, egui 306 plus 15 ignored: four new tests in `packaging_tests.rs`); `cargo build --release --workspace` succeeds; the eight ignored performance and probe tests pass in release, while the seven ignored `write_*_gui_fixture` generators fail by design without `OMATREE_GUI_FIXTURE`; `tools/pre-e9-compat.sh` passes (v3 opens, v4 and v4-pruned refused, files unchanged); `packaging/egui/tests/verify-sources.sh` passes, with negative controls (a broken `StartupWMClass` and `Exec` fail both the Rust test and the script, then restored). The Qt/QML scenarios are among the 43 Qt tests.
 
+### E12c record (cross-platform readiness and release audit)
+
+E12c audits Windows, macOS and the remaining Linux gaps, fixes the portability defects it could demonstrate, and
+prepares the E13 hand-off. Qt, the schema, the pinned editor (`30a95dd…`), the application identity and the default
+build are untouched. Nothing was committed, tagged, pushed, published or installed into the real system; no real notebook
+was used. **Compiling for a platform is not evidence that it works**: no Windows or macOS machine was available, so
+both are **Unverified at runtime**.
+
+**Baseline.** Clean tree at `8eb26fb`; pin intact; fmt, clippy `-D warnings`, workspace tests, release build,
+`tools/pre-e9-compat.sh` and `packaging/egui/tests/verify-sources.sh` all passed before any change.
+*Confirmed defects* (reproduced or shown by a test): (1) on Windows the recent-notebook list was never saved (it looked only
+at `HOME`/`XDG_CONFIG_HOME`); (2) the test suites would not compile for Windows (Unix permissions, `/proc`); (3) dialogs had
+no parent window (the portal call carried `parent_window ""`); (4) the window had no accessible name; (5) Recovery
+timestamps were UTC without saying so to a local user; (6) start-up failures printed only the toolkit's text. *Hypothetical
+risks* (source reading only, not implemented): see macOS and Windows below.
+
+**Fixes.**
+- `recent.rs`: per-platform config base (`XDG_CONFIG_HOME` first; Windows `%APPDATA%`; macOS `~/Library/Application Support`;
+  else `~/.config`), and the `\\?\` prefix `canonicalize` adds on Windows is removed for drive paths. Tested with injected environments.
+- Tests: Unix-only helpers gated with `cfg(unix)`; `/proc` readers real on Linux and a neutral fallback elsewhere.
+  The test targets of `omatree-core` and `omatree-egui` type-check for `x86_64-pc-windows-gnu`.
+- `files.rs`: native dialogs are built on the UI thread with `set_parent` (rfd features `wayland`, no `unsafe`), then waited on
+  in a thread as before; typed fallback, cancel, overwrite and replace guards unchanged. Wire level (portal call, native
+  Wayland): `wayland:<handle>`; under Xwayland: `x11:<xid>`; before the change: `""`. Selecting a file through the dialog opened it.
+  A missing portal is still shown as a cancel because `rfd` returns `None` for both.
+- `lib.rs`: the root accessibility node is labelled with the window title (AT-SPI: `frame 'nb.omatree - OmaTree'`); the IME
+  pre-edit filter is applied on Linux only (`drop_idle_preedit`); other platforms keep egui's input as delivered.
+- `startup.rs`/`main.rs`: plain sentences for the three reproduced failures (no display, no Wayland library, no X11 library);
+  the full original text follows under `Details:`; exit status stays 1. No rule exists for GL failures (not reproduced).
+- `recovery_ui.rs`: Recovery timestamps show local time with the UTC offset valid for that instant (`2025-03-31 14:05 +02:00`),
+  falling back to the old UTC text when the zone is unknown. Stored values are unchanged. `chrono` (feature `clock` only) and
+  `iana-time-zone` were added (two new crates; `THIRD_PARTY.md` regenerated: 301 crates). DST is tested on both sides of
+  both transitions in a child process with `TZ=Europe/Prague`; the test fails against a "current offset" implementation.
+- Licences: the upstream licence texts for the sixteen crates that ship none are in `packaging/egui/licences/` (with `SOURCES.md`) and in the bundle.
+- New probes: `packaging/egui/tests/{cross-check,atspi-probe,portal-parent-probe,hidpi-probe,xkb-input-probe}.sh`.
+
+**Evidence, by kind.**
+- *Native (this Wayland desktop, release binary):* real mouse drag re-parented a note and persisted it; dialog parent
+  identifiers as above; accessibility tree on an **isolated private bus** (the user's session flag untouched) including the window
+  name and a non-BMP title: `character_count 5`, `get_text` for `(0,5)`, `(0,-1)` and `(4,5)` of "Kůň 🦀" were all correct. E12a's non-BMP failure was
+  **not reproduced** (cause unknown; the old probe is the suspect).
+- *Container (Arch, Xvfb, scripted):* X11 scale factors 1, 1.5, 2 give windows of 1000×700, 1500×1050, 2000×1400 px with text and panels scaled (screenshots
+  inspected); dead keys (`áêšö`), Compose (`é`, `ǒ`, `ß`), keysym-typed Czech/Nordic/German text and a `cz` layout were typed
+  into the note, saved and read back from SQLite. An earlier run in Debian 13 was **invalid** (the Arch-built binary needs glibc ≥ 2.43), as was an
+  overnight hang (a bare `wait` also waited for Xvfb); both probes are fixed and the results above come from the fixed ones.
+- *Cross-compile (container):* `omatree-core` and `omatree-egui`, including test targets, type-check for `x86_64-pc-windows-gnu` (MinGW, **not** MSVC).
+  `x86_64-pc-windows-msvc` and `aarch64-apple-darwin` fail in the `libsqlite3-sys` build script (no MSVC/Apple C toolchain): **Blocked**, no verdict.
+- *Not possible here:* a real IME with pre-edit (fcitx5 has only a US keyboard; installing engines would change the desktop), Orca/any screen reader,
+  a physical Hi-DPI monitor or fractional Wayland scale (would mean changing the user's monitor configuration), native X11 other than Xvfb,
+  any Windows or macOS runtime.
+
+**Windows (Unverified at runtime).** Likely-fine by reading code: `rfd` uses the native file dialogs; `arboard`/egui clipboard; Ctrl shortcuts;
+SQLite locking is whole-file and the app holds one connection (Save As replaces content transactionally, no file rename, so an open handle does
+not block it). *Gaps, not implemented because untestable here:* eframe sets no AppUserModelID (Qt does, `cpp/app_identity.cpp`), so taskbar pinning/grouping
+needs one; the Qt installer (`packaging/windows/OmaTree.iss`: ProgID, `.omatree` association) has no egui counterpart; winit 0.30 handles `WM_CLOSE`
+(→ the guarded close) but not `WM_QUERYENDSESSION`, so logoff/shutdown while dirty relies on autosave. *Runtime checklist (run on a Windows 10/11 x64
+machine with a throw-away notebook; mark each pass/fail):* start; window title and icon; New/Open/Save As dialogs
+(parented, cancel, Czech path with spaces and a non-BMP name, overwrite prompt, `.omatree` appended); open from the command line with such a path;
+copy/paste text and an image (undo/redo); Ctrl+S/N/O/F/Z/Y; IME (Microsoft Japanese/Chinese pre-edit, accent dead keys); Save As over a notebook opened
+elsewhere; close with unsaved edits (guard shown, Cancel keeps the window); logoff with unsaved edits (record what autosave kept); recent list persists in `%APPDATA%\omatree\`; temp files removed;
+export to Markdown/ZIP/PDF to a path with spaces; high-DPI 150 %/200 %; Narrator reads the window name and tree; ARM64: repeat on a Windows-on-ARM device.
+
+**macOS (Unverified at runtime).** `winit` 0.30 delivers **no** Open Document event and "guarantees it will not register an application delegate", so a
+Finder "Open With" or a double-click on a running instance **cannot reach `Host::request_open_path`** (the guarded entry exists); it needs the app to register its own `NSApplicationDelegate`
+(`application:openURLs:`, via `objc2`). A first launch from Finder also hands the path over by Apple Event, not `argv`. This was **not implemented** (no speculative Apple Event/IPC code, ticket rule); it is the main macOS blocker for E13 parity with Qt's `cpp/file_open.cpp`.
+*Hypothesis from the winit source, unverified:* the default menu's Quit is `terminate:` and may bypass the `CloseRequested` unsaved-changes guard (autosave limits exposure). Dock icon, bundle identity (`Info.plist`, `CFBundleDocumentTypes`), signing/notarisation, Cmd shortcuts, Retina, Apple Silicon/Intel and VoiceOver are all not implemented or untested.
+*Runtime checklist (Apple Silicon and Intel, throw-away notebook):* app bundle starts and shows icon; Cmd+N/O/S/Z/Shift+Z/F/V/C/X and Cmd+Q with unsaved edits (record whether the guard appears); Cmd+W; native dialogs as sheets or windows, cancel, overwrite; Finder double-click on a `.omatree` while the app is **closed** and **running** (record which path opens); drag a file onto the Dock icon; copy/paste text and image; IME (Kotoeri/Pinyin pre-edit, accent popup via press-and-hold); Retina rendering; VoiceOver reads window name/tree/editor; SQLite file on APFS and on an external volume.
+*Qt comparison:* Qt handles `QFileOpenEvent` and Cmd shortcuts in shims; the egui version has the shortcuts through egui's modifier handling (command = Cmd) but not the open event.
+
+**Linux gaps.** Native X11: only Xvfb, so partial. XWayland: verified on this desktop (window, dialog parent). Hi-DPI: X11 scale probe only. Real IME: not verified;
+the Linux pre-edit filter is covered by unit tests. Dead keys/Compose/layouts: verified on X11 in a container (not Wayland's text-input path). Orca: not verified.
+Real mouse drag: verified on Wayland. Dialog parenting: verified at the portal call; a missing portal is a cancel (API limit).
+
+**Licensing and distribution classification** (1 resolved with evidence, 2 needs notice material, 3 needs maintainer decision, 4 unresolved and blocks public distribution):
+| Issue | Class | Note |
+|---|---|---|
+| Notices for sixteen crates whose published packages lack licence files | 1/2 | Upstream copies bundled with `SOURCES.md`; caveat: branch references for krilla/profiling/gl-rs; provenance a maintainer may want to re-check |
+| Fonts compiled into egui (OFL-1.1, Ubuntu Font Licence) | 1 | In the bundle (E12b) |
+| Editor library licence (no licence field or file) | 3 | Maintainer must choose; nothing guessed |
+| Publish or vendor the editor | 3 | Maintainer decision (decides whether public builds are possible) |
+| Whether and when to publish the egui version | 3 | Maintainer |
+| Private editor repository: a clean public/tagged build cannot fetch it | 4 | Containers are seeded from the local Cargo cache; blocks reproducible public builds |
+| Windows/macOS third-party notices | 2 | Bundles exist for Linux only; recheck when those packages exist (different crate set) |
+
+**Package/platform matrix** (V = Verified, P = Partially verified, U = Unverified, B = Blocked).
+| Target | Compile | Packaging | Runtime | Dialogs | Clipboard | Save/reopen | IME/a11y | Blockers | Release-ready |
+|---|---|---|---|---|---|---|---|---|---|
+| Linux Wayland (native) | V | V | V | V (parent seen) | V | V | P (AT-SPI tree V; Orca U; real IME U) | none known | no: editor source/licence |
+| Linux X11 (native) | V (same binary) | V | P (Xvfb only) | U | U | P (Xvfb) | P (dead keys, Compose, layouts V; IME U) | editor source/licence | no |
+| Linux XWayland | V | V | V | V (`x11:` parent) | P | P | P | editor source/licence | no |
+| Arch package | V | V (E12b; **built before E12c, rebuild before release**) | P | – | – | – | – | as above | no |
+| Debian 13 package | V | V (same caveat) | P | – | – | – | – | glibc ≥ 2.39 only | no |
+| AppImage | V | V (same caveat) | P | – | – | – | – | as above | no |
+| Windows x64 | P (gnu check only; MSVC B) | U | U | U | U | U | U | no installer/AUMID; MSVC build unproven | no |
+| Windows ARM64 | U | U | U | U | U | U | U | no toolchain, no device | no |
+| macOS Apple Silicon | B (SDK) | U | U | U | U | U | U | Open Document delegate, bundle, signing | no |
+| macOS Intel | B (SDK) | U | U | U | U | U | U | same | no |
+
+**Critical regression scenarios.** Each is covered by an automated test that ran in this ticket's final workspace run (egui:
+`lifecycle_tests`, `files_tests`, `recovery_tests`, `image_tests`, `export_tests`, `compact_tests`, `hardening_tests`, `audit_tests`; core: `attachment_tests`, `compact_tests`, `integrity_tests`): untitled and Save As; New/Open with unsaved edits; save failure and external-modification conflict; image paste with undo/redo; save/reopen images; trash and checkpoint restore; Markdown/ZIP/PDF export; Compact preview and confirmation; stale-token rejection; VACUUM failure; Qt schema-v3 compatibility (`tools/pre-e9-compat.sh`); an older binary refusing schema v4 (`pre-e9-compat.sh` and core tests). The E12c changes touch none of their logic (paths of dialogs, labels, timestamps, config location).
+
+**E13 readiness report.** *Completed in egui (Linux):* notebook tree and drag-and-drop, live editor, attachments/images (schema v4), Search, Recovery, Compact, export (Markdown, folder, ZIP, PDF), New/Open/Save As with guards and native dialogs, F1, theme, accessibility names, packages for Arch/Debian/AppImage.
+*Qt-only behaviours:* Finder Open Document and Cmd+Q path on macOS; Windows installer, file association, AppUserModelID, session-end handling; Qt's per-platform packaging.
+*Verified:* Linux (Wayland, XWayland; X11 partly). *Unverified:* Windows, macOS, real IME, screen readers, Hi-DPI hardware.
+*Data-integrity risks:* none new; schema untouched; Qt compatibility script passes; macOS Cmd+Q guard bypass (hypothesis) and Windows logoff rely on autosave.
+*Platform limits (acceptable if documented):* a missing portal looks like a cancel; no single-instance IPC (a second notebook opens a second process); no session-end event on Windows.
+*Blockers for public distribution:* the private editor repository (publish or vendor it), the editor licence decision, and Windows/macOS parity if those platforms are to be shipped. *Blockers for a Linux-only cut-over:* the editor source/licence decisions; rebuild and re-verify the three Linux packages from the final tree.
+*Identity/default changes E13 would make (not done):* root executable and default `cargo` target, application ID/desktop file/icon names (`…OmaTreeEgui` → `…OmaTree`), package names, MIME ownership, `docs`/README rewrites, removing or demoting the Qt packaging. *Rollback:* the Qt app and its packaging remain intact and buildable until E13; E13 should be one revertible commit, and the egui identity IDs make a side-by-side install possible. *Documentation changed in E12c:* this record, `docs/PACKAGING_EGUI.md`, `THIRD_PARTY.md`, `ARCHITECTURE.md`, `README.md`.
+*Maintainer decisions:* publish or vendor the editor; editor licence; whether/when to publish; whether to implement the macOS delegate and the Windows installer/AUMID before or after cut-over; whether to accept the Linux-only limits above; run the Windows and macOS checklists on real machines.
+
+**Validation.** `cargo fmt --all -- --check` clean; `cargo clippy --locked --workspace --all-targets -- -D warnings` clean (it caught one `clone_on_copy`, fixed); `cargo test --locked --workspace` passes (Qt 43; core 357 plus 4 ignored, also run alone; egui 317 plus 16 ignored: eleven new tests and one ignored probe); `cargo build --locked --release --workspace` succeeds (one pre-existing warning in the Qt binary); `tools/pre-e9-compat.sh` and `packaging/egui/tests/verify-sources.sh` pass; `third-party.py check` current (301 crates). Windows-gnu type-check of non-test and test targets passes. Not run: ignored GUI-fixture generators (need `OMATREE_GUI_FIXTURE`), Windows/macOS runtime, MSVC and Apple targets, a real IME and screen reader, repackaging of the Arch/Debian/AppImage packages from the final tree (E12b's predate E12c's code).
+
 ### Recommendation: first ticket
 
 **Start with E1 (extract `omatree-core`)**, run in parallel with E2 in the spike repository if there are two people or sessions.
@@ -1305,9 +1417,9 @@ Each row is "Qt feature → the existing Qt test that defines it → the egui ti
 | ~~Edit/Preview toggle, preview spacing~~ | `preview.qml`, `spacing.qml` | **not carried over (D4)**: live rendering replaces it; raw Markdown stays reachable while editing | retired |
 | No remote or arbitrary-file image loading (was `resources.qml` for Preview) | `resources.qml` | E10 (new test) | implemented and tested (E10): `image_tests.rs`, native-window check |
 | **New:** attachment pruning never removes recoverable images; Compact Notebook dry run, confirmation, result report; separate space reclamation | §5.4, D9 | E9/E11 | implemented (E9a-c core, E11b interface): dry run, explicit confirmation, committed-result report, separate reclamation; Wayland-verified |
-| macOS Finder "open with" goes through the unsaved-changes flow | `systemopen.qml` | E12 | not started |
-| Window icon, Wayland app id, Windows taskbar id | `cpp/app_identity.cpp` | E12 | not started |
-| Cross-platform keyboard: ⌘ on macOS, Tab reaches controls | `keyboard_policy.cpp`, `keymap.qml` | E12 | not started |
+| macOS Finder "open with" goes through the unsaved-changes flow | `systemopen.qml` | E12 | E12c: **not implemented**; winit has no Open Document event, needs an app-registered delegate (E13 macOS blocker); guarded entry `request_open_path` exists |
+| Window icon, Wayland app id, Windows taskbar id | `cpp/app_identity.cpp` | E12 | Linux done (E12b); Windows AppUserModelID not implemented, unverified (E12c) |
+| Cross-platform keyboard: ⌘ on macOS, Tab reaches controls | `keyboard_policy.cpp`, `keymap.qml` | E12 | Linux verified (E12a); macOS/Windows unverified (E12c checklists) |
 | **New in egui:** live-styled Markdown editing, tasks, tables, links, emoji, slash menu | spike `FINDINGS.md` | E2/E3 | implemented (E2/E3, library); rendering confirmed in the window through E10 to E12a; slash menu and emoji picker not re-exercised by hand in E12a |
 | **New in egui:** images stored in the notebook, resizing | §5 | E9/E10 | implemented (E10): paste, inline PNG and JPEG, resize, save/reopen, recovery; Wayland-verified |
 | **New in egui:** Markdown/folder/ZIP/PDF export | spike | E11 | implemented for the active note (E11a): all four formats, native and typed destinations, verified with independent readers and a real PDF viewer; Compact Notebook UI is E11b |

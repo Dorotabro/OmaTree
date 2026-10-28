@@ -557,8 +557,10 @@ fn an_external_modification_is_reported_and_nothing_is_lost_or_overwritten() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_save_that_cannot_write_is_reported_and_the_edit_stays_dirty() {
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     let d = dir("saveerr");
     let nb = d.join("nb");
@@ -795,6 +797,7 @@ mod hardening_tests;
 mod image_tests;
 mod packaging_tests;
 mod polish_tests;
+mod portability_tests;
 mod recovery_tests;
 mod search_tests;
 mod theme_tests;

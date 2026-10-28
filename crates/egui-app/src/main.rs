@@ -3,7 +3,7 @@
 use omatree_egui::App;
 use std::path::PathBuf;
 
-fn main() -> eframe::Result {
+fn main() -> std::process::ExitCode {
     let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_inner_size(launch_size())
@@ -16,11 +16,22 @@ fn main() -> eframe::Result {
         viewport,
         ..Default::default()
     };
-    eframe::run_native(
+    // A failure is reported with a sentence about the likely cause (when it is a recognised one) and
+    // the original diagnostic, and the exit status is 1, as it was when `main` returned the error.
+    match eframe::run_native(
         "OmaTree",
         options,
         Box::new(move |cc| Ok(Box::new(App::new(cc, args)))),
-    )
+    ) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!(
+                "{}",
+                omatree_egui::startup_failure_report(&format!("{e:?}"))
+            );
+            std::process::ExitCode::FAILURE
+        }
+    }
 }
 
 /// The window's size at launch: 1000x700, or `OMATREE_WINDOW_SIZE=WIDTHxHEIGHT` (a diagnostic for

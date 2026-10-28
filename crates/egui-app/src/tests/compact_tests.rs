@@ -353,8 +353,10 @@ fn unsaved_work_must_be_saved_first_and_saving_authorizes_nothing() {
     let _ = fx;
 }
 
+#[cfg(unix)]
 #[test]
 fn a_pending_image_a_pending_title_a_cancelled_and_a_failed_save() {
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     let (d, p, mut h, _fx) = nb("cmp-pending");
     // A pending attachment makes the notebook dirty: save first.
@@ -492,8 +494,10 @@ fn repeated_confirmations_remove_once_and_a_stale_token_never_runs_again() {
     assert_eq!(ids(&rows(&p)), fx.retained);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_failed_removal_is_reported_as_failed_and_keeps_every_image() {
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     let (d, p, mut h, fx) = nb("cmp-prune-fail");
     h.compact();
@@ -576,8 +580,10 @@ fn space_is_reclaimed_only_on_its_own_confirmation_and_the_file_really_shrinks()
         .is_healthy());
 }
 
+#[cfg(unix)]
 #[test]
 fn reclaiming_works_without_pruning_and_a_failed_vacuum_leaves_a_readable_notebook() {
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     let d = dir("cmp-reclaim-alone");
     let p = d.join("n.omatree");
@@ -859,6 +865,12 @@ fn noise_png(w: usize, h: usize) -> Vec<u8> {
     encode_png(&img).unwrap()
 }
 
+#[cfg(not(target_os = "linux"))]
+fn peak_kib() -> i64 {
+    0 // `/proc` is Linux-only
+}
+
+#[cfg(target_os = "linux")]
 fn peak_kib() -> i64 {
     fs::read_to_string("/proc/self/status")
         .unwrap()

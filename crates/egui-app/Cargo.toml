@@ -24,11 +24,17 @@ omatree-core = { path = "../core" }
 omatree_editor = { package = "omatree-egui-editor-spike", git = "https://github.com/Dorotabro/omatree-egui-editor-spike.git", rev = "30a95dd43064232dc1ac04315c8020e2307a223c" }
 # Same egui/eframe line and feature set as the editor repository's own binary.
 eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "links", "default_fonts", "system_fonts", "glow", "wayland", "x11"] }
-rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "pollster"] }
+# Named only for the traits `rfd` takes a dialog parent through (already in the lock file as a dependency of
+# winit and rfd; no new crate). See docs/PACKAGING_EGUI.md, "File dialogs and the desktop portal".
+raw-window-handle = "0.6"
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "wayland", "pollster"] }
 # The editor library builds `image` with PNG only. Cargo unifies features per crate, so asking for
 # `jpeg` here (the decoder crates are already in the lock file) lets the editor's own
 # `image::load_from_memory` show JPEG attachments, with no second decoder and no change to the
 # pinned editor repository. See docs/EGUI_MIGRATION_PLAN.md, "E10 implementation record".
+# Local time for the Recovery list (E12c). Only the `clock` feature: the zone comes from the operating system
+# (libc on Unix, the Windows API, Core Foundation on macOS), nothing is bundled, and the stored values stay UTC.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 [dev-dependencies]

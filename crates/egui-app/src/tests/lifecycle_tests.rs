@@ -3,6 +3,7 @@
 //! delivered the way eframe 0.37 delivers them (`ViewportInfo::events`).
 
 use super::*;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 fn fixture(name: &str) -> (PathBuf, PathBuf) {
@@ -16,6 +17,7 @@ fn journal(p: &Path) -> String {
     bodies(p).last().unwrap().1.clone()
 }
 
+#[cfg(unix)]
 /// Make the notebook's directory unwritable (SQLite cannot create its journal), run `f`, restore.
 fn unwritable<T>(dir: &Path, f: impl FnOnce() -> T) -> T {
     fs::set_permissions(dir, fs::Permissions::from_mode(0o555)).unwrap();
@@ -90,6 +92,7 @@ fn closing_then_discard_needs_a_second_confirmation_and_writes_nothing() {
     assert_eq!(bodies(&p), before, "discarded edits never reach the file");
 }
 
+#[cfg(unix)]
 #[test]
 fn a_failed_save_during_close_keeps_the_window_dirty_and_editable_and_save_as_recovers() {
     let d = dir("close-fail");
@@ -310,6 +313,7 @@ fn autosave_does_not_write_when_nothing_changed() {
     assert_eq!(fs::read(&p).unwrap(), before);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_failed_autosave_keeps_the_edits_reports_once_and_a_later_save_recovers() {
     let d = dir("autosave-fail");

@@ -1274,11 +1274,13 @@ fn dv(c: &Connection) -> i64 {
         .unwrap()
 }
 
+#[cfg(unix)]
 /// The raw SQLite behaviour behind the baseline logic, on a plain connection with no OmaTree
 /// code in between: how `PRAGMA data_version` moves across successful and failed `VACUUM`s,
 /// per journal mode. Printed as evidence; asserted only where the baseline logic relies on it.
 #[test]
 fn data_version_across_successful_and_failed_vacuum_as_sqlite_reports_it() {
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     for journal in [Journal::Delete, Journal::Wal] {
         let mut seen = Vec::new();
@@ -1737,8 +1739,10 @@ fn a_refused_prune_with_unsaved_changes_saves_nothing() {
 
 // --- 4 (continued). Read-only destinations, permissions, lock contention ------------------------
 
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+#[cfg(unix)]
 fn chmod(path: &Path, mode: u32) {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
 }
@@ -2187,6 +2191,12 @@ fn large_sizes() -> [usize; 4] {
     [MAX_ATTACHMENT_BYTES as usize, 48 * MIB, 32 * MIB, 16 * MIB]
 }
 
+#[cfg(not(target_os = "linux"))]
+fn peak_kib() -> u64 {
+    0 // `/proc` is Linux-only
+}
+
+#[cfg(target_os = "linux")]
 fn peak_kib() -> u64 {
     std::fs::read_to_string("/proc/self/status")
         .unwrap()
@@ -2196,6 +2206,12 @@ fn peak_kib() -> u64 {
         .unwrap_or(0)
 }
 
+#[cfg(not(target_os = "linux"))]
+fn rss_kib() -> i64 {
+    0 // `/proc` is Linux-only
+}
+
+#[cfg(target_os = "linux")]
 fn rss_kib() -> i64 {
     std::fs::read_to_string("/proc/self/status")
         .unwrap()

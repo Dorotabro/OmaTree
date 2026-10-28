@@ -146,7 +146,7 @@ fn only_an_empty_preedit_with_no_composition_in_progress_is_dropped() {
             events,
             ..Default::default()
         };
-        host.filter_input(&mut raw);
+        host.drop_idle_preedit(&mut raw);
         raw.events.len()
     };
     // Idle: the input method's empty answers are noise.
@@ -670,6 +670,7 @@ fn tab_walks_the_window_in_order_and_shift_tab_walks_back() {
     assert_ne!(who(&h), "nothing");
 }
 
+#[cfg(target_os = "linux")]
 fn rss_mib() -> i64 {
     fs::read_to_string("/proc/self/status")
         .unwrap()
@@ -678,6 +679,12 @@ fn rss_mib() -> i64 {
         .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<i64>().ok())
         .unwrap_or(0)
         / 1024
+}
+
+/// Resident memory is read from `/proc`, which only Linux has: elsewhere the figure is simply 0.
+#[cfg(not(target_os = "linux"))]
+fn rss_mib() -> i64 {
+    0
 }
 
 /// `cargo test --release -p omatree-egui -- --ignored --nocapture audit_performance`.
@@ -827,4 +834,49 @@ fn the_tree_title_and_editor_have_names_for_assistive_technology() {
         nodes.iter().any(|n| label(n) == "Note text (Markdown)"),
         "the editor"
     );
+}
+
+#[test]
+fn the_window_has_an_accessible_name_that_follows_the_notebook_and_never_goes_stale() {
+    use egui::accesskit::Role;
+    let d = dir("c12-a11y-window");
+    let (a, b) = (d.join("first.omatree"), d.join("second one.omatree"));
+    make_fixture(&a);
+    make_fixture(&b);
+    let window_label = |h: &H| {
+        let nodes = a11y_nodes(h);
+        let w: Vec<_> = nodes.iter().filter(|n| n.role() == Role::Window).collect();
+        assert_eq!(w.len(), 1, "exactly one window node");
+        label(w[0]).to_owned()
+    };
+    let mut h = H::open(&a);
+    h.ctx.enable_accesskit();
+    h.settle();
+    assert_eq!(window_label(&h), "first.omatree - OmaTree");
+    // An unsaved edit shows in the title bar, so it shows in the name.
+    h.make_dirty();
+    h.settle();
+    assert_eq!(window_label(&h), "first.omatree * - OmaTree");
+    // Another notebook replaces the name, whole: nothing of the first one is left behind.
+    let ctx = h.ctx.clone();
+    h.host.save(&ctx);
+    h.host.request_open_path(&ctx, b.clone());
+    h.settle();
+    let name = window_label(&h);
+    assert_eq!(name, "second one.omatree - OmaTree");
+    assert!(!name.contains("first"));
+}
+
+#[test]
+fn the_input_method_filter_is_applied_on_linux_only() {
+    use egui::{Event, ImeEvent};
+    let mut host = Host::new();
+    let mut raw = egui::RawInput::default();
+    raw.events.push(Event::Ime(ImeEvent::Preedit {
+        text: String::new(),
+        active_range_chars: None,
+    }));
+    host.filter_input(&mut raw);
+    // An empty pre-edit with nothing composing is dropped on Linux, and left alone everywhere else.
+    assert_eq!(raw.events.len(), usize::from(!cfg!(target_os = "linux")));
 }

@@ -7,6 +7,7 @@ use super::search_tests::search_nb;
 use super::tree_tests::shape;
 use super::*;
 use crate::recovery_ui::format_utc;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 const SHOT: &str = "![shot](assets/12.png)\n\nand ![wide](assets/7.jpg \"2\")\n";
@@ -747,6 +748,7 @@ fn an_externally_modified_notebook_keeps_the_restore_in_memory_and_reports_the_c
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_save_that_fails_after_a_restore_keeps_the_restored_notes() {
     let (_d, p, mut h) = H::open_rec("rec-savefail");
