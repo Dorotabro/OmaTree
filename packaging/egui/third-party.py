@@ -57,7 +57,7 @@ def graph():
     direct = {k[0] for k in parse(run(*base, "--depth", "1"))}
     rows = []
     for (name, version), (lic, src) in sorted(used.items()):
-        if name in ("omatree-egui", "omatree-core"):
+        if name in ("omatree-egui", "omatree-core", "omatree-editor"):
             continue
         d = crate_dir(name, version, src)
         if d is None:
@@ -68,7 +68,7 @@ def graph():
 
 
 def table(rows):
-    out = [f"{len(rows)} crates are compiled into `omatree-egui` (excluding `omatree-egui` and `omatree-core`, which are OmaTree's own); "
+    out = [f"{len(rows)} crates are compiled into `omatree-egui` (excluding `omatree-egui`, `omatree-core` and `omatree-editor`, which are OmaTree's own); "
            f"{sum(r['direct'] for r in rows)} are direct dependencies (**bold**).", "",
            "| Crate | Version | License expression | Source |", "|---|---|---|---|"]
     for r in rows:
@@ -91,6 +91,7 @@ UPSTREAM = {**{n: ("egui", ["egui-LICENSE-MIT", "egui-LICENSE-APACHE"]) for n in
     "profiling": ("profiling", ["profiling-LICENSE-MIT", "profiling-LICENSE-APACHE"]),
     "gl_generator": ("gl-rs", ["gl-rs-LICENSE"]), "khronos_api": ("gl-rs", ["gl-rs-LICENSE"])}
 UPSTREAM_DIR = os.path.join(ROOT, "packaging", "egui", "licences")
+EDITOR_FONT_LICENCE = os.path.join(ROOT, "crates", "editor", "assets", "fonts", "LICENSE-Liberation.txt")
 
 
 def licence_files(path):
@@ -113,7 +114,8 @@ def bundle(rows, out):
                 "Part 1 lists every compiled crate with its declared licence expression. Part 2 gives the licence\n"
                 "and notice files found in each crate's own source, each distinct text once, with the crates it\n"
                 "came from. A crate with no licence file is named in part 1 as such: its declared expression applies.\n"
-                "Bundled SQLite (libsqlite3-sys) is public domain and needs no text.\n\n"
+                "Bundled SQLite (libsqlite3-sys) is public domain and needs no text. The Liberation fonts that the\n"
+                "editor embeds for PDF export (not a crate) are under the SIL OFL 1.1; their notice is in part 2.\n\n"
                 "PART 1: crates\n--------------\n\n")
         for r in rows:
             note = "" if r["files"] else ("  [no licence file in the crate source; upstream copy in part 2]" if r["upstream"] else "  [no licence file in the crate source]")
@@ -130,6 +132,10 @@ def bundle(rows, out):
                 h = hashlib.sha256(data.strip()).hexdigest()
                 e = seen.setdefault(h, dict(data=data, name=os.path.basename(f), who=[]))
                 e["who"].append(f"{r['name']} {r['version']} (upstream copy, see packaging/egui/licences/SOURCES.md)")
+        # Fonts that omatree-editor embeds (its PDF export): SIL OFL 1.1 with the copyright notices. Not a crate.
+        data = open(EDITOR_FONT_LICENCE, "rb").read()
+        seen.setdefault(hashlib.sha256(data.strip()).hexdigest(), dict(data=data, name=os.path.basename(EDITOR_FONT_LICENCE), who=[]))[
+            "who"].append("the Liberation fonts embedded by omatree-editor (crates/editor/assets/fonts)")
         for h, e in sorted(seen.items(), key=lambda kv: (kv[1]["name"], kv[0])):
             o.write(f"\n\n{'=' * 78}\n{e['name']}: used by {len(e['who'])} crate(s): {', '.join(e['who'])}\n{'=' * 78}\n")
             o.write(e["data"].decode("utf-8", "replace").rstrip() + "\n")

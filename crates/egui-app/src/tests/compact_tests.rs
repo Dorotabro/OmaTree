@@ -95,7 +95,7 @@ fn ids(m: &BTreeMap<String, Vec<u8>>) -> Vec<String> {
     m.keys().cloned().collect()
 }
 
-fn nb(name: &str) -> (PathBuf, PathBuf, H, Fx) {
+fn nb(name: &str) -> (crate::tests::TestDir, PathBuf, H, Fx) {
     let d = dir(name);
     let p = d.join("n.omatree");
     let fx = fixture(&p);

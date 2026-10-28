@@ -46,7 +46,7 @@ fn replace_theme_dir(d: &Path, text: &str) {
     fs::rename(&next, &theme).unwrap();
 }
 
-pub(super) fn rich_notebook(name: &str) -> (PathBuf, PathBuf) {
+pub(super) fn rich_notebook(name: &str) -> (crate::tests::TestDir, PathBuf) {
     let d = dir(name);
     let p = d.join("n.omatree");
     let mut doc = Document::open(&p).unwrap();

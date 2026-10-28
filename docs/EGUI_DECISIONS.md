@@ -13,7 +13,7 @@ Status labels used in this document and in the instructions it updates:
 |---|---|---|
 | 1 | Qt/QML will be replaced with egui/eframe. The Qt application stays buildable and functional throughout the migration. | Qt is removed only by a separate, explicit cut-over decision (ticket E13), after the parity checklist passes. Until then no change may break the Qt build, its tests or its packaging. |
 | 2 | The Qt-free Rust notebook model, SQLite persistence, recovery (Trash and checkpoints), search and lifecycle code are preserved. | They are extracted into a shared crate (E1) and are not rewritten. Behaviour is pinned by their existing tests. |
-| 3 | The standalone egui Markdown editor stays operational. Its reusable functionality is exposed through a library crate. | The editor repository keeps a runnable demo binary; OmaTree depends on the library (E2, E4). |
+| 3 | The standalone egui Markdown editor stays operational. Its reusable functionality is exposed through a library crate. | The editor repository keeps a runnable demo binary; OmaTree depends on the library (E2, E4). **Since P2 the library is the workspace crate `crates/editor`** (a snapshot of the prototype's revision `30a95dd`); the demo binary stays only in the private prototype repository. |
 | 4 | There is no separate Edit/Preview toggle in the egui application. Live Markdown rendering replaces it. Raw Markdown stays accessible while editing. | The editor already reveals the source of the span under the caret or selection. The Qt Preview and its tests (`preview`, `spacing`) are legacy-only and are not ported. `resources.qml`'s rule survives as decision 8. |
 | 5 | **Ctrl+E** is reserved for inline code in the egui editor. | Qt's Ctrl+E (Edit/Preview toggle) has no egui counterpart. |
 | 6 | **Ctrl+Shift+S** is reserved for Save As in OmaTree. Strikethrough gets an alternative shortcut or a slash command. The standalone editor's shortcuts may stay configurable and different. | The editor library takes a key map from the host (`EditorKeys`). The alternative strikethrough binding is chosen in E2; the shortcut reference (F1) must list the final bindings. |
@@ -48,7 +48,7 @@ These are requirements, not an implementation. The transaction strategy is decid
 ## Remaining open questions
 
 - **Alternative strikethrough shortcut** (decision 6): a binding or only a slash command. Chosen in E2.
-- **How the two repositories share code**: path dependency, git dependency or moving the editor into this workspace. Decided in E2/E4.
+- **How the two repositories share code**: path dependency, git dependency or moving the editor into this workspace. Decided in E2/E4 (git dependency pinned to a commit) and **superseded in P2: the editor is now a workspace crate** so that the public repository builds without the private prototype.
 - **Image formats** the editor can display (the standalone editor builds `image` with PNG only; PDF export accepts JPEG).
 - **Compact Notebook entry point** (menu, command or dialog) and its exact wording: decided in E9/E11 within OmaTree's "no permanent toolbar" rules.
 - Platform, input-method and accessibility gaps listed in §9 of the migration plan.

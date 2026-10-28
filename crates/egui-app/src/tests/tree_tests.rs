@@ -32,7 +32,7 @@ pub(super) fn make_deep(path: &Path) {
     doc.save().unwrap();
 }
 
-pub(super) fn deep(name: &str) -> (PathBuf, PathBuf) {
+pub(super) fn deep(name: &str) -> (crate::tests::TestDir, PathBuf) {
     let d = dir(name);
     let p = d.join("n.omatree");
     make_deep(&p);

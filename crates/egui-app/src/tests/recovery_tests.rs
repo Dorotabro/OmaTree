@@ -33,7 +33,7 @@ fn make_recovery(path: &Path) {
     doc.save().unwrap();
 }
 
-fn rec_nb(name: &str) -> (PathBuf, PathBuf) {
+fn rec_nb(name: &str) -> (crate::tests::TestDir, PathBuf) {
     let d = dir(name);
     let p = d.join("n.omatree");
     make_recovery(&p);
@@ -43,7 +43,7 @@ fn rec_nb(name: &str) -> (PathBuf, PathBuf) {
 const CTRL_SHIFT: Modifiers = Modifiers::COMMAND.plus(Modifiers::SHIFT);
 
 impl H {
-    fn open_rec(name: &str) -> (PathBuf, PathBuf, H) {
+    fn open_rec(name: &str) -> (crate::tests::TestDir, PathBuf, H) {
         let (d, p) = rec_nb(name);
         let h = H::open_tree(&p);
         (d, p, h)
@@ -337,7 +337,7 @@ fn restoring_leaves_other_notes_and_their_editor_state_alone() {
 // --- Checkpoints --------------------------------------------------------------------------------
 
 /// Keep edited, Solo deleted (a checkpoint of that moment), then more changes.
-fn with_checkpoint(name: &str) -> (PathBuf, PathBuf, H) {
+fn with_checkpoint(name: &str) -> (crate::tests::TestDir, PathBuf, H) {
     let (d, p, mut h) = H::open_rec(name);
     h.type_into("Keep", " one");
     h.trash("Solo");

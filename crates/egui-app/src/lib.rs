@@ -687,8 +687,8 @@ impl Host {
     }
 
     fn after_editor(&mut self, ctx: &egui::Context, out: EditorOutput) {
-        // A pasted image changes the text without `out.changed` (see `ImageReport::staged`).
-        if self.images.take_staged() || out.changed {
+        // A pasted image is a change like any other (the editor reports it since E13a).
+        if out.changed {
             self.sync();
         }
         if out.has_focus {

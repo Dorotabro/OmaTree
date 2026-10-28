@@ -77,7 +77,7 @@ impl H {
     }
 }
 
-fn rich_host(name: &str) -> (PathBuf, PathBuf, H, Vec<u8>, Vec<u8>, String) {
+fn rich_host(name: &str) -> (crate::tests::TestDir, PathBuf, H, Vec<u8>, Vec<u8>, String) {
     let d = dir(name);
     let p = d.join("n.omatree");
     let (png, jpg, body) = rich(&p);

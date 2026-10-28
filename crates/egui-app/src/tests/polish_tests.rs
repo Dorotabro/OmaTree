@@ -161,7 +161,7 @@ impl H {
     }
 }
 
-fn rich(name: &str) -> (PathBuf, PathBuf) {
+fn rich(name: &str) -> (crate::tests::TestDir, PathBuf) {
     rich_notebook(name)
 }
 

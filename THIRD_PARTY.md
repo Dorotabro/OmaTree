@@ -44,12 +44,24 @@ files (each distinct text once, with the crates it came from).
 
 **Flagged for manual review (not resolved by this inventory):**
 
-1. `omatree-egui-editor-spike` 0.1.0 (the pinned editor library, repository
-   `Dorotabro/omatree-egui-editor-spike`, rev `30a95dd43064232dc1ac04315c8020e2307a223c`): its
-   `Cargo.toml` has **no `license` field and the repository has no licence file**. It is the project
-   maintainer's own code, so it is presumably under the same terms as OmaTree, but no file says so;
-   the maintainer should add a licence to that repository (a new pin, outside E12b). Nothing is
-   assumed in the package.
+1. **The editor crate (`omatree-editor`, `crates/editor`) — licence matches the maintainer's stated intention; ownership
+   facts remain unverified by any document.** Since ticket P2 the editor is a workspace crate of this repository, a
+   clean snapshot (no Git history) of revision `30a95dd43064232dc1ac04315c8020e2307a223c` of the former private
+   prototype repository, which carried no licence file at that revision. Its `Cargo.toml` declares
+   `MIT OR Apache-2.0`, the same as OmaTree (`Cargo.toml` of the root and of every workspace crate), and the root
+   `LICENSE-MIT` / `LICENSE-APACHE` cover the whole workspace (E13a re-checked this). **The maintainer's stated
+   intention (tickets P1, P2 and E13a) is to distribute the editor under the same licence as OmaTree.**
+   Basis for applying it: the prototype's 13 commits have a single author, the account that owns this repository;
+   the imported source contains no copied third-party source code (no copyright or "adapted from" markers; the
+   prototype's rules forbade copying without a licence check); the only third-party files are the fonts below,
+   which keep their own notice. The copyright line is the root licence's existing "OmaTree contributors"; **no
+   individual copyright holder is named or asserted, and nothing here is a legal conclusion** about the status of
+   code written with AI assistance. If the ownership or distribution rights of any editor material turn out to
+   be uncertain, that is for the maintainer to settle before publication; nothing found in the audit says so.
+   **Bundled fonts:** `crates/editor/assets/fonts/Liberation{Sans-Regular,Bold,Italic,BoldItalic},Mono-Regular}.ttf`,
+   SIL Open Font License 1.1, with `LICENSE-Liberation.txt` (copyright Google Corporation and Red Hat, Inc.).
+   They are embedded in the binary (PDF export). The exact upstream release is not recorded; the font
+   metadata reports Liberation 2.x. The notice is in `third-party-licenses.txt`.
 2. Sixteen crates declare a licence expression but ship no licence file inside the published crate (the
    egui family: `egui`, `eframe`, `epaint`, `emath`, `ecolor`, `egui-winit`, `egui_glow`,
    `egui_system_font_provider`; the `accesskit` family: `accesskit`, `accesskit_consumer`,
@@ -63,13 +75,13 @@ files (each distinct text once, with the crates it came from).
    line upstream either. This is attribution material, not a legal conclusion.
 
 The crates directly depended on by `omatree-egui` that matter most: `eframe`/`egui` 0.37 (UI, with
-the `accesskit` feature added in E12a: AccessKit, AT-SPI through `zbus`/`atspi`), `omatree_editor`
-(the pinned editor), `rfd` 0.17 (file dialogs through the XDG desktop portal, `xdg-portal` + `pollster`,
+the `accesskit` feature added in E12a: AccessKit, AT-SPI through `zbus`/`atspi`), `omatree-editor`
+(the workspace editor crate), `rfd` 0.17 (file dialogs through the XDG desktop portal, `xdg-portal` + `pollster`,
 no GTK), `image` 0.25 (JPEG), `rusqlite` 0.40 (via `omatree-core`), `krilla` and `zip` (PDF and ZIP
 export, via `omatree-core`).
 
 <!-- BEGIN GENERATED: egui-crates -->
-301 crates are compiled into `omatree-egui` (excluding `omatree-egui` and `omatree-core`, which are OmaTree's own); 6 are direct dependencies (**bold**).
+300 crates are compiled into `omatree-egui` (excluding `omatree-egui`, `omatree-core` and `omatree-editor`, which are OmaTree's own); 5 are direct dependencies (**bold**).
 
 | Crate | Version | License expression | Source |
 |---|---|---|---|
@@ -221,7 +233,6 @@ export, via `omatree-core`).
 | nohash-hasher | 0.2.0 | Apache-2.0 OR MIT | crates.io |
 | nom | 8.0.0 | MIT | crates.io |
 | num-traits | 0.2.19 | MIT OR Apache-2.0 | crates.io |
-| **omatree-egui-editor-spike** | 0.1.0 | MISSING | git (pinned rev) |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 | crates.io |
 | ordered-stream | 0.2.0 | MIT OR Apache-2.0 | crates.io |
 | os_pipe | 1.2.3 | MIT | crates.io |

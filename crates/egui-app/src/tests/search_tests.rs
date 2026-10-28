@@ -34,7 +34,7 @@ fn make_search(path: &Path) {
     doc.save().unwrap();
 }
 
-pub(super) fn search_nb(name: &str) -> (PathBuf, PathBuf) {
+pub(super) fn search_nb(name: &str) -> (crate::tests::TestDir, PathBuf) {
     let d = dir(name);
     let p = d.join("n.omatree");
     make_search(&p);
@@ -43,7 +43,7 @@ pub(super) fn search_nb(name: &str) -> (PathBuf, PathBuf) {
 
 impl H {
     /// Opened as the app opens it: the tree has the keyboard.
-    fn open_search(name: &str) -> (PathBuf, PathBuf, H) {
+    fn open_search(name: &str) -> (crate::tests::TestDir, PathBuf, H) {
         let (d, p) = search_nb(name);
         let h = H::open_tree(&p);
         (d, p, h)

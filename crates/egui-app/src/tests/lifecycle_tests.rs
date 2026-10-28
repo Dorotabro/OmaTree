@@ -6,7 +6,7 @@ use super::*;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-fn fixture(name: &str) -> (PathBuf, PathBuf) {
+fn fixture(name: &str) -> (crate::tests::TestDir, PathBuf) {
     let d = dir(name);
     let p = d.join("n.omatree");
     make_fixture(&p);
@@ -444,32 +444,27 @@ fn a_saved_notebook_is_a_schema_3_file_that_roundtrips_for_qt() {
     assert!(after[1].4.ends_with(" ěšč 🦀"));
 }
 
+/// P2 replaced the pinned Git dependency with the workspace crate `crates/editor`: the build must need no
+/// other repository, so the dependency is a path inside this checkout and nothing in the lock file is a Git source.
 #[test]
-fn the_editor_dependency_is_pinned_to_an_exact_commit_and_not_a_path() {
+fn the_editor_is_a_workspace_crate_and_nothing_is_fetched_from_git() {
     let manifest = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")).unwrap();
     let line = manifest
         .lines()
-        .find(|l| l.starts_with("omatree_editor"))
+        .find(|l| l.starts_with("omatree-editor"))
         .unwrap();
-    assert!(!line.contains("path"), "{line}");
-    assert!(line.contains("git = \"https://"), "{line}");
-    let rev = line
-        .split("rev = \"")
-        .nth(1)
-        .unwrap()
-        .split('"')
-        .next()
-        .unwrap();
-    assert_eq!(rev.len(), 40);
-    assert!(rev.chars().all(|c| c.is_ascii_hexdigit()));
+    assert_eq!(line, "omatree-editor = { path = \"../editor\" }");
+    assert!(!line.contains("git"), "{line}");
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let workspace = fs::read_to_string(format!("{root}/Cargo.toml")).unwrap();
     assert!(
-        !line.contains("branch"),
-        "a moving branch is not reproducible"
+        workspace.contains("\"crates/editor\""),
+        "the editor is a workspace member"
     );
-    let lock =
-        fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock")).unwrap();
+    let lock = fs::read_to_string(format!("{root}/Cargo.lock")).unwrap();
     assert!(
-        lock.contains(&format!("?rev={rev}#{rev}")),
-        "Cargo.lock pins the same commit"
+        !lock.contains("source = \"git+"),
+        "no Git source in Cargo.lock"
     );
+    assert!(!lock.contains("omatree-egui-editor-spike"));
 }

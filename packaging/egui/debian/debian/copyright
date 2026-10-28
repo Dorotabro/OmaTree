@@ -12,9 +12,10 @@ Comment: OmaTree is dual-licensed: you may use it under either licence. The
  (SIL OFL-1.1, Ubuntu Font Licence, Hack, MIT). Their licences are inventoried
  in /usr/share/doc/omatree-egui/THIRD_PARTY.md and every crate's licence and
  notice files are in /usr/share/doc/omatree-egui/third-party-licenses.txt. Qt
- is not part of this package. The pinned editor library
- (omatree-egui-editor-spike) carries no licence file of its own: see
- THIRD_PARTY.md, "Flagged for manual review".
+ is not part of this package. The editor (omatree-editor, a workspace
+ crate of this source tree) is under the same terms as OmaTree, and embeds the
+ Liberation fonts (SIL OFL-1.1); see THIRD_PARTY.md, "Flagged for manual
+ review".
 
 License: MIT
  Permission is hereby granted, free of charge, to any person obtaining a copy

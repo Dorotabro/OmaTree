@@ -98,7 +98,7 @@ Do not add functionality merely because it might be useful.
   never prune from "what is visible", and never delete recoverable attachments
   automatically. Pruning and `VACUUM` are separate steps and both need confirmation
   and clear reporting.
-- Do not modify the standalone editor repository from here; consume it as a library.
+- The editor library is the workspace crate `crates/editor` (since P2). The standalone editor prototype is a separate private repository; do not modify it from here, and do not re-introduce a dependency on it.
 
 Prefer simple code over clever abstractions.
 

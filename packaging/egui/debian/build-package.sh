@@ -27,7 +27,6 @@ git ls-files -co --exclude-standard | while read -r f; do [ -e "$f" ] && echo "$
 tar --create --no-recursion --files-from="$work/files" --owner=0 --group=0 --numeric-owner \
     --file="$work/src.tar"
 
-packaging/egui/seed-cargo-git.sh "$cache/cargo"
 
 "$engine" build -q -t "$image" packaging/egui/debian
 

@@ -8,15 +8,14 @@
 # Uses the Debian 13 build image of the egui packaging (pinned Rust 1.99.0), adds the target with
 # rustup and, for Windows, the MinGW-w64 C compiler that rusqlite's bundled SQLite needs. The MSVC
 # targets need Microsoft's headers and libraries and the Apple targets need Apple's SDK; neither can
-# be had here, so those are expected to fail at the C step and say so. The editor library comes from the
-# host's Cargo cache (packaging/egui/seed-cargo-git.sh), as in the package builds.
+# be had here, so those are expected to fail at the C step and say so. The editor is a workspace crate; the
+# only inputs are the source tree and crates.io.
 set -uo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 cd "$root"
 engine=$(command -v docker || command -v podman) || { echo "no docker or podman" >&2; exit 1; }
 cache=${OMATREE_CACHE:-$HOME/.cache/omatree-packaging}
 mkdir -p "$cache/cargo-cross"
-packaging/egui/seed-cargo-git.sh "$cache/cargo-cross"
 "$engine" build -q -t omatree-egui-build-debian13 packaging/egui/debian >/dev/null
 "$engine" build -q -t omatree-egui-cross -f packaging/egui/tests/cross.Dockerfile packaging/egui/tests >/dev/null
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT

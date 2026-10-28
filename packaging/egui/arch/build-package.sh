@@ -6,9 +6,8 @@
 # Makes a source snapshot of the current working tree (tracked and new, non-ignored files), fills
 # in PKGBUILD.in with that tarball and its SHA-256, runs makepkg on it and writes SHA-256 sums.
 # Nothing is installed. CARGO_NET_OFFLINE=true makes the dependency fetch use the local Cargo
-# cache only. The editor library comes from the exact commit pinned in Cargo.lock (Cargo's git
-# cache), never from a sibling checkout. A release package is built from the tagged release
-# archive instead; see the note at the top of PKGBUILD.in.
+# cache only. The editor is the workspace crate crates/editor; nothing is fetched from Git.
+# A release package is built from the tagged release archive instead; see the note at the top of PKGBUILD.in.
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)

@@ -465,7 +465,7 @@ fn trash_note(h: &mut H, title: &str) {
 }
 
 /// Paste one image into "Obrázky" of a fresh saved notebook and save it.
-fn pasted_and_saved(name: &str) -> (PathBuf, PathBuf, H, String, Vec<u8>) {
+fn pasted_and_saved(name: &str) -> (crate::tests::TestDir, PathBuf, H, String, Vec<u8>) {
     let d = dir(name);
     let p = d.join("n.omatree");
     new_note(&p);

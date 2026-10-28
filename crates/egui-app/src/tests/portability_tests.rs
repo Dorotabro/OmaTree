@@ -254,3 +254,41 @@ fn local_time_follows_daylight_saving_on_both_sides_of_a_change() {
         "{text}"
     );
 }
+
+// ---- test hygiene (E13a): the temporary directories of the tests clean up after themselves ----
+
+#[test]
+fn a_dropped_test_dir_removes_the_directory_and_its_contents() {
+    let path = {
+        let d = super::TestDir::new("drop");
+        std::fs::create_dir_all(d.join("a/b")).unwrap();
+        std::fs::write(d.join("a/b/f"), b"x").unwrap();
+        d.to_path_buf()
+    };
+    assert!(!path.exists());
+}
+
+#[test]
+fn a_failing_test_still_cleans_up_its_directory() {
+    let seen = std::sync::Mutex::new(None);
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let d = super::TestDir::new("panic");
+        *seen.lock().unwrap() = Some(d.to_path_buf());
+        panic!("boom");
+    }));
+    assert!(r.is_err());
+    let path = seen.lock().unwrap().take().unwrap();
+    assert!(!path.exists(), "the unwinding test left {}", path.display());
+}
+
+#[test]
+fn test_dirs_with_the_same_tag_never_share_a_directory() {
+    let a = super::TestDir::new("same");
+    let b = super::TestDir::new("same");
+    assert_ne!(*a, *b);
+    std::fs::write(a.join("f"), b"a").unwrap();
+    assert!(!b.join("f").exists());
+    let (pa, pb) = (a.to_path_buf(), b.to_path_buf());
+    drop(a);
+    assert!(!pa.exists() && pb.exists(), "dropping one leaves the other");
+}

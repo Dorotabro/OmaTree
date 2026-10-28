@@ -7,7 +7,7 @@
 #
 # Covers: desktop entry, MIME XML and its isolated registration, %f launch (spaces, Unicode, no
 # shell), binary selection, one application identity, icons, install layout and uninstall, licence
-# inventory, version consistency, the editor pin and independence from a sibling checkout.
+# inventory, version consistency, the editor as a workspace crate with no Git or sibling dependency.
 set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -119,21 +119,22 @@ deb_ver=$(sed -n '1s/^omatree-egui (\(.*\)) .*/\1/p' packaging/egui/debian/debia
 check "egui crate ($crate_ver) = Qt crate ($root_ver) = core ($core_ver)" test "$crate_ver" = "$root_ver" -a "$crate_ver" = "$core_ver"
 check "AppStream ($meta_ver) and Debian changelog ($deb_ver) match the crate version" test "$meta_ver" = "$crate_ver" -a "$deb_ver" = "$crate_ver"
 
-echo "== editor dependency and reproducibility inputs"
-rev=$(sed -n 's/.*omatree_editor = {.*rev = "\([0-9a-f]\{40\}\)".*/\1/p' crates/egui-app/Cargo.toml)
-check "the editor is a pinned git dependency (40-hex rev)" test -n "$rev"
-check "Cargo.lock resolves the editor to exactly that commit" grep -q "omatree-egui-editor-spike.git?rev=$rev#$rev" Cargo.lock
-check "the pin is the documented commit 30a95dd…" test "$rev" = 30a95dd43064232dc1ac04315c8020e2307a223c
-check "no manifest or lock entry points at a sibling editor checkout" bash -c "! grep -rnE 'path *= *\"\.\./.*(editor|spike)|omatree-egui-editor-(library|spike)/' Cargo.toml crates/*/Cargo.toml Cargo.lock | grep -q ."
-check "no egui packaging script mentions a sibling editor directory" bash -c "! grep -rnE 'omatree-egui-editor-library|omatree-egui-editor-spike/' packaging/egui | grep -v verify-sources.sh | grep -q ."
-check "every egui build uses --locked" bash -c "! grep -rn 'cargo \(build\|fetch\)' packaging/egui | grep -v 'locked' | grep -v -e verify-sources.sh -e third-party.py -e seed-cargo-git.sh | grep -q ."
+echo "== editor crate and reproducibility inputs"
+check "the editor is the workspace crate crates/editor (package omatree-editor, library omatree_editor)" bash -c "grep -q '^name = \"omatree-editor\"' crates/editor/Cargo.toml && grep -q '^name = \"omatree_editor\"' crates/editor/Cargo.toml && grep -q 'crates/editor' Cargo.toml"
+check "omatree-egui depends on it by path" grep -q '^omatree-editor = { path = "../editor" }' crates/egui-app/Cargo.toml
+check "no manifest, lock entry or script refers to an editor Git repository or a sibling checkout" bash -c "! grep -rnE 'omatree-egui-editor-(spike|library)|editor-spike\\.git|git *= *\"' Cargo.toml crates/*/Cargo.toml Cargo.lock packaging/egui --include=Cargo.toml --include=Cargo.lock --include='*.sh' --include='*.in' --include='rules' --include='Dockerfile' --include='*.py' | grep -v verify-sources.sh | grep -q ."
+check "Cargo.lock has no git source at all" bash -c "! grep -q 'source = \"git+' Cargo.lock"
+check "the editor crate has no build script and no path outside the repository" bash -c "test ! -e crates/editor/build.rs && ! grep -nE 'path *= *\"\\.\\./\\.\\.' crates/editor/Cargo.toml | grep -q ."
+check "the editor's fonts and their licence are in the repository" bash -c "test -s crates/editor/assets/fonts/LICENSE-Liberation.txt && test -s crates/editor/assets/fonts/LiberationSans-Regular.ttf"
+check "every egui build uses --locked" bash -c "! grep -rn 'cargo \(build\|fetch\)' packaging/egui | grep -v 'locked' | grep -v -e verify-sources.sh -e third-party.py | grep -q ."
 check "the Qt-free claim: omatree-egui's dependency tree has no cxx-qt or Qt crate" bash -c "! cargo tree --locked --offline -p omatree-egui --target x86_64-unknown-linux-gnu -e normal,build --prefix none 2>/dev/null | grep -Eqi '^(cxx-qt|cxx_qt|qt|qmetaobject)'"
 
 echo "== licences"
 if python3 packaging/egui/third-party.py check THIRD_PARTY.md >/dev/null 2>&1 || [ "$staged" = 1 ]; then
     check "THIRD_PARTY.md's generated crate table is current" python3 packaging/egui/third-party.py check THIRD_PARTY.md
 else skip "dependency sources not in the Cargo home: the crate table was not compared"; fi
-check "THIRD_PARTY.md flags the editor crate for manual review" grep -q 'no `license` field' THIRD_PARTY.md
+check "THIRD_PARTY.md records the editor crate's licence basis and its fonts" bash -c "grep -q 'omatree-editor' THIRD_PARTY.md && grep -q 'SIL Open Font License' THIRD_PARTY.md"
+check "the editor crate declares the same licence as the workspace" bash -c "test \"\$(sed -n 's/^license = \"\(.*\)\"/\\1/p' crates/editor/Cargo.toml)\" = \"\$(sed -n 's/^license = \"\(.*\)\"/\\1/p' Cargo.toml | head -1)\""
 check "THIRD_PARTY.md labels the Qt sections as legacy and not applying to egui" grep -q 'None of$' THIRD_PARTY.md
 
 echo "== the user's own configuration"

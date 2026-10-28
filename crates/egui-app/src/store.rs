@@ -27,19 +27,11 @@ pub struct ImageReport {
     /// Reads that failed for a reason other than "no such image" or "not a valid reference":
     /// stored data that is damaged, or a read the database could not do right now.
     read: RefCell<Option<Core>>,
-    /// An image was stored this frame. The editor inserts the reference in the same call chain
-    /// but does not report a paste in `EditorOutput::changed`, so this is how the host knows the
-    /// note's text changed and must be written through to the `Document`.
-    staged: std::cell::Cell<bool>,
 }
 
 impl ImageReport {
     pub fn take_put(&self) -> Option<Core> {
         self.put.borrow_mut().take()
-    }
-
-    pub fn take_staged(&self) -> bool {
-        self.staged.take()
     }
 
     pub fn take_read(&self) -> Option<Core> {
@@ -89,14 +81,11 @@ pub fn friendly_put_error(e: &Core) -> String {
 impl AttachmentStore for DocStore<'_> {
     fn put(&self, bytes: &[u8], _extension_hint: &str) -> Result<String, AttachmentError> {
         // The bytes decide the type (the document sniffs them); the hint is not trusted.
-        self.doc
-            .put_attachment(bytes)
-            .inspect(|_| self.report.staged.set(true))
-            .map_err(|e| {
-                let mapped = editor_error("", &e);
-                *self.report.put.borrow_mut() = Some(e);
-                mapped
-            })
+        self.doc.put_attachment(bytes).map_err(|e| {
+            let mapped = editor_error("", &e);
+            *self.report.put.borrow_mut() = Some(e);
+            mapped
+        })
     }
 
     fn get(&self, reference: &str) -> Result<Vec<u8>, AttachmentError> {

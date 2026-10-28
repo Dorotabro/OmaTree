@@ -129,7 +129,7 @@ impl H {
     }
 }
 
-pub(super) fn two(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+pub(super) fn two(name: &str) -> (crate::tests::TestDir, PathBuf, PathBuf) {
     let d = dir(name);
     let (a, b) = (d.join("first.omatree"), d.join("second.omatree"));
     notebook(&a, &[("Alpha", "alpha body\n"), ("Beta", "beta body\n")]);

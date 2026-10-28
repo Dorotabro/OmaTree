@@ -86,7 +86,7 @@ impl H {
     }
 }
 
-pub(super) fn open_deep(name: &str) -> (PathBuf, PathBuf, H) {
+pub(super) fn open_deep(name: &str) -> (crate::tests::TestDir, PathBuf, H) {
     let (d, p) = deep(name);
     let mut h = H::open_tree(&p);
     h.expand_all();

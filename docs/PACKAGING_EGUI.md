@@ -197,15 +197,18 @@ is built in the Ubuntu 20.04 container (pinned by digest) and not on the host.
 
 ## Third-party licences
 
-`THIRD_PARTY.md` has an egui section with a table generated from the resolved dependency graph (301 crates,
+`THIRD_PARTY.md` has an egui section with a table generated from the resolved dependency graph (300 crates,
 direct ones in bold) and the licensing decisions; `packaging/egui/third-party.py` generates it and
 `verify-sources.sh` fails if it is stale. Every package ships `THIRD_PARTY.md` and
 `third-party-licenses.txt` (every crate's licence and notice files from its own source, each distinct text
 once). The compiled fonts' licences (SIL OFL-1.1, Ubuntu Font Licence) are in it.
 
-Two things need the maintainer, and are flagged, not resolved, in `THIRD_PARTY.md`:
+Two things need the maintainer, and are flagged in `THIRD_PARTY.md`:
 
-1. the pinned **editor library has no licence metadata and no licence file**;
+1. the **editor crate** (`crates/editor`, since P2 part of this repository) is declared `MIT OR Apache-2.0` like
+   the rest of OmaTree on the maintainer's stated intent; the basis is recorded there, and the maintainer
+   still has to confirm the copyright line and the status of AI-assisted code. Its Liberation fonts (SIL OFL-1.1)
+   and their notice are in the bundle;
 2. sixteen crates (egui, eframe and their family, accesskit and its family, a few others) declare a licence
    but do not ship the licence file inside the published crate. E12c copied the upstream licence texts
    (`packaging/egui/licences/`, with `SOURCES.md` giving repository, tag or branch) and the bundle includes them
@@ -229,16 +232,12 @@ committed `Cargo.lock`, and writes to the ignored `dist/`. A release package is 
 archive instead (see the top of `PKGBUILD.in`); `packaging/release-build.sh` is the Qt flow and was not
 changed.
 
-**The editor repository is private.** `Dorotabro/omatree-egui-editor-spike` cannot be fetched without
-credentials, so a build inside a clean container fails with "failed to authenticate". The Debian and AppImage
-scripts therefore run `packaging/egui/seed-cargo-git.sh`, which copies the already-fetched editor checkout
-from the host's Cargo git cache into the container's cache after proving that it contains exactly the
-commit pinned in `Cargo.toml` and `Cargo.lock`; no sibling checkout is read or mounted, and `verify-sources.sh`
-checks that no manifest or script refers to one. The Arch build runs as the user and uses the user's Cargo
-home, which already has the commit. **This means a package cannot yet be built by anyone without access to
-the private repository, and a public release from a tag would fail the same way.** That is a release
-blocker for E13 (make the editor repository readable, or vendor the source with a licence) and is not
-changed here; the pin is untouched.
+**The editor is part of the source tree** (P2). It used to be a Git dependency on the private repository
+`Dorotabro/omatree-egui-editor-spike`, which needed `seed-cargo-git.sh` to copy a cached checkout into the
+containers; that script and the requirement are gone. Every build now needs only the source snapshot and the
+public crates on crates.io (`--locked`). Use a fresh `OMATREE_CACHE` directory to prove that no earlier cache
+supplies anything. Earlier sections of this document and the E12b record describe the private-repository
+arrangement and are historical.
 
 ### Verifying
 
@@ -260,8 +259,8 @@ without them they print `skip`, never `ok`. None needs root.
 `verify-sources.sh` covers: desktop entry validity and exact `Exec`; MIME XML and its isolated
 registration with a Unicode file name; a hostile file name launched through `gio`; one application
 identity across all files; the binary built is `omatree-egui`; icons; the installed layout and its
-removal; version consistency (Qt crate, egui crate, core, AppStream, Debian changelog); the editor pin and
-`Cargo.lock`; no sibling-checkout reference; `--locked` everywhere; no Qt crate in the dependency tree; the
+removal; version consistency (Qt crate, egui crate, core, AppStream, Debian changelog); that the editor is the workspace crate `crates/editor` with
+no Git source in `Cargo.lock` and no sibling-checkout reference; `--locked` everywhere; no Qt crate in the dependency tree; the
 licence table is current; and that the user's own MIME, `mimeapps.list`, desktop-entry and OmaTree
 configuration are byte-for-byte unchanged afterwards.
 
@@ -289,8 +288,8 @@ re-verified; they were built once.
 
 ## Known limitations and E12c handoff
 
-- **Private editor repository** (above): blocks any build without credentials and any public release.
-- **Licence of the editor library** (above): maintainer action. The sixteen crates' notices are supplied (E12c).
+- **Private editor repository**: resolved by P2 (the editor is in the workspace).
+- **Licence of the editor crate** (above): maintainer confirmation. The sixteen crates' notices are supplied (E12c).
 - **No `namcap` run** (not installed); the Arch package is otherwise verified. No man page (lintian warning).
 - **Debian 12 / Ubuntu 22.04**: the `.deb` is refused (glibc ≥ 2.39 needed). Build the `.deb` in an older
   container if those are wanted; the AppImage covers them.

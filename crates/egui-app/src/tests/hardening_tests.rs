@@ -28,7 +28,7 @@ fn held() -> (Picker, Held, Rc<RefCell<Vec<PickRequest>>>) {
 
 /// "first.omatree" opened and edited, then changed by someone else, then Ctrl+S: the conflict
 /// question is open.
-fn conflicted(name: &str) -> (PathBuf, PathBuf, H) {
+fn conflicted(name: &str) -> (crate::tests::TestDir, PathBuf, H) {
     let (d, a, _) = two(name);
     let mut h = H::open_tree(&a);
     h.make_dirty();

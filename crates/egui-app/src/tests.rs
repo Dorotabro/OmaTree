@@ -13,11 +13,47 @@ const CTRL: Modifiers = Modifiers::COMMAND;
 const PLAN: &str = "# Plán\n\nPříliš žluťoučký kůň úpěl ďábelské ódy 🦀\n\n\
 | Název | Počet |\n|---|---|\n| jablka 🍎 | 3 |\n| hrušky | 5 |\n\n- [ ] úkol\n";
 
-fn dir(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("omatree-egui-{}-{name}", std::process::id()));
-    let _ = fs::remove_dir_all(&d);
-    fs::create_dir_all(&d).unwrap();
-    d
+/// A temporary directory owned by its guard: removed when the guard is dropped (after a pass and after a
+/// failed assertion, which unwinds), uniquely named so concurrent tests cannot touch one another's data.
+/// `OMATREE_KEEP_TEST_DIRS=1` keeps them for diagnosis and prints each path.
+pub(crate) struct TestDir {
+    path: PathBuf,
+    _guard: Option<tempfile::TempDir>,
+}
+
+impl TestDir {
+    pub(crate) fn new(tag: &str) -> Self {
+        let dir = tempfile::Builder::new()
+            .prefix(&format!("omatree-egui-{tag}-"))
+            .tempdir()
+            .expect("create a temporary test directory");
+        let path = dir.path().to_path_buf();
+        if std::env::var_os("OMATREE_KEEP_TEST_DIRS").is_some() {
+            eprintln!("kept test directory: {}", dir.keep().display());
+            return TestDir { path, _guard: None };
+        }
+        TestDir {
+            path,
+            _guard: Some(dir),
+        }
+    }
+}
+
+impl std::ops::Deref for TestDir {
+    type Target = PathBuf;
+    fn deref(&self) -> &PathBuf {
+        &self.path
+    }
+}
+
+impl AsRef<Path> for TestDir {
+    fn as_ref(&self) -> &Path {
+        &self.path
+    }
+}
+
+fn dir(name: &str) -> TestDir {
+    TestDir::new(name)
 }
 
 /// Roots "Projects" (children "Plan", "Ideas" with a child "Deep") and "Journal".

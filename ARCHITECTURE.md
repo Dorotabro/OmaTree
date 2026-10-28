@@ -161,14 +161,22 @@ Status (after E12a): all three exist. `omatree-core` is `crates/core`. `omatree-
 drop, Search, Recovery (Trash and checkpoints), F1, themes, New/Open/Save As through native
 dialogs, autosave, conflict recovery, images stored in the notebook (PNG and JPEG), export of the
 active note (Markdown, folder, ZIP, PDF), Compact Notebook, and AccessKit accessibility. The
-editor library lives in the `omatree-egui-editor-spike` repository (branch `editor-library`) and is
-consumed as a Git dependency pinned to an exact commit (see the E4.1 record in
-`docs/EGUI_MIGRATION_PLAN.md`, which also says how to update the pin).
+editor library is the workspace crate `crates/editor` (package `omatree-editor`, library
+`omatree_editor`), imported in ticket P2 as a snapshot of revision `30a95dd` of the former private
+prototype repository; there is no Git dependency any more (earlier records describing the pin are
+historical; see the P2 record in `docs/EGUI_MIGRATION_PLAN.md`).
+
+    OmaTree/
+    ├── crates/
+    │   ├── core/        omatree-core
+    │   ├── editor/      omatree-editor (library `omatree_editor`)
+    │   └── egui-app/    omatree-egui (binary `omatree-egui`)
+    └── Cargo.lock       one lock file for the whole workspace
 
     omatree-core     [implemented] Qt-free, egui-free: notebook, document, storage (SQLite,
                      schema 4 with attachments), recovery, search, theme palette, link safety,
                      reference-aware pruning and space reclamation
-    omatree-editor   egui Markdown editor library (from the standalone editor):
+    omatree-editor   [workspace crate, since P2] egui Markdown editor library:
                      live-rendered source-backed editing, attachments trait, export, PDF
     omatree (Qt)     [legacy, implemented] the Qt application at the repository root; depends on
                      omatree-core; behaviour unchanged; still built and tested
@@ -240,8 +248,8 @@ The standalone editor keeps a runnable demo binary built on the same library.
 - Autosave follows the Qt timer (1 s after the last real edit, existing notebooks only,
   first failure reported once) and additionally stops after an external-modification
   conflict until the user resolves it.
-- The editor library is pinned by commit in `crates/egui-app/Cargo.toml` and `Cargo.lock`;
-  no sibling checkout is required.
+- (E4.1, historical) The editor library was then pinned by commit in `crates/egui-app/Cargo.toml`
+  and `Cargo.lock`. Since P2 it is the workspace crate `crates/editor`, built with everything else.
 
 ## Tree and note operations added in E5a
 
