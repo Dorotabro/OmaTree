@@ -81,7 +81,10 @@ impl Host {
                     (key(&keymap::SUBTREE_CLOSE), "Collapse the whole subtree"),
                     (key(&keymap::SUBTREE_OPEN), "Expand the whole subtree"),
                     ("Delete".to_owned(), "Move the note to Trash (asks first)"),
-                    (key(&keymap::TREE_MENU), "Open the tree menu"),
+                    (
+                        key(&keymap::TREE_MENU),
+                        "Open the tree menu (Tab to its Colour row, arrows between colours)",
+                    ),
                     ("Ctrl+click a marker".to_owned(), "Toggle a whole subtree"),
                 ],
             ),

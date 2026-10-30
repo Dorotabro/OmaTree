@@ -354,6 +354,32 @@ impl Host {
         }
     }
 
+    // --- Colour tag ----------------------------------------------------------------------------
+
+    /// Sets or clears a note's colour tag (the tree menu's Colour row). The tag lives in the
+    /// `Document`, which also marks it modified, so autosave and the close guard cover it like any
+    /// other edit; here only the tree's drawing data is refreshed. The editor, its caret, undo
+    /// history, Search and the selection are not touched.
+    pub fn set_colour(&mut self, id: NodeId, colour: Option<Colour>) {
+        let Some(doc) = self.doc.as_mut() else { return };
+        match doc.set_colour(id, colour) {
+            Ok(true) => {
+                self.edited = true;
+                if let Some(doc) = &self.doc {
+                    self.tree = Tree::build(doc);
+                }
+                self.status = match colour {
+                    Some(c) => format!("Colour: {}", c.label()),
+                    None => "Colour cleared".to_owned(),
+                };
+                // The menu that made the change is gone; the keyboard goes back to the tree.
+                self.set_focus(Focus::Tree);
+            }
+            Ok(false) => {}
+            Err(e) => self.status = format!("Could not set the colour: {e}"),
+        }
+    }
+
     // --- Delete ------------------------------------------------------------------------------
 
     /// Delete / the menu: ask first.

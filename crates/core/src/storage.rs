@@ -3,7 +3,8 @@
 //! Schema version 1 stores only the active nodes. Version 2 adds the id
 //! counter, Trash and recovery checkpoints. Version 3 adds the set of
 //! expanded nodes, which is view state rather than content. Version 4 adds
-//! the `attachments` table (image BLOBs). Older files stay readable. A save
+//! the `attachments` table (image BLOBs). Version 5 adds the optional `colour` column of the
+//! three node tables (a note's colour tag), raised by a save only when a tag exists. Older files stay readable. A save
 //! migrates a file older than 3 to 3; a file only becomes version 4 when a save
 //! has an attachment to write, in the same transaction, so a notebook that never
 //! holds an image stays a version 3 file. Migration is one explicit step per
@@ -17,16 +18,20 @@ use std::time::Duration;
 use rusqlite::{params, Connection, OpenFlags, Transaction};
 
 use crate::attachments::{scan_references, Attachment, AttachmentId, AttachmentInfo, MediaType};
-use crate::notebook::{Node, NodeId, Notebook, NotebookError};
+use crate::notebook::{Colour, Node, NodeId, Notebook, NotebookError};
 use crate::recovery::{Checkpoint, Recovery, TrashEntry};
 
 /// The newest schema this build understands.
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 /// What a notebook without attachments is: new files are created at this version and a
 /// text-only save never raises a file above it.
 const BASE_VERSION: i64 = 3;
 /// The first version that has the `attachments` table.
 const ATTACHMENT_VERSION: i64 = 4;
+/// The first version that has the `colour` column (a note's colour tag) in `nodes`, `trash_nodes`
+/// and `checkpoint_nodes`. A file only becomes version 5 when a save has a tag to write, in the
+/// same transaction; a notebook that never has one stays at 3 or 4 and older builds keep opening it.
+const COLOUR_VERSION: i64 = 5;
 /// The first version that has the recovery tables.
 const RECOVERY_VERSION: i64 = 2;
 const OLDEST_READABLE_VERSION: i64 = 1;
@@ -102,6 +107,17 @@ const ATTACHMENT_SCHEMA: &str = "
         CHECK (byte_len = length(data))
     ) WITHOUT ROWID;
 ";
+
+/// What version 5 adds: the colour tag, an optional identifier (`red`, `orange`, ...). The CHECK
+/// keeps anything but the six identifiers out of the file; existing rows get NULL (no tag).
+const COLOUR_SCHEMA: [&str; 3] = [
+    "ALTER TABLE nodes ADD COLUMN colour TEXT
+         CHECK (colour IS NULL OR colour IN ('red','orange','yellow','green','blue','purple'))",
+    "ALTER TABLE trash_nodes ADD COLUMN colour TEXT
+         CHECK (colour IS NULL OR colour IN ('red','orange','yellow','green','blue','purple'))",
+    "ALTER TABLE checkpoint_nodes ADD COLUMN colour TEXT
+         CHECK (colour IS NULL OR colour IN ('red','orange','yellow','green','blue','purple'))",
+];
 
 /// What a save should do about attachments besides keeping those already stored.
 #[derive(Default)]
@@ -309,7 +325,8 @@ impl Storage {
             None => false,
         };
         let wants = !plan.pending.is_empty() || copies;
-        let to = target_version(from.max(BASE_VERSION), wants);
+        let tagged = has_colour(notebook) || recovery_has_colour(recovery);
+        let to = target_version(from.max(BASE_VERSION), wants, tagged);
         let tx = self.begin_checked_write()?;
         migrate(&tx, from, to)?;
         write_attachments(&tx, to, plan)?;
@@ -321,10 +338,10 @@ impl Storage {
         tx.execute("DELETE FROM notebook_meta", [])?;
         tx.execute("DELETE FROM nodes", [])?;
 
-        write_nodes(&tx, notebook)?;
+        write_nodes(&tx, notebook, to)?;
         write_meta(&tx, full_next_id(notebook, recovery)?)?;
-        write_trash(&tx, recovery)?;
-        write_checkpoints(&tx, recovery)?;
+        write_trash(&tx, recovery, to)?;
+        write_checkpoints(&tx, recovery, to)?;
         write_expanded(&tx, notebook, expanded)?;
 
         if to != from {
@@ -408,7 +425,7 @@ impl Storage {
             return Err(StorageError::UnsupportedSchemaVersion(self.version));
         }
         let from = self.version;
-        let to = target_version(from, !pending.is_empty());
+        let to = target_version(from, !pending.is_empty(), has_colour(notebook));
         let tx = self.begin_checked_write()?;
         migrate(&tx, from, to)?;
         write_attachments(
@@ -423,7 +440,7 @@ impl Storage {
         // current set is written back below.
         tx.execute("DELETE FROM expanded_nodes", [])?;
         tx.execute("DELETE FROM nodes", [])?;
-        write_nodes(&tx, notebook)?;
+        write_nodes(&tx, notebook, to)?;
         // The stored counter only ever goes up, so ids that live only in
         // Trash or checkpoints can never become reusable through this path.
         let next = i64::try_from(notebook.next_id())
@@ -826,7 +843,11 @@ impl Storage {
     pub fn load_document(&self) -> Result<(Notebook, Recovery), StorageError> {
         let nodes = read_nodes(
             &self.conn,
-            "SELECT id, parent_id, position, title, body FROM nodes",
+            if self.version >= COLOUR_VERSION {
+                "SELECT id, parent_id, position, title, body, colour FROM nodes"
+            } else {
+                "SELECT id, parent_id, position, title, body, NULL FROM nodes"
+            },
             [],
         )?;
         if self.version < RECOVERY_VERSION {
@@ -876,8 +897,13 @@ impl Storage {
             let root = id_from_sql(root)?;
             let mut nodes = read_nodes(
                 &self.conn,
-                "SELECT node_id, parent_id, position, title, body
-                 FROM trash_nodes WHERE entry_id = ?1 ORDER BY node_id",
+                if self.version >= COLOUR_VERSION {
+                    "SELECT node_id, parent_id, position, title, body, colour
+                     FROM trash_nodes WHERE entry_id = ?1 ORDER BY node_id"
+                } else {
+                    "SELECT node_id, parent_id, position, title, body, NULL
+                     FROM trash_nodes WHERE entry_id = ?1 ORDER BY node_id"
+                },
                 [entry_id],
             )?;
             // The entry's root goes first.
@@ -904,8 +930,13 @@ impl Storage {
             let (checkpoint_id, created_at, reason) = row?;
             let nodes = read_nodes(
                 &self.conn,
-                "SELECT node_id, parent_id, position, title, body
-                 FROM checkpoint_nodes WHERE checkpoint_id = ?1 ORDER BY node_id",
+                if self.version >= COLOUR_VERSION {
+                    "SELECT node_id, parent_id, position, title, body, colour
+                     FROM checkpoint_nodes WHERE checkpoint_id = ?1 ORDER BY node_id"
+                } else {
+                    "SELECT node_id, parent_id, position, title, body, NULL
+                     FROM checkpoint_nodes WHERE checkpoint_id = ?1 ORDER BY node_id"
+                },
                 [checkpoint_id],
             )?;
             checkpoints.push(Checkpoint::from_stored(created_at, reason, nodes)?);
@@ -928,12 +959,33 @@ impl Storage {
 
 /// The version a save leaves the file at: it never goes down, and only a save that has something
 /// for the attachments table takes a version 3 file to 4.
-fn target_version(at_least: i64, has_attachments: bool) -> i64 {
+fn target_version(at_least: i64, has_attachments: bool, has_colour: bool) -> i64 {
+    let mut to = at_least;
     if has_attachments {
-        at_least.max(ATTACHMENT_VERSION)
-    } else {
-        at_least
+        to = to.max(ATTACHMENT_VERSION);
     }
+    if has_colour {
+        to = to.max(COLOUR_VERSION);
+    }
+    to
+}
+
+/// Whether any active note carries a colour tag.
+fn has_colour(notebook: &Notebook) -> bool {
+    notebook
+        .in_tree_order()
+        .into_iter()
+        .any(|n| n.colour().is_some())
+}
+
+/// Whether any note held in Trash or a checkpoint carries a colour tag.
+fn recovery_has_colour(recovery: &Recovery) -> bool {
+    recovery
+        .trash()
+        .iter()
+        .flat_map(|t| t.nodes())
+        .chain(recovery.checkpoints().iter().flat_map(|c| c.nodes()))
+        .any(|n| n.colour().is_some())
 }
 
 /// One explicit step per version. `to` is never lower than `from` and never above the newest.
@@ -946,6 +998,11 @@ fn migrate(tx: &Transaction, from: i64, to: i64) -> Result<(), StorageError> {
     }
     if from < ATTACHMENT_VERSION && to >= ATTACHMENT_VERSION {
         tx.execute_batch(ATTACHMENT_SCHEMA)?;
+    }
+    if from < COLOUR_VERSION && to >= COLOUR_VERSION {
+        for statement in COLOUR_SCHEMA {
+            tx.execute_batch(statement)?;
+        }
     }
     Ok(())
 }
@@ -994,14 +1051,18 @@ fn write_attachments(
     Ok(())
 }
 
-fn write_nodes(tx: &Transaction, notebook: &Notebook) -> Result<(), StorageError> {
-    let mut insert = tx.prepare(
+fn write_nodes(tx: &Transaction, notebook: &Notebook, version: i64) -> Result<(), StorageError> {
+    let coloured = version >= COLOUR_VERSION;
+    let mut insert = tx.prepare(if coloured {
+        "INSERT INTO nodes (id, parent_id, position, title, body, colour)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+    } else {
         "INSERT INTO nodes (id, parent_id, position, title, body)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-    )?;
+         VALUES (?1, ?2, ?3, ?4, ?5)"
+    })?;
     // Parents come before children, as the foreign key requires.
     for node in notebook.in_tree_order() {
-        insert_node(&mut insert, &[], node)?;
+        insert_node(&mut insert, &[], node, coloured)?;
     }
     Ok(())
 }
@@ -1041,13 +1102,17 @@ fn write_meta(tx: &Transaction, next_id: u64) -> Result<(), StorageError> {
     Ok(())
 }
 
-fn write_trash(tx: &Transaction, recovery: &Recovery) -> Result<(), StorageError> {
+fn write_trash(tx: &Transaction, recovery: &Recovery, version: i64) -> Result<(), StorageError> {
+    let coloured = version >= COLOUR_VERSION;
     let mut entry =
         tx.prepare("INSERT INTO trash_entries (id, deleted_at, root_node_id) VALUES (?1, ?2, ?3)")?;
-    let mut node = tx.prepare(
+    let mut node = tx.prepare(if coloured {
+        "INSERT INTO trash_nodes (entry_id, node_id, parent_id, position, title, body, colour)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+    } else {
         "INSERT INTO trash_nodes (entry_id, node_id, parent_id, position, title, body)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-    )?;
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+    })?;
     // Row ids follow list order (oldest first), which load reads back.
     for (i, trashed) in recovery.trash().iter().enumerate() {
         let entry_id = i64::try_from(i + 1)
@@ -1058,26 +1123,35 @@ fn write_trash(tx: &Transaction, recovery: &Recovery) -> Result<(), StorageError
             id_to_sql(trashed.root().id())?
         ])?;
         for n in trashed.nodes() {
-            insert_node(&mut node, &[entry_id.into()], n)?;
+            insert_node(&mut node, &[entry_id.into()], n, coloured)?;
         }
     }
     Ok(())
 }
 
-fn write_checkpoints(tx: &Transaction, recovery: &Recovery) -> Result<(), StorageError> {
+fn write_checkpoints(
+    tx: &Transaction,
+    recovery: &Recovery,
+    version: i64,
+) -> Result<(), StorageError> {
+    let coloured = version >= COLOUR_VERSION;
     let mut checkpoint =
         tx.prepare("INSERT INTO checkpoints (id, created_at, reason) VALUES (?1, ?2, ?3)")?;
-    let mut node = tx.prepare(
+    let mut node = tx.prepare(if coloured {
+        "INSERT INTO checkpoint_nodes
+             (checkpoint_id, node_id, parent_id, position, title, body, colour)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+    } else {
         "INSERT INTO checkpoint_nodes
              (checkpoint_id, node_id, parent_id, position, title, body)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-    )?;
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+    })?;
     for (i, saved) in recovery.checkpoints().iter().enumerate() {
         let checkpoint_id = i64::try_from(i + 1)
             .map_err(|_| StorageError::InvalidData("too many checkpoints".into()))?;
         checkpoint.execute(params![checkpoint_id, saved.created_at(), saved.reason()])?;
         for n in saved.nodes() {
-            insert_node(&mut node, &[checkpoint_id.into()], n)?;
+            insert_node(&mut node, &[checkpoint_id.into()], n, coloured)?;
         }
     }
     Ok(())
@@ -1089,6 +1163,7 @@ fn insert_node(
     insert: &mut rusqlite::Statement,
     lead: &[rusqlite::types::Value],
     node: &Node,
+    coloured: bool,
 ) -> Result<(), StorageError> {
     use rusqlite::types::Value;
     let mut values: Vec<Value> = lead.to_vec();
@@ -1104,11 +1179,18 @@ fn insert_node(
     )?));
     values.push(Value::Text(node.title().to_string()));
     values.push(Value::Text(node.body().to_string()));
+    if coloured {
+        values.push(
+            node.colour()
+                .map_or(Value::Null, |c| Value::Text(c.as_str().to_owned())),
+        );
+    }
     insert.execute(rusqlite::params_from_iter(values))?;
     Ok(())
 }
 
-/// Reads rows of (id, parent_id, position, title, body) into nodes.
+/// Reads rows of (id, parent_id, position, title, body, colour) into nodes. A stored colour that is
+/// not one of the six identifiers is an error: the file is refused rather than the tag dropped.
 fn read_nodes<P: rusqlite::Params>(
     conn: &Connection,
     sql: &str,
@@ -1122,21 +1204,31 @@ fn read_nodes<P: rusqlite::Params>(
             row.get::<_, i64>(2)?,
             row.get::<_, String>(3)?,
             row.get::<_, String>(4)?,
+            row.get::<_, Option<String>>(5)?,
         ))
     })?;
 
     let mut nodes = Vec::new();
     for row in rows {
-        let (id, parent_id, position, title, body) = row?;
+        let (id, parent_id, position, title, body, colour) = row?;
+        let colour = colour
+            .map(|text| {
+                Colour::parse(&text)
+                    .ok_or_else(|| StorageError::InvalidData(format!("unknown colour {text:?}")))
+            })
+            .transpose()?;
         let position = usize::try_from(position)
             .map_err(|_| StorageError::InvalidData("negative position".into()))?;
-        nodes.push(Node::from_parts(
-            id_from_sql(id)?,
-            parent_id.map(id_from_sql).transpose()?,
-            position,
-            title,
-            body,
-        ));
+        nodes.push(
+            Node::from_parts(
+                id_from_sql(id)?,
+                parent_id.map(id_from_sql).transpose()?,
+                position,
+                title,
+                body,
+            )
+            .with_colour(colour),
+        );
     }
     Ok(nodes)
 }
@@ -1944,10 +2036,10 @@ mod tests {
     }
 
     #[test]
-    fn schema_versions_above_4_and_empty_files_stay_unsupported() {
+    fn schema_versions_above_5_and_empty_files_stay_unsupported() {
         let db = TempDb::new();
         Storage::create(db.path()).unwrap();
-        for version in [5, 99] {
+        for version in [6, 99] {
             write_raw(db.path(), &format!("PRAGMA user_version = {version};"));
             match Storage::open(db.path()) {
                 Err(StorageError::UnsupportedSchemaVersion(v)) => assert_eq!(v, version),

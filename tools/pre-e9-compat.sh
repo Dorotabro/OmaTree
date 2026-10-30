@@ -43,7 +43,7 @@ echo "== building pre-E9 core ($REV)"
 (cd "$WORK/old" && cargo build --release -p checker --quiet)
 echo "== writing fixtures with the current build"
 OMATREE_COMPAT_DIR="$WORK/fixtures" cargo test -p omatree-core --quiet -- --ignored write_compat_fixtures >/dev/null
-for f in v3 v4 v4-pruned; do
+for f in v3 v4 v4-pruned v5-tagged; do
   before="$(sha256sum "$WORK/fixtures/$f.omatree" | cut -d' ' -f1)"
   out="$("$WORK/old/target/release/checker" "$WORK/fixtures/$f.omatree")"
   after="$(sha256sum "$WORK/fixtures/$f.omatree" | cut -d' ' -f1)"

@@ -115,6 +115,49 @@ pub struct Chrome {
     /// Error text on a panel or a dialog.
     pub danger_text: Color32,
     pub warning_text: Color32,
+    /// The six colour-tag colours, in `Colour::ALL` order (see [`tag_colours`]).
+    pub tags: [Color32; 6],
+}
+
+impl Chrome {
+    /// The displayed colour of a tag in this theme.
+    pub fn tag(&self, colour: omatree_core::notebook::Colour) -> Color32 {
+        let at = omatree_core::notebook::Colour::ALL
+            .iter()
+            .position(|c| *c == colour)
+            .unwrap_or(0);
+        self.tags[at]
+    }
+}
+
+/// Hue (degrees) of each tag identity. These are what the names mean, red to purple; they are not
+/// stored anywhere, and what a tag looks like in a theme is decided in [`tag_colours`].
+const TAG_HUES: [f32; 6] = [355.0, 25.0, 52.0, 140.0, 212.0, 278.0];
+
+/// `hue` (degrees) at the given saturation and lightness, as a colour.
+fn hsl(hue: f32, s: f32, l: f32) -> Color32 {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let h = (hue.rem_euclid(360.0)) / 60.0;
+    let x = c * (1.0 - (h % 2.0 - 1.0).abs());
+    let (r, g, b) = match h as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = l - c / 2.0;
+    let q = |v: f32| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+    Color32::from_rgb(q(r), q(g), q(b))
+}
+
+/// The six tag colours for a theme: fixed hues (so the six stay distinct whatever the theme's accent
+/// is), with lightness and saturation taken from whether the theme is dark or light, then
+/// pulled just far enough to read ([`readable`], [`MUTED_MIN`]) on every surface a row can sit on.
+fn tag_colours(dark: bool, on: &[Color32]) -> [Color32; 6] {
+    let (s, l) = if dark { (0.78, 0.60) } else { (0.78, 0.40) };
+    TAG_HUES.map(|h| readable(hsl(h, s, l), on, MUTED_MIN))
 }
 
 impl Chrome {
@@ -151,6 +194,10 @@ impl Chrome {
             ),
             danger_text: readable(danger, &all, TEXT_MIN),
             warning_text: readable(colour(p.warning), &all, TEXT_MIN),
+            tags: tag_colours(
+                p.dark,
+                &[background, surface, raised, selected_focus, selected_blur],
+            ),
         }
     }
 }

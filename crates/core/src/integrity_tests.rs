@@ -335,7 +335,7 @@ fn a_reference_in_a_malformed_form_is_not_a_reference_and_resolves_to_nothing() 
 
 #[test]
 fn unknown_future_versions_are_refused_without_touching_the_file() {
-    for v in [5, 6, 99, 1_000_000] {
+    for v in [6, 7, 99, 1_000_000] {
         let d = Dir::new();
         let p = d.join("n.omatree");
         v4(&p);

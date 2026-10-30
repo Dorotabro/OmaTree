@@ -820,7 +820,7 @@ fn the_file_menu_lists_the_notebook_commands_and_works_from_the_keyboard() {
         h.ctx.format_shortcut(&keymap::NEW_NOTEBOOK),
     );
     assert!(
-        texts.iter().any(|t| *t == open) && texts.iter().any(|t| *t == new_notebook),
+        texts.contains(&open) && texts.contains(&new_notebook),
         "{open} / {new_notebook}: {texts:?}"
     );
     h.press(Key::Escape);

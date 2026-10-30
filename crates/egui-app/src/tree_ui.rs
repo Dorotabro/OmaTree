@@ -33,6 +33,8 @@ enum Cmd {
     SubtreeOpen(bool),
     EditBody,
     Delete,
+    /// Set (`Some`) or clear (`None`) a note's colour tag.
+    SetColour(NodeId, Option<Colour>),
     NewRoot,
     NewChild,
     Recovery,
@@ -155,6 +157,16 @@ impl Host {
         {
             self.tree_keys(&ctx, cmds);
         }
+        // When a menu closes (a pick, Escape, a click away) and nothing has the keyboard, it goes
+        // back to the tree and so to the selected row. A click into the editor or title keeps its own.
+        let menu_open = egui::Popup::is_any_open(&ctx);
+        if std::mem::replace(&mut self.menu_was_open, menu_open)
+            && !menu_open
+            && !self.dialog_open()
+            && ctx.memory(|m| m.focused()).is_none()
+        {
+            self.set_focus(Focus::Tree);
+        }
         let want_menu = std::mem::take(&mut self.menu_request);
         let scroll_to = self
             .scroll_to
@@ -199,7 +211,7 @@ impl Host {
                     });
                 }
                 surface.context_menu(|ui| {
-                    menu_entries(ui, None, false, &ch, cmds);
+                    menu_entries(ui, None, false, None, &ch, cmds);
                 });
 
                 let first = (viewport.min.y / ROW_H).floor().max(0.0) as usize;
@@ -232,8 +244,10 @@ impl Host {
                     // What a screen reader gets for the row: its title, its level, whether it is
                     // open and whether it is the selected note. egui's own `selected` becomes
                     // AccessKit's "toggled", so the tree-item fields are set directly.
+                    let closed_with_tags = !open && r.has_children && r.below != 0;
+                    let named = tree_item_name(&r, closed_with_tags);
                     resp.widget_info(|| {
-                        egui::WidgetInfo::labeled(egui::Role::TreeItem, true, r.title.as_str())
+                        egui::WidgetInfo::labeled(egui::Role::TreeItem, true, named.as_str())
                     });
                     ctx.accesskit_node_builder(resp.id, |node| {
                         node.set_selected(current);
@@ -354,8 +368,15 @@ impl Host {
                             text_color,
                         ),
                     );
+                    // The right-hand gutter holds the colour marks, only when there are any, so an
+                    // untagged row is exactly as before and the title keeps the rest.
+                    // The closed-branch cue yields to the title in a very narrow pane; the note's own
+                    // dot never does.
+                    let room = rect.right() - text_left - 6.0;
+                    let cue = closed_with_tags && room - tag_gutter(&r, true) >= 48.0;
+                    let marks = tag_gutter(&r, cue);
                     job.wrap = egui::text::TextWrapping {
-                        max_width: (rect.right() - text_left - 6.0).max(10.0),
+                        max_width: (rect.right() - text_left - 6.0 - marks).max(10.0),
                         max_rows: 1,
                         break_anywhere: true,
                         overflow_character: Some('\u{2026}'),
@@ -369,6 +390,8 @@ impl Host {
                         galley,
                         text_color,
                     );
+
+                    paint_tag_marks(&painter, rect, &r, cue, &ch, current || resp.hovered());
 
                     if resp.clicked() || resp.secondary_clicked() {
                         ctx.memory_mut(|m| m.request_focus(tree_id));
@@ -403,7 +426,9 @@ impl Host {
                             _ => self.menu_pos = None,
                         }
                     }
-                    popup.show(|ui| menu_entries(ui, Some(r.id), r.has_children, &ch, cmds));
+                    popup.show(|ui| {
+                        menu_entries(ui, Some(r.id), r.has_children, Some(r.colour), &ch, cmds)
+                    });
                 }
                 if let Some(t) = self.drag.as_ref().and_then(|d| d.target) {
                     let accent_line = |y: f32, colour: Color32| {
@@ -638,6 +663,7 @@ impl Host {
                     }
                 }
                 Cmd::Delete => self.ask_delete(ctx),
+                Cmd::SetColour(id, colour) => self.set_colour(id, colour),
                 Cmd::NewRoot => self.create_root(ctx),
                 Cmd::NewChild => self.create_child(ctx),
                 Cmd::Recovery => self.open_recovery(ctx),
@@ -852,10 +878,172 @@ pub(crate) fn paint_inset_rule(ui: &egui::Ui, y: f32, colour: Color32) {
     );
 }
 
+/// What a screen reader says for a row: the title, then its own colour, then (closed branches only)
+/// that coloured notes are inside. The colour is never only a colour.
+fn tree_item_name(r: &tree::Row, closed_with_tags: bool) -> String {
+    let mut name = r.title.clone();
+    if let Some(c) = r.colour {
+        name.push_str(&format!(", {} tag", c.label().to_lowercase()));
+    }
+    if closed_with_tags {
+        name.push_str(", contains coloured notes");
+    }
+    name
+}
+
+const TAG_DOT_R: f32 = 4.0;
+const TAG_MINI_R: f32 = 2.0;
+/// The most colours the closed-branch cue shows; more than this are not drawn (the cue says
+/// "something coloured is inside", not what).
+const TAG_MINI_MAX: usize = 3;
+
+/// The closed-branch cue: the colours present beneath a row, in palette order, at most
+/// [`TAG_MINI_MAX`].
+fn mini_colours(r: &tree::Row) -> Vec<Colour> {
+    Colour::ALL
+        .into_iter()
+        .filter(|c| r.below & tree::colour_bit(*c) != 0)
+        .take(TAG_MINI_MAX)
+        .collect()
+}
+
+/// How much of a row's right edge the colour marks take (0 when there is nothing to draw).
+pub(crate) fn tag_gutter(r: &tree::Row, closed_with_tags: bool) -> f32 {
+    let mut w = 0.0;
+    if r.colour.is_some() {
+        w += 2.0 * TAG_DOT_R + 8.0;
+    }
+    if closed_with_tags {
+        w += mini_colours(r).len() as f32 * (2.0 * TAG_MINI_R + 2.0) + 6.0;
+    }
+    w
+}
+
+/// The marks at a row's right edge: the note's own tag as one small dot, and, left of it and only
+/// while the branch is closed, a few tiny dots for the colours inside. The two differ in size and
+/// position, so a parent's own tag is never mistaken for a descendant's.
+fn paint_tag_marks(
+    painter: &egui::Painter,
+    rect: Rect,
+    r: &tree::Row,
+    closed_with_tags: bool,
+    ch: &theme::Chrome,
+    emphasise: bool,
+) {
+    let y = rect.center().y;
+    let mut x = rect.right() - 8.0;
+    // On a selected or hovered row the dot gets a faint outline so it stays distinct from the fill.
+    let outline = if emphasise {
+        Stroke::new(1.0, with_alpha(ch.text, 0.45))
+    } else {
+        Stroke::NONE
+    };
+    if let Some(c) = r.colour {
+        x -= TAG_DOT_R;
+        painter.circle(Pos2::new(x, y), TAG_DOT_R, ch.tag(c), outline);
+        x -= TAG_DOT_R + 4.0;
+    }
+    if closed_with_tags {
+        for c in mini_colours(r).into_iter().rev() {
+            x -= TAG_MINI_R;
+            painter.circle_filled(Pos2::new(x, y), TAG_MINI_R, ch.tag(c));
+            x -= TAG_MINI_R + 2.0;
+        }
+    }
+}
+
+/// The Colour row of the tree menu: the six swatches side by side, the current one ringed, then
+/// "No colour" as a plain command so that clearing can never be mistaken for a colour. Each swatch
+/// is a focusable button (arrow keys and Tab move between them, Enter or Space picks) with its
+/// name as tooltip and as its accessible name.
+fn colour_picker(
+    ui: &mut egui::Ui,
+    id: NodeId,
+    current: Option<Colour>,
+    ch: &theme::Chrome,
+) -> Option<Cmd> {
+    let mut picked = None;
+    ui.label(
+        egui::RichText::new("Colour")
+            .size(layout::SMALL_PX)
+            .color(ch.muted),
+    );
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        // Arrow keys move between the swatches (egui moves focus in a menu with Tab only).
+        let mut ids = Vec::new();
+        let mut focused = None;
+        for c in Colour::ALL {
+            let (rect, r) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
+            ids.push(r.id);
+            if r.has_focus() {
+                focused = Some(ids.len() - 1);
+                // Let the arrow keys reach this widget instead of egui's own focus movement.
+                ui.memory_mut(|m| {
+                    m.set_focus_lock_filter(
+                        r.id,
+                        egui::EventFilter {
+                            horizontal_arrows: true,
+                            ..Default::default()
+                        },
+                    )
+                });
+            }
+            let selected = current == Some(c);
+            r.widget_info(|| {
+                egui::WidgetInfo::selected(egui::Role::RadioButton, true, selected, c.label())
+            });
+            let centre = rect.center();
+            let radius = if r.hovered() || r.has_focus() {
+                8.5
+            } else {
+                7.5
+            };
+            ui.painter().circle_filled(centre, radius, ch.tag(c));
+            if selected {
+                ui.painter()
+                    .circle_stroke(centre, 10.0, Stroke::new(2.0, ch.text));
+            } else if r.has_focus() {
+                ui.painter()
+                    .circle_stroke(centre, 10.0, Stroke::new(2.0, ch.accent));
+            }
+            if r.clone().on_hover_text(c.label()).clicked() {
+                picked = Some(Cmd::SetColour(id, Some(c)));
+                ui.close();
+            }
+        }
+        if let Some(at) = focused {
+            let step = ui.input_mut(|i| {
+                if i.consume_key(egui::Modifiers::NONE, Key::ArrowRight) {
+                    1
+                } else if i.consume_key(egui::Modifiers::NONE, Key::ArrowLeft) {
+                    -1
+                } else {
+                    0
+                }
+            });
+            let to = (at as isize + step).clamp(0, ids.len() as isize - 1) as usize;
+            if step != 0 {
+                ui.memory_mut(|m| m.request_focus(ids[to]));
+            }
+        }
+    });
+    let r = ui.add_enabled(
+        current.is_some(),
+        egui::Button::new("No colour").shortcut_text(""),
+    );
+    if r.clicked() {
+        picked = Some(Cmd::SetColour(id, None));
+        ui.close();
+    }
+    picked
+}
+
 fn menu_entries(
     ui: &mut egui::Ui,
     on: Option<NodeId>,
     branch: bool,
+    colour: Option<Option<Colour>>,
     ch: &theme::Chrome,
     cmds: &mut Vec<Cmd>,
 ) {
@@ -894,10 +1082,16 @@ fn menu_entries(
     );
     pick(ui, "Expand all", "", true, Cmd::ExpandAll(true));
     pick(ui, "Collapse all", "", true, Cmd::ExpandAll(false));
+    let mut picked = None;
+    if let (Some(id), Some(current)) = (on, colour) {
+        ui.separator();
+        picked = colour_picker(ui, id, current, ch);
+    }
     ui.separator();
     pick(ui, "Move to Trash", "Delete", on.is_some(), Cmd::Delete);
     let recovery_keys = ui.ctx().format_shortcut(&keymap::RECOVERY);
     pick(ui, "Recovery\u{2026}", &recovery_keys, true, Cmd::Recovery);
+    cmds.extend(picked);
 }
 
 /// The notebook menu behind "menu": the commands that are about the whole notebook.

@@ -21,6 +21,59 @@ impl NodeId {
     }
 }
 
+/// A note's colour tag: one of six fixed identities (T1). The names are semantic, not RGB values:
+/// what a colour looks like is the theme's business and is never stored. A note has at most one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Colour {
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Blue,
+    Purple,
+}
+
+impl Colour {
+    /// Every colour, in palette order.
+    pub const ALL: [Colour; 6] = [
+        Colour::Red,
+        Colour::Orange,
+        Colour::Yellow,
+        Colour::Green,
+        Colour::Blue,
+        Colour::Purple,
+    ];
+
+    /// The identifier stored in the notebook file. These strings are a file format: they never change.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Colour::Red => "red",
+            Colour::Orange => "orange",
+            Colour::Yellow => "yellow",
+            Colour::Green => "green",
+            Colour::Blue => "blue",
+            Colour::Purple => "purple",
+        }
+    }
+
+    /// The name shown to people.
+    pub fn label(self) -> &'static str {
+        match self {
+            Colour::Red => "Red",
+            Colour::Orange => "Orange",
+            Colour::Yellow => "Yellow",
+            Colour::Green => "Green",
+            Colour::Blue => "Blue",
+            Colour::Purple => "Purple",
+        }
+    }
+
+    /// The colour stored as `text`, exactly (no case folding, no trimming); anything else is `None`.
+    pub fn parse(text: &str) -> Option<Colour> {
+        Colour::ALL.into_iter().find(|c| c.as_str() == text)
+    }
+}
+
 /// A single note. Read-only to callers; only `Notebook` mutates nodes, so
 /// parent/position invariants cannot be broken from outside.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +83,7 @@ pub struct Node {
     position: usize,
     title: String,
     body: String,
+    colour: Option<Colour>,
 }
 
 impl Node {
@@ -47,7 +101,14 @@ impl Node {
             position,
             title,
             body,
+            colour: None,
         }
+    }
+
+    /// This node with its colour tag set (for rebuilding persisted nodes).
+    pub(crate) fn with_colour(mut self, colour: Option<Colour>) -> Self {
+        self.colour = colour;
+        self
     }
 
     pub fn id(&self) -> NodeId {
@@ -70,6 +131,11 @@ impl Node {
 
     pub fn body(&self) -> &str {
         &self.body
+    }
+
+    /// The colour tag, if the note has one.
+    pub fn colour(&self) -> Option<Colour> {
+        self.colour
     }
 }
 
@@ -577,6 +643,20 @@ impl Notebook {
         Ok(())
     }
 
+    /// Sets or clears a note's colour tag. Returns whether it changed. The tag belongs to the note:
+    /// renaming, moving and reordering never touch it, and it travels with the note into Trash and
+    /// checkpoints because those hold copies of the node.
+    pub fn set_colour(
+        &mut self,
+        id: NodeId,
+        colour: Option<Colour>,
+    ) -> Result<bool, NotebookError> {
+        let node = self.require_mut(id)?;
+        let changed = node.colour != colour;
+        node.colour = colour;
+        Ok(changed)
+    }
+
     /// Root nodes in sibling order.
     pub fn roots(&self) -> Vec<&Node> {
         self.siblings(None)
@@ -625,6 +705,7 @@ impl Notebook {
                 position,
                 title: title.to_string(),
                 body: String::new(),
+                colour: None,
             },
         );
         id

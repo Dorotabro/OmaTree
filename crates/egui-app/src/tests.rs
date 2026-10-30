@@ -822,6 +822,7 @@ fn timings() {
     println!("save (set_body write-through already done): {save:.1} ms");
 }
 
+mod colour_tests;
 mod identity_tests;
 mod lifecycle_tests;
 mod mac_keys_tests;

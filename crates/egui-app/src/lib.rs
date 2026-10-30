@@ -62,7 +62,7 @@ pub use tree::{Row, Tree};
 
 use eframe::egui::{self, Key};
 use omatree_core::document::{Document, DocumentError};
-use omatree_core::notebook::NodeId;
+use omatree_core::notebook::{Colour, NodeId};
 use omatree_editor::theme::Palette;
 use omatree_editor::{EditorInput, EditorKeys, EditorOutput, EditorView, FocusRequest, NoteKey};
 use std::path::{Path, PathBuf};
@@ -91,6 +91,9 @@ pub struct Host {
     theme: ThemeState,
     keys: EditorKeys,
     bold: Option<egui::FontFamily>,
+    /// A menu was open on the previous frame (see `tree_pane`: the tree gets the keyboard back
+    /// when a menu closes and nothing else has it).
+    menu_was_open: bool,
     /// Where the keyboard should go on the next frame (a one-shot request).
     focus: Option<Focus>,
     focus_tries: u8,
@@ -177,6 +180,7 @@ impl Host {
                 keys
             },
             bold: None,
+            menu_was_open: false,
             focus: None,
             focus_tries: 0,
             focus_back: Focus::Tree,

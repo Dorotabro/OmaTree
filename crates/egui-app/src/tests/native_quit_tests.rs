@@ -25,7 +25,7 @@ fn journal(p: &Path) -> String {
 
 impl H {
     /// Record what the host tells the operating system.
-    fn watch_quit(&mut self) -> Answers {
+    pub(super) fn watch_quit(&mut self) -> Answers {
         let answers: Answers = Rc::default();
         let sink = answers.clone();
         self.host
@@ -34,7 +34,7 @@ impl H {
     }
 
     /// What the platform hook does when the quit command arrives.
-    fn raise_quit(&mut self) {
+    pub(super) fn raise_quit(&mut self) {
         self.host.native_quit_inbox().store(true, Ordering::Release);
     }
 

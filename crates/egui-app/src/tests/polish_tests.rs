@@ -59,8 +59,16 @@ pub(super) struct Line {
     pub(super) b: Pos2,
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct Dot {
+    pub(super) centre: Pos2,
+    pub(super) radius: f32,
+    pub(super) fill: Color32,
+}
+
 #[derive(Default)]
 pub(super) struct Painted {
+    pub(super) dots: Vec<Dot>,
     pub(super) texts: Vec<Text>,
     pub(super) fills: Vec<Fill>,
     pub(super) lines: Vec<Line>,
@@ -92,6 +100,11 @@ fn collect(shape: &Shape, out: &mut Painted) {
                     .collect(),
             });
         }
+        Shape::Circle(c) => out.dots.push(Dot {
+            centre: c.center,
+            radius: c.radius,
+            fill: c.fill,
+        }),
         Shape::Rect(r) => out.fills.push(Fill {
             rect: r.rect,
             fill: r.fill,

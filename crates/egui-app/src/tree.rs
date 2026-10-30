@@ -6,7 +6,7 @@
 //! notes are open (`is_expanded`); nothing here is remembered across a notebook.
 
 use omatree_core::document::Document;
-use omatree_core::notebook::NodeId;
+use omatree_core::notebook::{Colour, NodeId};
 use std::collections::HashMap;
 
 /// One note in the tree.
@@ -23,6 +23,16 @@ pub struct Row {
     /// Bit `k` set: the ancestor at depth `k + 1` has later siblings, so a vertical guide runs
     /// through this row in column `k` (columns `0..depth - 1`).
     pub guides: u32,
+    /// The note's own colour tag.
+    pub colour: Option<Colour>,
+    /// Which colours some note beneath this one carries (bit `n` is `Colour::ALL[n]`). Not the
+    /// note's own tag; the tree shows it only while the branch is closed.
+    pub below: u8,
+}
+
+/// The bit of `colour` in [`Row::below`].
+pub fn colour_bit(colour: Colour) -> u8 {
+    1 << Colour::ALL.iter().position(|c| *c == colour).unwrap_or(0)
 }
 
 #[derive(Default)]
@@ -70,7 +80,21 @@ impl Tree {
                 has_children: has_children.contains_key(&n.id()),
                 last,
                 guides,
+                colour: n.colour(),
+                below: 0,
             });
+        }
+        // Depth-first order puts every note after its parent, so one pass from the end hands each
+        // note's colours (its own and those below it) to its parent: linear in the number of notes.
+        let at: HashMap<NodeId, usize> = rows.iter().enumerate().map(|(i, r)| (r.id, i)).collect();
+        for i in (0..rows.len()).rev() {
+            let (parent, seen) = (
+                rows[i].parent,
+                rows[i].below | rows[i].colour.map_or(0, colour_bit),
+            );
+            if let Some(p) = parent.and_then(|p| at.get(&p)) {
+                rows[*p].below |= seen;
+            }
         }
         let index_of = rows.iter().enumerate().map(|(i, r)| (r.id, i)).collect();
         let mut t = Tree {

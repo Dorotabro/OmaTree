@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::attachments::{
     self, Attachment, AttachmentError, AttachmentId, AttachmentInfo, MediaType,
 };
-use crate::notebook::{MovePlan, NodeId, Notebook, NotebookError, DEFAULT_TITLE};
+use crate::notebook::{Colour, MovePlan, NodeId, Notebook, NotebookError, DEFAULT_TITLE};
 use crate::recovery::{unix_now, Checkpoint, Recovery, RecoveryError, TrashEntry};
 use crate::storage::{AttachmentPlan, Storage, StorageError};
 
@@ -703,6 +703,19 @@ impl Document {
         self.notebook.rename(id, title)?;
         self.active_dirty |= !unchanged;
         Ok(!unchanged)
+    }
+
+    /// Sets or clears a note's colour tag (T1). An ordinary edit, like a rename: no checkpoint, it
+    /// makes the active state dirty, so autosave and the close guard cover it. Returns whether the
+    /// tag actually changed.
+    pub fn set_colour(
+        &mut self,
+        id: NodeId,
+        colour: Option<Colour>,
+    ) -> Result<bool, NotebookError> {
+        let changed = self.notebook.set_colour(id, colour)?;
+        self.active_dirty |= changed;
+        Ok(changed)
     }
 
     /// Returns whether the body actually changed.

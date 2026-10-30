@@ -816,17 +816,17 @@ fn a_notebook_from_a_newer_schema_is_refused_without_a_byte_changing() {
     let d = Dir::new();
     let p = d.join("n.omatree");
     v3_fixture(&p);
-    raw(&p).execute_batch("PRAGMA user_version = 5;").unwrap();
+    raw(&p).execute_batch("PRAGMA user_version = 6;").unwrap();
     let bytes = std::fs::read(&p).unwrap();
     assert!(matches!(
         Storage::open(&p),
-        Err(StorageError::UnsupportedSchemaVersion(5))
+        Err(StorageError::UnsupportedSchemaVersion(6))
     ));
     assert!(Document::open_existing(&p).is_err());
     assert!(matches!(
         Document::open_existing(&p),
         Err(DocumentError::Storage(
-            StorageError::UnsupportedSchemaVersion(5)
+            StorageError::UnsupportedSchemaVersion(6)
         ))
     ));
     let mut untitled = Document::untitled();
@@ -848,7 +848,12 @@ fn write_compat_fixtures() {
     let dir =
         PathBuf::from(std::env::var_os("OMATREE_COMPAT_DIR").expect("set OMATREE_COMPAT_DIR"));
     std::fs::create_dir_all(&dir).unwrap();
-    for name in ["v3.omatree", "v4.omatree", "v4-pruned.omatree"] {
+    for name in [
+        "v3.omatree",
+        "v4.omatree",
+        "v4-pruned.omatree",
+        "v5-tagged.omatree",
+    ] {
         let _ = std::fs::remove_file(dir.join(name));
     }
     let v3 = dir.join("v3.omatree");
@@ -879,6 +884,14 @@ fn write_compat_fixtures() {
     let rp = doc.preview_reclaim().unwrap();
     assert!(doc.reclaim_space(&rp.token).unwrap().ran);
     assert_eq!(header_version(&pruned), 4);
+    // T1: a notebook with a colour tag is schema version 5, which a build from before T1 must refuse.
+    let tagged = dir.join("v5-tagged.omatree");
+    v3_fixture(&tagged);
+    let mut doc = Document::open_existing(&tagged).unwrap();
+    doc.set_colour(NodeId::from_raw(0), Some(crate::notebook::Colour::Purple))
+        .unwrap();
+    doc.save().unwrap();
+    assert_eq!(header_version(&tagged), 5);
 }
 
 // --- E10: the budget for unsaved images --------------------------------------------------------

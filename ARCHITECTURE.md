@@ -431,3 +431,44 @@ macOS Finder "Open With" needs an app-registered `NSApplicationDelegate` that do
 ## Linux distribution of the egui version (E12b)
 
 The egui application is packaged from its own tree, `packaging/egui/`, independent of the Qt packaging, which is unchanged until E13. One staging script feeds the Arch, Debian and AppImage builds. The application identity is the single constant `omatree_egui::APP_ID` (`io.github.Dorotabro.OmaTreeEgui`), which equals the window's Wayland app_id, the desktop file name and `StartupWMClass`, the icon name and the AppStream id, so it can coexist with the Qt version (`io.github.Dorotabro.OmaTree`) and is renamed at E13. The executable links only glibc; windowing, GL, font and D-Bus libraries are opened at run time from the host, so packages declare them by hand and the AppImage bundles none. The pinned editor library is private, so container builds are seeded from the already-fetched Cargo cache after checking the commit. Details and results: `docs/PACKAGING_EGUI.md`.
+
+## Colour tags (T1)
+
+A note may carry **one colour tag or none**: lightweight visual organisation with no built-in meaning. The tag is
+presentation metadata: it is not part of the note's Markdown, is not searched, and is not in any export.
+
+**Model.** `omatree_core::notebook::Colour` is a fixed six-value enum (`Red`, `Orange`, `Yellow`, `Green`, `Blue`,
+`Purple`) with stable identifiers (`as_str`: `red` … `purple`, a file format that never changes) and an exact
+`parse`. `Node::colour()` holds it; `Notebook::set_colour` and `Document::set_colour` change it. The authoritative
+state is therefore in `omatree-core`; the egui tree only copies it into its drawing rows (`Row::colour`, rebuilt
+with the tree). Only the *identity* is stored, never a theme-specific colour.
+
+**Persistence (schema version 5).** A nullable `colour TEXT` column on `nodes`, `trash_nodes` and `checkpoint_nodes`
+(each with `CHECK (colour IS NULL OR colour IN ('red', …, 'purple'))`), so a tag is stored with the note wherever the
+note is stored. It is written by the same checked transaction as every other part of a save. The file is raised to 5
+**only by a save that has a tag to write**, inside that transaction (`migrate`: three `ALTER TABLE … ADD COLUMN`,
+then `user_version`); a notebook that never has a tag stays at 3 or 4, exactly as before. A file never goes back
+down, and an untagged save of a version 5 file writes NULLs. On load, an identifier that is not one of the six is an
+**error** (the notebook is refused untouched), never a silently dropped tag.
+
+**Trash and checkpoints.** Both hold *copies of nodes*, so tags travel with them: deleting a subtree keeps every tag
+in it, restoring brings them back, a checkpoint records the tags as they were and restoring one restores exactly
+those. Changing a tag is an ordinary edit like a rename: it makes the active state dirty (so autosave and the close
+guard, including the macOS Command+Q guard, cover it) and takes no checkpoint. Rename, move and reorder never touch it.
+
+**Compatibility.** A build from before T1 (maximum schema 4) refuses a version 5 file with "unsupported notebook
+schema version 5" and leaves it byte for byte unchanged (`tools/pre-e9-compat.sh HEAD`); it opens untagged version 3
+and 4 files as before. **A notebook with tags cannot be opened by an older build.** The Qt application is such a
+build: it shares `omatree-core`, so it also understands version 5 and ignores tags, but a Qt save writes the tags back
+unchanged (they are part of the node), it neither shows nor edits them.
+
+**UI (egui).** `Tree::build` computes for each row its own tag and `below`, a bitmask of the colours present beneath
+it (one linear pass from the end of the depth-first list). The tree paints, in a right-hand gutter that exists only
+when there is something to draw: the note's own tag as one small dot, and, **only while the branch is closed**, up to
+three tiny dots (the colours inside, palette order) to its left; the cue yields to the title in a very narrow pane,
+the note's own dot never does. Title colour is unchanged. Colours come from `Chrome::tags`: six fixed hues, with
+lightness and saturation chosen for a dark or light theme and pulled to at least 3:1 contrast on every surface a row can
+sit on, so the marks follow theme changes. The tree menu (right-click, or Shift+F10 / the Menu key) gains a **Colour**
+row: six focusable swatches (current one ringed, Left/Right move between them, Enter or Space picks, Escape closes) and a
+separate "No colour" command; the tree gets the keyboard back afterwards. Accessible names: the row says
+`"<title>, red tag"` and, closed, `", contains coloured notes"`; swatches are radio buttons with their names.
