@@ -164,8 +164,12 @@ fn starting_without_a_path_gives_an_untitled_notebook_and_creates_no_file() {
         texts.iter().any(|t| t == "This notebook is empty"),
         "{texts:?}"
     );
+    // (The key is named the way the running platform names it: Ctrl+N, Cmd+N.)
+    let new_note = h.ctx.format_shortcut(&keymap::NEW_NOTE);
     assert!(
-        texts.iter().any(|t| t.starts_with("Press Ctrl+N")),
+        texts
+            .iter()
+            .any(|t| t.starts_with(&format!("Press {new_note}"))),
         "{texts:?}"
     );
     assert!(texts.iter().any(|t| t == "menu"), "{texts:?}");
@@ -811,7 +815,14 @@ fn the_file_menu_lists_the_notebook_commands_and_works_from_the_keyboard() {
     ] {
         assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
     }
-    assert!(texts.iter().any(|t| t == "Ctrl+O") && texts.iter().any(|t| t == "Ctrl+Alt+N"));
+    let (open, new_notebook) = (
+        h.ctx.format_shortcut(&keymap::OPEN),
+        h.ctx.format_shortcut(&keymap::NEW_NOTEBOOK),
+    );
+    assert!(
+        texts.iter().any(|t| *t == open) && texts.iter().any(|t| *t == new_notebook),
+        "{open} / {new_notebook}: {texts:?}"
+    );
     h.press(Key::Escape);
     assert!(!egui::Popup::is_any_open(&h.ctx));
     assert!(log.borrow().is_empty());

@@ -116,6 +116,7 @@ impl Host {
         if ctx.input(|i| i.viewport().close_requested()) && !self.request_close(ctx) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
+        self.native_quit(ctx);
         if let Some(due) = self.autosave_due {
             if now >= due {
                 self.autosave_due = None;
@@ -125,6 +126,55 @@ impl Host {
                 // the countdown is asked for again on each frame until it fires.
                 ctx.request_repaint_after(std::time::Duration::from_secs_f64(due - now + 0.02));
             }
+        }
+    }
+
+    /// Where an operating-system quit request is raised (see `native_quit.rs`): the platform hook
+    /// stores `true` here and the next frame's [`Host::logic`] takes it.
+    pub fn native_quit_inbox(&self) -> native_quit::Inbox {
+        self.quit_inbox.clone()
+    }
+
+    /// Where the final answer to such a request goes: `true` lets the application terminate.
+    pub fn set_native_quit_answer(&mut self, answer: native_quit::Answer) {
+        self.quit_answer = answer;
+    }
+
+    /// An operating-system quit (macOS Command+Q, the Dock's Quit, log-out) is the same request as
+    /// a click on the window's close button: it goes through [`Host::request_close`], the one
+    /// guard, and nothing here decides anything. What is added is the answer to the system, sent
+    /// exactly once for each request that was waiting: yes when the close was allowed (a clean
+    /// notebook, a successful Save, a confirmed Discard), no when the question was cancelled or
+    /// could not be asked (another question is open, a pending title is refused).
+    fn native_quit(&mut self, ctx: &egui::Context) {
+        if self
+            .quit_inbox
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            // The request is handled one frame later. Text typed just before the quit key is
+            // already queued but is only applied to the note when this frame's `ui` runs, after
+            // `logic`: judging "dirty" now would miss the last keystrokes and quit without asking.
+            // (Found on the real Mac: typing and pressing Command+Q within one frame quit with the
+            // last characters unsaved.) A repeated request while the question is open keeps that
+            // question, as a repeated click on the close button does, and never closes.
+            self.quit_waiting = true;
+            self.quit_deferred = true;
+            ctx.request_repaint();
+            return;
+        }
+        if std::mem::take(&mut self.quit_deferred) {
+            self.request_close(ctx);
+        }
+        if !self.quit_waiting {
+            return;
+        }
+        if self.quit {
+            self.quit_waiting = false;
+            (self.quit_answer)(true);
+        } else if self.pending != Some(Leave::Close) {
+            // Nothing is waiting for the answer any more: it was cancelled (or never asked).
+            self.quit_waiting = false;
+            (self.quit_answer)(false);
         }
     }
 
@@ -206,6 +256,9 @@ impl Host {
 
     pub(crate) fn finish_close(&mut self, ctx: &egui::Context) {
         self.quit = true;
+        // A confirmed Discard (or a finished Save) is the last word: the countdown that an edit
+        // left running must not write the notebook again while the window is going away.
+        self.autosave_due = None;
         self.dialog = Dialog::None;
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
@@ -262,7 +315,8 @@ impl Host {
     fn autosave(&mut self, ctx: &egui::Context) {
         // An untitled notebook has no file to write to: nothing is saved behind the user's back.
         let untitled = self.doc.as_ref().is_some_and(|d| !d.has_path());
-        if untitled || self.autosave_blocked || self.dialog_open() || !self.is_dirty() {
+        if untitled || self.quit || self.autosave_blocked || self.dialog_open() || !self.is_dirty()
+        {
             return;
         }
         match self.persist(ctx) {

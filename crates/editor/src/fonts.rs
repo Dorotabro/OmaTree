@@ -9,6 +9,10 @@ const CANDIDATES: &[&str] = &[
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
     "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    // macOS: Arial moved to the system's "Supplemental" folder (Catalina), and the old location is
+    // empty on current systems: with only that one, no bold face was found there and `**bold**`
+    // fell back to letter spacing (M1). The old path stays for older systems.
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
     "/Library/Fonts/Arial Bold.ttf",
     "C:\\Windows\\Fonts\\arialbd.ttf",
 ];
@@ -298,6 +302,132 @@ mod tests {
             misaligned > 0,
             "an uncorrected bold face should be a pixel off somewhere"
         );
+    }
+
+    // ---- M1: bold on macOS ----------------------------------------------------------------------
+
+    /// On a Mac the editor must find a bold face. (This was the defect: the only macOS candidate,
+    /// `/Library/Fonts/Arial Bold.ttf`, is not installed on current macOS, so `install_bold` found
+    /// nothing, no bold family was registered, and `**bold**` fell back to letter spacing.)
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_bold_face_is_found_on_macos() {
+        let ctx = Context::default();
+        assert!(
+            install_bold(&ctx).is_some(),
+            "no candidate bold font exists on this Mac: {CANDIDATES:?}"
+        );
+    }
+
+    /// Where each system keeps a bold sans face, named in the list. (A sentinel for the macOS
+    /// location that was missing; the real-file check above is the test that matters on a Mac.)
+    #[test]
+    fn the_candidates_cover_the_current_macos_location() {
+        assert!(
+            CANDIDATES.contains(&"/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
+            "{CANDIDATES:?}"
+        );
+    }
+
+    /// The face egui is told to use, and what it then draws: regular, bold, italic and bold italic
+    /// of the same letter, laid out by the editor's own `build_job` on a bold family built from an
+    /// embedded face (so this runs on every system).
+    #[test]
+    fn regular_bold_italic_and_bold_italic_select_the_right_faces_and_draw_differently() {
+        use crate::{layout, markdown};
+        let ctx = Context::default();
+        let bold_bytes = include_bytes!("../assets/fonts/LiberationSans-Bold.ttf").to_vec();
+        ctx.set_fonts(bold_definitions(bold_bytes));
+        ctx.run_ui(Default::default(), |_| {})
+            .textures_delta
+            .clear(); // fonts exist after the first frame
+        let family = FontFamily::Name("bold".into());
+        let src = "H **H** *H* ***H***\n";
+        let spans = markdown::parse(src);
+        let img = |_: usize, _: &str, _: Option<u16>| None;
+        let params = layout::Params {
+            base_size: 20.0,
+            text_color: egui::Color32::WHITE,
+            heading_colors: [egui::Color32::WHITE; 6],
+            quote_color: egui::Color32::WHITE,
+            code_color: egui::Color32::WHITE,
+            dim_color: egui::Color32::GRAY,
+            accent: egui::Color32::BLUE,
+            code_bg: egui::Color32::DARK_GRAY,
+            bold_family: Some(family.clone()),
+            bold_drop: bold_drop(&ctx, &family),
+            pixels_per_point: 1.0,
+            selection: src.len()..src.len(),
+            image_height: &img,
+            table_height: &|_| 90.0,
+        };
+        let (job, _) = layout::build_job(src, &spans, &params, 100_000.0);
+
+        assert_eq!(
+            job.text, src,
+            "the source bytes are laid out exactly as written"
+        );
+
+        // 1. The faces the layout asks egui for, by the letter each section holds.
+        let mut asked: Vec<(char, FontFamily, bool)> = Vec::new();
+        for sec in &job.sections {
+            for c in job.text[sec.byte_range.start.0..sec.byte_range.end.0]
+                .chars()
+                .filter(|c| *c == 'H')
+            {
+                asked.push((c, sec.format.font_id.family.clone(), sec.format.italics));
+            }
+        }
+        assert_eq!(
+            asked,
+            [
+                ('H', FontFamily::Proportional, false), // regular
+                ('H', family.clone(), false),           // **bold**
+                ('H', FontFamily::Proportional, true),  // *italic*
+                ('H', family.clone(), true),            // ***bold italic***
+            ],
+            "{asked:?}"
+        );
+
+        // 2. What egui then draws: the bold letters are a different face (wider), the italic one
+        // is the regular face slanted (same advance), and bold italic is the bold face slanted.
+        let mut widths = Vec::new();
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            let galley = ui.ctx().fonts_mut(|f| f.layout_job(job.clone()));
+            for row in &galley.rows {
+                for g in &row.glyphs {
+                    if g.chr == 'H' {
+                        widths.push(g.advance_width);
+                    }
+                }
+            }
+        });
+        out.textures_delta.clear();
+        assert_eq!(widths.len(), 4, "{widths:?}");
+        let [regular, bold, italic, bold_italic] = [widths[0], widths[1], widths[2], widths[3]];
+        assert!(
+            (bold - regular).abs() > 0.5,
+            "bold looks like regular: {widths:?}"
+        );
+        assert!((italic - regular).abs() < 0.01, "{widths:?}");
+        assert!((bold_italic - bold).abs() < 0.01, "{widths:?}");
+
+        // 3. A different palette (another theme) changes colours only, never which face is used.
+        let faces = |job: &egui::text::LayoutJob| {
+            job.sections
+                .iter()
+                .map(|s| (s.format.font_id.family.clone(), s.format.italics))
+                .collect::<Vec<_>>()
+        };
+        let themed = layout::Params {
+            text_color: egui::Color32::BLACK,
+            heading_colors: [egui::Color32::from_rgb(200, 30, 30); 6],
+            accent: egui::Color32::GOLD,
+            code_bg: egui::Color32::LIGHT_GRAY,
+            ..params
+        };
+        let (other, _) = layout::build_job(src, &spans, &themed, 100_000.0);
+        assert_eq!(faces(&job), faces(&other));
     }
 
     #[test]

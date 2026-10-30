@@ -113,7 +113,7 @@ impl H {
         self.settle();
     }
 
-    fn trash_titles(&self) -> Vec<String> {
+    pub(super) fn trash_titles(&self) -> Vec<String> {
         self.host
             .document()
             .unwrap()

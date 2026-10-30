@@ -13,9 +13,11 @@ mod compact_ui;
 mod drag;
 mod files;
 mod help;
+mod identity;
 mod keymap;
 mod layout;
 mod lifecycle;
+mod native_quit;
 mod note_export;
 mod ops;
 mod recent;
@@ -50,6 +52,7 @@ pub use files::{
     check_args, default_picker, native_picker, scripted_picker, Leave, PickKind, PickRequest,
     PickResult, Picker,
 };
+pub use identity::Identity;
 pub use lifecycle::{Dialog, AUTOSAVE_DELAY};
 pub use ops::Focus;
 pub use recent::{default_file as default_recent_file, Recent};
@@ -127,6 +130,13 @@ pub struct Host {
     dialog_fresh: bool,
     /// The window may close (set by a successful Save or a confirmed Discard).
     quit: bool,
+    /// An operating-system quit request (macOS Command+Q) waits for the close guard's answer, and
+    /// where the answer goes. See `native_quit.rs`.
+    quit_waiting: bool,
+    /// The request arrived this frame; it is handled in the next one (see `Host::native_quit`).
+    quit_deferred: bool,
+    quit_inbox: native_quit::Inbox,
+    quit_answer: native_quit::Answer,
     /// A real edit reached the document since the autosave countdown was last (re)started.
     edited: bool,
     autosave_due: Option<f64>,
@@ -193,6 +203,10 @@ impl Host {
             dialog: Dialog::None,
             dialog_fresh: false,
             quit: false,
+            quit_waiting: false,
+            quit_deferred: false,
+            quit_inbox: Default::default(),
+            quit_answer: Box::new(|_| {}),
             edited: false,
             autosave_due: None,
             autosave_blocked: false,
@@ -652,6 +666,8 @@ impl Host {
                     (ttl - (now - self.status_since)).max(0.0) + 0.05,
                 ));
         }
+        let identity = self.identity();
+        let save_keys = ui.ctx().format_shortcut(&keymap::SAVE);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if dirty {
                 let (text, colour) = if stopped {
@@ -667,6 +683,38 @@ impl Host {
                         ));
                     }
                 }
+            }
+            // Which notebook this is, quietly, beside the state: cut with an ellipsis rather than
+            // crowding the message, the whole location in the tooltip. (Drawn like the message
+            // below; it changes only with the notebook, so it never asks for a frame.)
+            if let Some(id) = &identity {
+                let max = (ui.available_width() * 0.4).clamp(48.0, 360.0);
+                let mut job = egui::text::LayoutJob::single_section(
+                    id.name.clone(),
+                    egui::TextFormat::simple(
+                        egui::FontId::proportional(layout::SMALL_PX),
+                        ch.muted,
+                    ),
+                );
+                job.wrap = egui::text::TextWrapping {
+                    max_width: max,
+                    max_rows: 1,
+                    break_anywhere: true,
+                    overflow_character: Some('\u{2026}'),
+                };
+                let galley = ui.painter().layout_job(job);
+                let (rect, r) = ui.allocate_exact_size(
+                    egui::vec2(galley.size().x + 12.0, layout::BAR_H),
+                    egui::Sense::hover(),
+                );
+                let at = egui::pos2(rect.left(), rect.center().y - galley.size().y / 2.0);
+                ui.painter().galley(at, galley, ch.muted);
+                let full = id.tooltip(&save_keys);
+                // Assistive technology gets the whole location too (not tested with VoiceOver).
+                r.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::Role::Label, true, format!("Notebook: {full}"))
+                });
+                r.on_hover_text(full);
             }
             if echo || !fresh || self.status.is_empty() {
                 return;
@@ -818,6 +866,10 @@ impl App {
             None => files::Launcher::default(),
         };
         host.set_recent_file(recent::default_file());
+        #[cfg(target_os = "macos")]
+        if native_quit::macos::install(&cc.egui_ctx, host.native_quit_inbox()) {
+            host.set_native_quit_answer(Box::new(native_quit::macos::reply));
+        }
         host.start_with_args(&cc.egui_ctx, &args);
         App { host, dialogs }
     }

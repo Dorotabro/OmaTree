@@ -2873,6 +2873,7 @@ dependencies = [
  "chrono",
  "eframe",
  "image",
+ "objc2 0.6.5",
  "omatree-core",
  "omatree-editor",
  "raw-window-handle",

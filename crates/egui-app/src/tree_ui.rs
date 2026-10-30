@@ -100,8 +100,15 @@ impl Host {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let menu = flat_action(ui, "menu", true, &chrome)
                             .on_hover_text("Notebook: new, open, save, export, recovery, compact");
-                        egui::Popup::menu(&menu)
-                            .show(|ui| file_entries(ui, &chrome, self.recent.items(), &mut cmds));
+                        egui::Popup::menu(&menu).show(|ui| {
+                            file_entries(
+                                ui,
+                                &chrome,
+                                self.identity().as_ref(),
+                                self.recent.items(),
+                                &mut cmds,
+                            )
+                        });
                     });
                 });
             });
@@ -571,6 +578,20 @@ impl Host {
                 cmds.push(Cmd::Delete);
             }
         });
+        // The key labelled "Delete" on an Apple keyboard sends Backspace; the forward-delete key
+        // (fn+Delete) is the one egui reports as `Key::Delete`. On a Mac the tree takes both, so
+        // Delete asks to move the note to Trash as it does elsewhere. Only here, only with no
+        // modifier (Option+Delete and Command+Delete are text editing; egui's matching ignores an
+        // extra Alt, so they are excluded by hand), and only while the tree has the keyboard
+        // (`tree_keys` runs for nothing else), so no text field is affected.
+        if ctx.os() == egui::os::OperatingSystem::Mac
+            && ctx.input_mut(|i| {
+                let m = i.modifiers;
+                !(m.alt || m.ctrl || m.command || m.mac_cmd) && i.consume_key(none, Key::Backspace)
+            })
+        {
+            cmds.push(Cmd::Delete);
+        }
         let menu = ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, Key::F10));
         if menu && self.selected.is_some() {
             self.menu_request = true;
@@ -880,11 +901,33 @@ fn menu_entries(
 }
 
 /// The notebook menu behind "menu": the commands that are about the whole notebook.
-fn file_entries(ui: &mut egui::Ui, ch: &theme::Chrome, recent: &[PathBuf], cmds: &mut Vec<Cmd>) {
+fn file_entries(
+    ui: &mut egui::Ui,
+    ch: &theme::Chrome,
+    identity: Option<&crate::Identity>,
+    recent: &[PathBuf],
+    cmds: &mut Vec<Cmd>,
+) {
     ui.set_min_width(260.0);
+    // A long folder name is cut with an ellipsis (the tooltip has all of it), not allowed to
+    // stretch the menu.
+    ui.set_max_width(380.0);
     ui.spacing_mut().button_padding = Vec2::new(10.0, 4.0);
     ui.spacing_mut().item_spacing.y = 2.0;
-    let _ = ch;
+    // Which notebook this is and where it lives, at the top where a keyboard user opens the menu.
+    if let Some(id) = identity {
+        let (name, folder) = id.menu_lines();
+        ui.add(egui::Label::new(egui::RichText::new(name).color(ch.text)).truncate());
+        if let Some(folder) = folder {
+            let line = egui::RichText::new(folder)
+                .size(layout::SMALL_PX)
+                .color(ch.muted);
+            let full = id.tooltip("");
+            ui.add(egui::Label::new(line).truncate())
+                .on_hover_text(full);
+        }
+        ui.separator();
+    }
     let ctx = ui.ctx().clone();
     let keys = |s: &egui::KeyboardShortcut| ctx.format_shortcut(s);
     let pick = |ui: &mut egui::Ui, cmds: &mut Vec<Cmd>, label: &str, hint: String, cmd: Cmd| {

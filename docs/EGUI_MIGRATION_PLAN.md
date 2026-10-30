@@ -1441,6 +1441,105 @@ Visual and usability refinement of the egui UI; no feature added. Qt untouched.
 - **Tests.** egui 321 (+16 ignored), editor 222 (+4), core 357 (+4), Qt 43; fmt, clippy `-D warnings`, `cargo build --release --workspace`, `pre-e9-compat.sh`, `verify-sources.sh` pass. Geometry tests were updated to the new constants (header line, tree width, `menu`, the Recovery tests use a wider window because the centred dialog now starts right of a 300 px pane); new tests cover the always-present field, the shared header line and empty-state wording.
 - **GUI (release build, native Wayland, isolated HOME/XDG, disposable notebooks).** Exercised: empty notebook; nested tree; empty and active search (Ctrl+F, typing, Down/Down/Enter reveals the note in the tree and returns focus to it); title edit with F2 and Enter (renamed, autosaved); plain/bold/italic/bold-italic, heading with bold, quote with bold, code block, table, link; dark theme, a light palette, and a live dark → light switch in the running window; a 430 px window (tree 172 px, editor usable). Window resizing worked by making the window floating (`hl.dsp.window.float()`, then `resize({exact=true})`) and floating it back. Not exercised: IME, high-DPI, other platforms; the 1.25x/1.5x/2x baseline results come from the painted-mesh test, not a real display.
 
+### M1 record (macOS dogfooding fixes)
+
+**Status: implemented and verified on the real Mac (macOS 27.0.1, arm64, Apple silicon, built-in display) on `egui-integration`; not committed.** M1 follows E12c and is based on the notebook `Dogfooding copy.omatree` (read from a **copy**: every destructive test used disposable copies in a scratch directory and an isolated `HOME`/config; the user's notebooks were not opened for writing). No Qt removal, no E13 cut-over, no schema change, no colour tags, no table-renderer change, nothing committed, tagged, pushed or published.
+
+**Dependency boundary (the ticket's premise is out of date).** The editor is no longer a separate pinned Git repository: since P2 it is the workspace crate `crates/editor` (AGENTS.md), so the bold fix is made there and **no editor commit, pin or `Cargo.lock` Git source is involved**. The one `Cargo.lock` change is a single line: `omatree-egui` now lists `objc2 0.6.5` (macOS only, see 1); that exact crate was already in the lock file through winit, eframe and rfd, so **no crate was added**. `verify-sources.sh` still proves the egui tree has no Qt crate.
+
+**Method.** Each defect was reproduced first, on the running application: the real window, real keystrokes (System Events), real mouse clicks (CoreGraphics events), window screenshots, and the file read back with `sqlite3`. Accessibility and Screen Recording were granted to this session, which made that possible.
+
+#### 1. Cmd+Q bypassed the unsaved-changes guard
+
+*Reproduction.* `omatree-egui` with no argument → ⌘N → type a title, Enter, type text (the title bar reads `Untitled * - OmaTree`) → ⌘Q: the process is gone, no question, the text lost.
+
+*Root cause.* Winit 0.30.13 builds the macOS menu itself (`platform_impl/macos/menu.rs`) with **Quit wired to `terminate:`**, and its application delegate implements only `applicationWillTerminate:` (`app_state.rs`), never `applicationShouldTerminate:`. So Command+Q, the Dock's Quit and log-out end the process directly. The window never receives a close request, and `Host::request_close`, the one guard, is never consulted (the red button, Alt+F4 and the menu's own Quit all arrive as `close_requested()` and were already guarded).
+
+*Fix: one guard, one new native surface.* A macOS-only module (`native_quit/macos.rs`, documented there and in `native_quit.rs`) adds `applicationShouldTerminate:` to winit's delegate class at run time (`class_addMethod`; the delegate cannot be subclassed or replaced without breaking winit). It returns `NSTerminateLater`, raises a flag, and wakes the event loop. `Host::logic` then runs **exactly the close path of the red button** (`request_close`) and tells AppKit the final answer (`replyToApplicationShouldTerminate:`) once per request: **yes** when the close was allowed (clean notebook, successful Save or Save As, confirmed Discard), **no** when the question was cancelled or could not be asked (another question open, a refused title). Nothing decides to quit on its own, there is no second dirty-state tracker and no copy of the Save/Discard/Cancel logic; the types (`Inbox`, `Answer`) are platform-neutral so the whole decision is tested on every system. "Terminate later" rather than "cancel" keeps a log-out from being refused for a clean notebook. Repeated requests while a question is open are one request and keep that question.
+
+*Two further defects found on the real Mac while verifying.*
+(a) **A race.** Typing and pressing ⌘Q within one frame quit without asking and lost the last characters: egui applies queued text in `ui`, after `logic`, so a request judged in the same frame saw a clean notebook. The request is now judged one frame later. (Negative control: removing that deferral fails `text_typed_in_the_instant_before_the_quit_is_part_of_what_is_asked_about`.) Keys injected within the same millisecond as ⌘Q can still be dropped by the modal-input filter; that is faster than any person types.
+(b) **A confirmed Discard could still be autosaved.** If the countdown from the last edit was still pending, it fired after "Discard changes" and wrote the discarded text (found by `discard_needs_the_established_confirmation`, which failed before the fix). `finish_close` now clears the countdown and `autosave` does nothing once the window may close. This is shared code and applies to every platform.
+
+*Files.* `crates/egui-app/src/{native_quit.rs, native_quit/macos.rs, lifecycle.rs, lib.rs}`, `crates/egui-app/Cargo.toml` (`[target.'cfg(target_os = "macos")'.dependencies] objc2 = "0.6"`), `Cargo.lock` (1 line).
+
+*Tests added* (`tests/native_quit_tests.rs`, 12; plus 1 native in `native_quit/macos.rs`): clean quit answered once; same dialog state as a window close; Cancel; Save; untitled Save → Save As (cancelled Save As cancels the quit; a chosen file saves, then quits); Discard needs its confirmation and "Keep editing" refuses; failed save (unwritable folder) never answers yes; external modification never overwritten and mine stays in memory; repeated requests (six in sequence, three in one frame); a quit while another question is open is refused and leaves that question alone; the same-frame typing race; no hook, no behaviour change. The native test builds a stand-in for winit's delegate class, installs the method, sends `applicationShouldTerminate:` and checks "later" and the flag (this is the native mechanism, exercised without a window).
+
+*Real-Mac verification (debug build, and release for the race):*
+
+| # | Scenario | Result |
+|---|---|---|
+| 1 | Untitled dirty, ⌘Q, Cancel | dialog; Cancel (Escape) keeps the app and text; a second ⌘Q asks again |
+| 2 | Untitled dirty, ⌘Q, Save | native Save panel; file written (`Save test | body for save`, integrity ok); app exits |
+| 3 | Saved dirty, ⌘Q, Save | file updated, integrity ok, app exits |
+| 4 | Dirty, ⌘Q, Discard | "Discard changes?" appears; "Keep editing" keeps the app; "Discard changes" exits |
+| 5 | Failed save, ⌘Q | an external change to the file (conflict): ⌘Q → Save shows "The file was changed elsewhere", app alive, external text intact, local edit not written; "Keep editing" then ⌘Q asks again |
+| 6 | Repeated ⌘Q with the dialog open | four presses: alive, dialog unchanged |
+| 7 | Clean notebook, ⌘Q | exits at once |
+| 8 | Red window button, dirty | the same Unsaved dialog |
+
+Not exercised: the Dock's "Quit" and log-out (same delegate method, not driven here).
+
+#### 2. The Mac Delete key did nothing in the tree
+
+*Reproduction.* Open a notebook, click a note (tree focused), press Delete (key code 51): nothing. The forward-delete key (fn+Delete, code 117) opens "Move to Trash".
+
+*Root cause.* The key labelled Delete on an Apple keyboard sends **Backspace** (`egui::Key::Backspace`); `tree_keys` handled only `Key::Delete`.
+
+*Fix.* In `tree_keys` (it runs only while the tree has the keyboard and no dialog, menu or drag is active), on **macOS only** (`ctx.os() == Mac`, so it is testable everywhere), an unmodified Backspace issues the existing `Cmd::Delete` → `ask_delete` → the same confirmation, Trash and recovery as before. Modifiers are excluded by hand because egui's matching ignores an extra Alt (found by `modified_backspace_is_not_the_delete_key`: Option+Delete would have asked). Linux and Windows are unchanged, and forward-delete still works everywhere. *Files.* `tree_ui.rs`.
+
+*Tests* (`tests/mac_keys_tests.rs`, 8): the Mac key asks (and Enter declines); a parent with descendants goes to Trash whole (5 notes) and is restored through `restore_trash`; a single note likewise; Backspace does nothing on Linux and Windows while Delete still asks on all; Alt/Command/Control+Backspace never ask; no selection; Backspace in the editor, title and search field edits text and never asks (nothing trashed); a second press with the dialog open does not stack or confirm. (Five of the eight failed before the fix; the others are negative controls, and one of them, `modified_backspace_is_not_the_delete_key`, caught the Option+Delete defect that the first version of the fix had.)
+
+*Real Mac.* Delete on "Bugs" (4 children) → "Move 'Bugs' and everything beneath it to Trash?" → Move to Trash → Recovery (⇧⌘R) lists "Bugs · 5 notes" → Enter restores; the file shows all four children back. Also verified on the release binary.
+
+#### 3. Bold and bold-italic were not bold on macOS
+
+*Reproduction.* A note with `**bold**`, `*italic*`, `***both***`, `__bold__`: bold at regular weight (only 4 % wider), italic fine, bold-italic only italic; headings not bold either. The PDF export was right.
+
+*Root cause (the responsible pipeline).* egui ships no bold face; `omatree_editor::fonts::install_bold` probes fixed system paths for one and registers it as the family `bold`. The only macOS candidate, `/Library/Fonts/Arial Bold.ttf`, **does not exist on current macOS** (Arial moved to `/System/Library/Fonts/Supplemental/` in Catalina). Nothing was found, no `bold` family was registered, and `layout.rs` fell back to its documented "no bold face: approximate with letter spacing" (+4 %). Strong emphasis *was* parsed and its delimiters concealed; only the face was missing. The PDF exporter embeds Liberation Sans, a separate pipeline, which is why it looked right. Bold-italic is "the bold face with egui's italic slant", so it follows from the same fix.
+
+*Fix.* Add `/System/Library/Fonts/Supplemental/Arial Bold.ttf` to the candidate list (the old path stays for older systems; Linux and Windows entries and their order are untouched, so those platforms resolve the same face as before). No parser, layout or typography change. *Files.* `crates/editor/src/fonts.rs`.
+
+*Side effects (all the intended design, as on Linux).* On macOS the note title, the selected tree row, headings and dialog titles are now bold, because the host uses the same `bold` family for them. The existing baseline-alignment tests (`regular_bold_italic_and_bold_italic_letters_share_a_baseline`, 192 cases) had been **silently skipping on macOS** (no candidate font existed); they now run against Arial Bold and pass.
+
+*Tests* (`fonts.rs`): `a_bold_face_is_found_on_macos` (a real-file check, fails without the fix), `the_candidates_cover_the_current_macos_location`, and `regular_bold_italic_and_bold_italic_select_the_right_faces_and_draw_differently`, which uses an embedded face so it runs everywhere: the layout asks egui for the proportional face for regular and italic, the `bold` family for bold and bold-italic, with `italics` set for italic and bold-italic; egui then draws bold wider than regular, italic with regular's advance, bold-italic with bold's advance; the laid-out text is byte-identical to the source; and a different palette changes colours only, never the faces.
+
+*Real Mac.* All four combinations render correctly on one baseline; clicking inside a bold span still reveals `**…**`; no source change.
+
+#### 4. Notebook identity visibility
+
+*Finding.* The window title carried the file name, the status bar said nothing about it ("a clean document says nothing"), and the full location appeared nowhere.
+
+*Change (small, platform-neutral).* (a) The status bar shows the notebook's name, muted, beside the existing state indicator (`Untitled` before the first save), cut with an ellipsis rather than crowding the message (at most 40 % of the bar), with the **full absolute path in a tooltip** (or "This notebook has not been saved yet. ⌘S asks where to put it."); it is also given to assistive technology as a label. (b) The notebook menu opens with the name and the folder ("not saved yet" before the first save), width-capped. Both derive from the open `Document` (`display_name`, `has_path`) and the path the host already kept for Save As and Reload: no new state, no setting, nothing normalised (spaces, Czech letters and emoji are shown exactly). *Files.* `identity.rs` (new), `lib.rs`, `tree_ui.rs`.
+
+*Tests* (`tests/identity_tests.rs`, 8): untitled; saved name and full location; Unicode/space/emoji path exactly; relative path shown absolute; Save As updates it, Open replaces it, New resets it; Reload keeps it; a 420 px window cuts the name inside the window and still fits "Unsaved changes"; the menu header. *Repaints:* the label is drawn like the existing status message and requests nothing; the headless harness cannot show idleness (it asks for an immediate repaint with or without the label, measured), so it was measured on the real app: **0.0 % CPU and no CPU time accrued over 10 s idle**.
+
+*Real Mac.* Status-bar name with Czech diacritics; hover tooltip with the exact path; untitled state; the menu header. **Keyboard:** Shift+Tab from the tree focuses "menu" and Enter opens it, so the keyboard reaches the header; plain Tab does not. Not tested: VoiceOver.
+
+#### Scope boundaries: recorded, not implemented
+
+- **Colour-coded note tags (candidate design ticket, not a bug).** The mock-up shows a palette of coloured markers in the note header, markers beside tagged notes in the tree, discoverability of tagged descendants when a parent is collapsed, theme-derived colours and possibly several tags per note. It needs decisions about persistent metadata and schema compatibility (a schema bump has the E9 old-binary consequences), behaviour in a hierarchy (inheritance, collapsed branches), Trash/checkpoint/export treatment, keyboard operation, search, and the visual design. Not started.
+- **Markdown inside table cells (known limitation).** Boundary identified: `table.rs::cell_text` returns the trimmed *source* and `Prepared::job` builds one plain `TextFormat` per cell ("Inline Markdown is shown as written", by design; header cells are bold). Rendering `**bold**` in a cell means running the cell's source through the inline-span parser and laying out a multi-section job with the bold family and italics (`bold` is already passed to `Prepared::new`), then using those styled galleys for the natural-width measurement (`column_widths`) and the paint, with the PDF/export table renderer as a separate, second change. Not attempted.
+
+#### Validation (this Mac, macOS 27.0.1)
+
+`cargo fmt --all -- --check` clean; `cargo clippy --workspace --all-targets -- -D warnings` clean (Qt installed here, so the Qt package is included); `cargo test -p omatree-egui` **350 passed**, 16 ignored; `cargo test -p omatree-editor` **226 passed**, 4 ignored; `cargo test -p omatree` (Qt) **43 passed**; `cargo build --release -p omatree-egui` ok; `tools/pre-e9-compat.sh` ok; `packaging/egui/tests/verify-sources.sh` all checks passed.
+**`cargo test -p omatree-core`: 356 passed, 1 failed** (`integrity_tests::memory_exhaustion_is_an_error_never_an_abort`): it uses `ulimit -v`, which macOS does not support (`cannot modify limit`). **Pre-existing:** it fails identically on a pristine `git archive HEAD`, and M1 changes nothing in core. Left alone (core is not to be rewritten); a macOS-aware version of that harness is a separate small task.
+Two egui tests (`starting_without_a_path…`, `the_file_menu_lists…`) also failed on the pristine HEAD on macOS because they hard-coded `Ctrl+N`/`Ctrl+O`/`Ctrl+Alt+N`; they now ask egui for the platform's shortcut text (a test-only change).
+
+#### Not verified, and remaining macOS issues
+
+- **Linux and Windows were not run.** Their behaviour is protected by construction (the quit hook is `cfg(target_os = "macos")`; the Delete change is gated on `ctx.os() == Mac`; the font change only adds a path), but the status-bar name, the menu header and the autosave-after-discard guard are shared code and need a look on Omarchy and Windows.
+- The Dock's Quit and log-out were not driven. VoiceOver was not tested. Only the debug build was used for scenarios 1–8 (the release build for the race and Delete).
+- **The macOS menu bar still calls the application `omatree-egui`** ("Quit omatree-egui"): winit takes the process name; a bundle (Info.plist `CFBundleName`) fixes it and belongs to the macOS packaging of the egui app. There is no egui `.app` bundle yet.
+- The notebook menu's own commands are reachable by keyboard only through Shift+Tab, which is not documented in the F1 reference.
+- Keys injected faster than a frame can still be dropped by the modal-input filter if they are sent in the same millisecond as ⌘Q.
+- `tools/pre-e9-compat.sh` prints empty `user_version` fields on macOS (`od --` is GNU-only); its verdicts are correct.
+
+#### Implications for E12c and E13
+
+E12c recorded macOS as "Unverified at runtime" (no Mac was available). That is now partly answered: the egui application runs on macOS 27 / arm64 with the corrected lifecycle, keys and fonts above. M1 also shows that adding a method to winit's application delegate class at run time works (the pattern E12c anticipated with `objc2` for Open Document events); **opening a notebook from Finder / Open With is still not implemented** and remains the main macOS parity gap with the Qt app. For **E13 readiness**: the Cmd+Q data-loss defect (blocker for any macOS release) and the missing bold are fixed and tested; before a macOS release of the egui build there is still no `.app` bundle, identity, signing or notarization work, no Dock/log-out verification, and the Linux/Windows re-check above. Nothing in M1 changes the E13 cut-over decision or its other prerequisites.
+
 ### Recommendation: first ticket
 
 **Start with E1 (extract `omatree-core`)**, run in parallel with E2 in the spike repository if there are two people or sessions.
