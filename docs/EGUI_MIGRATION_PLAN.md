@@ -1577,6 +1577,52 @@ Linux and Windows were **not** run: unverified. VoiceOver was not tested.
 
 **Remaining.** Linux and Windows verification of the tree marks and picker; VoiceOver; the faster keyboard route into the picker; the elided-title popup crash (debug builds); clearing a tag by mouse and keyboard on the real window was exercised through tests and a disabled-state screenshot only; E13 prerequisites are unchanged.
 
+### T2 record (header colour picker)
+
+**Status: implemented and verified on the real Mac (macOS 27.0.1, arm64) on `egui-integration`; not committed.** A
+compact colour picker at the right of the active note's header, reusing the T1 model, palette and persistence. No
+schema change, no new colour identities, no tag search, no Markdown or editor change. The design is in `ARCHITECTURE.md`,
+"Header colour picker (T2)".
+
+**Decisions.** *One tag, read every frame:* the picker keeps no state and writes through `Host::set_colour`, so header,
+tree and menu are one source of truth and rapid clicks cannot go stale. *Click the selected colour to clear* (as asked), no
+extra button in the wide layout. *Compact fallback* is one control that opens the tree menu's `colour_picker`, which is
+now shared (it gained a `focus` argument to put the keyboard on a swatch). *One Tab stop* with Left/Right inside, instead
+of six, using egui's focus-lock filter; Tab, Shift+Tab and Escape leave explicitly. *`Host::set_colour` no longer moves
+focus*: the tree menu's command handler returns the keyboard to the tree (T1 behaviour unchanged), the header keeps it on
+the swatch. F1 help gained one line for the new route. Tab order changed on purpose: title → swatches → editor
+(`audit_tests` now expects it).
+
+**Tests added (15, `tests/header_colour_tests.rs`),** all through the real host with pointer and key events and painted
+output: palette order and placement; selected colour ringed and named; no selection; click assigns/replaces (tree updates,
+dirty, same note); click selected clears; switching notes; header ↔ tree menu agreement both ways; 15 clicks across
+frames with no settling; autosave and reopen; window-close and macOS quit request right after a header change (dirty guard,
+nothing written); keyboard (Tab in, Left/Right, clamping, Enter, Space, title bytes untouched); Tab/Shift+Tab/Escape exits;
+narrow window (one control, same six choices, Escape cancels, keyboard pick, clear, title still editable); a long Unicode
+title at 1000/700/420/330 pt never reaches the swatches; light and dark; no note selected; body bytes, caret and editor
+undo untouched. The test harness's `painted().dots` now means the tree pane's circles; `header_dots()` the header's.
+
+**Real-Mac validation** (release build, disposable copy of the dogfooding notebook, isolated HOME; screenshots read):
+| Check | Result |
+|---|---|
+| Normal size, mouse: assign, change, clear | Green, then Blue, then Blue again → cleared; tree dot followed each time; database read back |
+| Very long title, deeply nested selected note | title clips cleanly before the swatches; purple ring; tree dot matches |
+| Narrow window (420 pt) | compact control: hollow ring when untagged, coloured dot when tagged; popup has six swatches and "No colour", current ringed |
+| Keyboard | click title, Tab → Red, Right ×3 → Green, Enter picks, autosaved; Escape returns to the tree; title untouched |
+| Tree context menu | Orange picked on a note; header ring moved at once; "Unsaved changes" shown |
+| Unsaved header change then Cmd+Q | the app asked (Save / Discard / Cancel), still running, file still held the old tag; Save wrote it and quit |
+| Save, close, reopen | all tags back, including the header's choice; light theme (per-app `NSRequiresAquaSystemAppearance`, removed afterwards): darker dots, ring and popup readable |
+Not run: Linux, Windows, VoiceOver, a mouse-only clear in the compact popup (tested, not clicked), a window narrower than
+420 pt.
+
+**Known limits.** (1) At 420 pt the tree takes up to 60 % of the window, so the title field is about 100 pt wide
+(readable, scrolls, editable, but short); the existing pane split is unchanged. (2) The compact popup's clear button is
+"No colour", not "Clear note colour". (3) The shared popup opens under the control and may cover part of the header.
+(4) The debug-build assertion on right-clicking an elided tree title (T1 finding) is untouched.
+
+**Validation (this Mac).** See the T2 report: fmt and clippy clean; `omatree-egui` 383 passed; core and editor suites
+unchanged; the one core failure is still the macOS `ulimit -v` test `memory_exhaustion_is_an_error_never_an_abort`.
+
 ### Recommendation: first ticket
 
 **Start with E1 (extract `omatree-core`)**, run in parallel with E2 in the spike repository if there are two people or sessions.

@@ -472,3 +472,28 @@ sit on, so the marks follow theme changes. The tree menu (right-click, or Shift+
 row: six focusable swatches (current one ringed, Left/Right move between them, Enter or Space picks, Escape closes) and a
 separate "No colour" command; the tree gets the keyboard back afterwards. Accessible names: the row says
 `"<title>, red tag"` and, closed, `", contains coloured notes"`; swatches are radio buttons with their names.
+
+### Header colour picker (T2)
+
+The same tag, a second way in. At the right of the active note's header (the row the title is in, above the existing
+rule; the header's height, the editor's margins and the rule are unchanged) `header_picker` (`tree_ui.rs`) draws the six
+T1 colours in palette order as 13 pt dots in 22 pt click targets. The selected colour has a ring in the text colour; a
+focused one an accent ring. **There is no second state:** every frame the picker reads `Notebook::get(id).colour()` and
+a click or key sends `Host::set_colour` (the T1 path: `Document::set_colour`, dirty state, autosave, close guard, the tree
+rebuild), so the tree, the tree menu and the header cannot disagree. Clicking the selected colour clears the tag; there
+is no separate clear button in the wide layout (the tooltip says so).
+
+*Layout.* The row is split into a flexible title region and a fixed picker region (`HEADER_PICKER_W`: six cells, five
+gaps, the right gutter). When the row is narrower than `HEADER_FULL_MIN` (the region, both gutters and 150 pt for the
+title) the six collapse into one 22 pt control: the current colour as a dot (a hollow ring when untagged) that opens the
+tree menu's own `colour_picker` (six swatches and "No colour", Escape cancels) with the keyboard on the current colour.
+The title and the picker never overlap; the picker is a child `Ui` and does not move the header's cursor.
+
+*Keyboard.* Tab from the title enters the swatches as **one** stop; inside, Left/Right move (clamped), Enter or Space
+picks (focus stays on the swatch), Tab continues to the editor, Shift+Tab goes back to the title, Escape goes to the
+tree. While a swatch has the keyboard it takes Tab and Escape through egui's focus-lock filter, and acts on a key only
+if it held the keyboard in the previous frame (so the Tab that arrived is not also a Tab that leaves). Nothing is
+intercepted globally. The tree menu's Colour row is unchanged. Accessible names: radio buttons "Red note colour",
+"Green note colour, selected"; the compact control is a button "Note colour, green" / "Note colour, none". The
+compact popup's clear button is named "No colour" (not "Clear note colour"), the same widget as the tree menu's.
+VoiceOver was not tested.

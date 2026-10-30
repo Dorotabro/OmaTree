@@ -37,6 +37,16 @@ pub(crate) const TITLE_NOTE_H: f32 = 15.0;
 /// Height of the header on both sides of the window: the search field over the tree and the
 /// note title over the editor. Their rules are drawn on its bottom edge, so they form one line.
 pub(crate) const HEADER_H: f32 = TITLE_TOP + TITLE_ROW_H + TITLE_NOTE_H;
+/// The note header's colour picker: a clickable cell per swatch, the dot drawn in it (radius), the
+/// gap between cells. The picker's region is six cells, five gaps and the right gutter; a row
+/// narrower than `HEADER_FULL_MIN` (the region plus a title that can still be read and edited)
+/// gets one `HEADER_SWATCH` cell instead.
+pub(crate) const HEADER_SWATCH: f32 = 22.0;
+pub(crate) const HEADER_DOT: f32 = 6.5;
+pub(crate) const HEADER_SWATCH_GAP: f32 = 2.0;
+pub(crate) const HEADER_PICKER_W: f32 = 6.0 * HEADER_SWATCH + 5.0 * HEADER_SWATCH_GAP + GUTTER;
+pub(crate) const HEADER_COMPACT_W: f32 = HEADER_SWATCH + GUTTER;
+pub(crate) const HEADER_FULL_MIN: f32 = HEADER_PICKER_W + 2.0 * GUTTER + 150.0;
 /// The tree pane may be dragged between these widths; the default is its starting width in a
 /// window wide enough for it.
 pub(crate) const TREE_MIN: f32 = 170.0;

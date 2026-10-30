@@ -655,6 +655,8 @@ fn tab_walks_the_window_in_order_and_shift_tab_walks_back() {
     h.host.focus(Focus::Title);
     h.settle();
     h.key(Key::Tab, Modifiers::NONE);
+    assert_eq!(who(&h), "other", "the colour swatches come after the title");
+    h.key(Key::Tab, Modifiers::NONE);
     assert_eq!(who(&h), "editor");
     // Inside the editor Tab and Shift+Tab belong to the editor (list indentation): they do not
     // move the keyboard. Escape is the way out, back to the tree, and Shift+Tab from the title

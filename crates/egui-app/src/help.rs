@@ -68,6 +68,10 @@ impl Host {
                         "Move the note down among its siblings",
                     ),
                     (key(&keymap::RECOVERY), "Recovery: Trash and checkpoints"),
+                    (
+                        "Tab from the title".to_owned(),
+                        "Colour swatches: Left / Right, Enter or Space picks, again clears, Escape leaves",
+                    ),
                 ],
             ),
             (

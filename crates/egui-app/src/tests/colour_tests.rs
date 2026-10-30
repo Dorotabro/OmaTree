@@ -7,7 +7,7 @@ use egui::accesskit::Role;
 use omatree_core::notebook::Colour;
 
 /// The label of the widget that has the keyboard, from the accessibility update.
-fn focused_label(h: &H) -> String {
+pub(super) fn focused_label(h: &H) -> String {
     let u = h.a11y.as_ref().expect("enable_accesskit first");
     u.nodes
         .iter()
@@ -27,7 +27,7 @@ fn row_name(h: &H, title: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn opened(path: &Path) -> H {
+pub(super) fn opened(path: &Path) -> H {
     let mut h = H::open_tree(path);
     h.ctx.enable_accesskit();
     h.settle();
@@ -49,17 +49,17 @@ impl H {
     }
 
     /// The whole keyboard route: open the note's menu, reach the swatch, press Enter.
-    fn pick_by_keyboard(&mut self, label: &str) {
+    pub(super) fn pick_by_keyboard(&mut self, label: &str) {
         self.menu_to(label);
         self.press(Key::Enter);
         self.settle();
     }
 
-    fn colour_of(&self, title: &str) -> Option<Colour> {
+    pub(super) fn colour_of(&self, title: &str) -> Option<Colour> {
         self.host.tree().row(self.id(title)).unwrap().colour
     }
 
-    fn doc_colour(&self, title: &str) -> Option<Colour> {
+    pub(super) fn doc_colour(&self, title: &str) -> Option<Colour> {
         self.host
             .document()
             .unwrap()
@@ -481,6 +481,7 @@ fn accessible_names_say_the_colour_and_the_hidden_tags() {
         .iter()
         .filter(|(_, n)| n.role() == Role::RadioButton)
         .map(|(_, n)| (n.label().unwrap_or("").to_owned(), n.toggled()))
+        .filter(|(l, _)| !l.ends_with("note colour") && !l.ends_with("selected"))
         .collect();
     assert_eq!(swatches.len(), 6, "{swatches:?}");
     for c in Colour::ALL {

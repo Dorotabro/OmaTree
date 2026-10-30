@@ -10,8 +10,9 @@ use super::*;
 use egui::{Color32, FontId, Key, Pos2, Rect, Sense, Shape, Stroke, Vec2};
 
 use super::layout::{
-    BAR_H, GUTTER, HEADER_H, INDENT, PAD, ROW_H, SMALL_PX, TITLE_NOTE_H, TITLE_PX, TITLE_ROW_H,
-    TITLE_TOP, TREE_LEFT as LEFT, TREE_TOP, UI_PX,
+    BAR_H, GUTTER, HEADER_COMPACT_W, HEADER_DOT, HEADER_FULL_MIN, HEADER_H, HEADER_PICKER_W,
+    HEADER_SWATCH, HEADER_SWATCH_GAP, INDENT, PAD, ROW_H, SMALL_PX, TITLE_NOTE_H, TITLE_PX,
+    TITLE_ROW_H, TITLE_TOP, TREE_LEFT as LEFT, TREE_TOP, UI_PX,
 };
 /// A pointer resting this long on a collapsed note while dragging opens it.
 const HOVER_OPEN: f64 = 0.6;
@@ -663,7 +664,11 @@ impl Host {
                     }
                 }
                 Cmd::Delete => self.ask_delete(ctx),
-                Cmd::SetColour(id, colour) => self.set_colour(id, colour),
+                Cmd::SetColour(id, colour) => {
+                    self.set_colour(id, colour);
+                    // The menu that made the change is gone; the keyboard goes back to the tree.
+                    self.set_focus(Focus::Tree);
+                }
                 Cmd::NewRoot => self.create_root(ctx),
                 Cmd::NewChild => self.create_child(ctx),
                 Cmd::Recovery => self.open_recovery(ctx),
@@ -732,9 +737,20 @@ impl Host {
             ui.cursor().min,
             Vec2::new(ui.available_width(), TITLE_ROW_H),
         );
+        // The colour picker takes a fixed region at the right; the title keeps the rest. When the
+        // row is too narrow for six swatches beside a usable title, one compact control stands in.
+        let full = row.width() >= HEADER_FULL_MIN;
+        let picker_w = if full {
+            HEADER_PICKER_W
+        } else {
+            HEADER_COMPACT_W
+        };
+        let split = row.right() - picker_w;
+        let title_row = Rect::from_min_max(row.min, Pos2::new(split, row.bottom()));
+        let picker_row = Rect::from_min_max(Pos2::new(split, row.top()), row.max);
         ui.scope_builder(
             egui::UiBuilder::new()
-                .max_rect(row)
+                .max_rect(title_row)
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
             |ui| {
                 ui.add_enabled_ui(enabled, |ui| {
@@ -765,6 +781,18 @@ impl Host {
             },
         );
         ui.allocate_rect(row, Sense::hover());
+        if let (Some(id), Some(doc)) = (self.selected, self.doc.as_ref()) {
+            let current = doc.notebook().get(id).and_then(|n| n.colour());
+            // A child Ui: the picker takes its region without moving the header's own cursor.
+            let mut picker = ui.new_child(egui::UiBuilder::new().max_rect(picker_row));
+            let exit = header_picker(&mut picker, id, current, full, enabled, &ch);
+            if let Some(cmd) = exit.cmd {
+                self.set_colour(id, cmd);
+            }
+            if let Some(to) = exit.focus {
+                self.set_focus(to);
+            }
+        }
         // One line for the validation message of this title, then the rule: the message stays
         // beside the field it is about, and the editor below never moves when it appears.
         let (note, note_resp) = ui.allocate_exact_size(
@@ -960,6 +988,7 @@ fn colour_picker(
     ui: &mut egui::Ui,
     id: NodeId,
     current: Option<Colour>,
+    focus: Option<Colour>,
     ch: &theme::Chrome,
 ) -> Option<Cmd> {
     let mut picked = None;
@@ -976,6 +1005,9 @@ fn colour_picker(
         for c in Colour::ALL {
             let (rect, r) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
             ids.push(r.id);
+            if focus == Some(c) {
+                r.request_focus();
+            }
             if r.has_focus() {
                 focused = Some(ids.len() - 1);
                 // Let the arrow keys reach this widget instead of egui's own focus movement.
@@ -1039,6 +1071,180 @@ fn colour_picker(
     picked
 }
 
+/// What the note header's picker asks for after a frame: a new tag (`Some(None)` clears it) and
+/// where the keyboard goes when it leaves the swatches.
+#[derive(Default)]
+struct HeaderPick {
+    cmd: Option<Option<Colour>>,
+    focus: Option<Focus>,
+}
+
+/// The colour picker at the right of the note title: six swatches in the palette's order, or, in a
+/// row too narrow for them, one control that opens the tree menu's picker. The tag is read from
+/// the notebook every frame and written through `Host::set_colour`; nothing is kept here.
+fn header_picker(
+    ui: &mut egui::Ui,
+    id: NodeId,
+    current: Option<Colour>,
+    full: bool,
+    enabled: bool,
+    ch: &theme::Chrome,
+) -> HeaderPick {
+    let mut out = HeaderPick::default();
+    let area = ui.max_rect();
+    // The cells sit against the right gutter, vertically centred in the title's row.
+    let cell = |from_right: usize| {
+        let right = area.right() - GUTTER - from_right as f32 * (HEADER_SWATCH + HEADER_SWATCH_GAP);
+        Rect::from_center_size(
+            Pos2::new(right - HEADER_SWATCH / 2.0, area.center().y),
+            Vec2::splat(HEADER_SWATCH),
+        )
+    };
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    if !full {
+        let rect = cell(0);
+        let r = ui.interact(rect, ui.scope_id().with("header-colour"), sense);
+        let name = match current {
+            Some(c) => format!("Note colour, {}", c.label().to_lowercase()),
+            None => "Note colour, none".to_owned(),
+        };
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &name));
+        let centre = rect.center();
+        match current {
+            Some(c) => {
+                ui.painter().circle_filled(centre, HEADER_DOT, ch.tag(c));
+            }
+            None => {
+                ui.painter()
+                    .circle_stroke(centre, HEADER_DOT, Stroke::new(1.5, ch.muted));
+            }
+        }
+        if r.has_focus() || r.hovered() {
+            let ring = if r.has_focus() {
+                ch.accent
+            } else {
+                ch.hairline
+            };
+            ui.painter()
+                .circle_stroke(centre, HEADER_DOT + 3.0, Stroke::new(1.5, ring));
+        }
+        let opening = r.clicked();
+        let r = r.on_hover_text("Note colour");
+        egui::Popup::menu(&r).show(|ui| {
+            // Opened, the keyboard is on the current colour (the first when there is none).
+            let want = opening.then(|| current.unwrap_or(Colour::Red));
+            if let Some(Cmd::SetColour(_, c)) = colour_picker(ui, id, current, want, ch) {
+                out.cmd = Some(c);
+            }
+        });
+        return out;
+    }
+    // Created left to right, so Tab and Shift+Tab walk the palette in the order it is drawn.
+    let mut ids = Vec::new();
+    let mut focused = None;
+    for (i, c) in Colour::ALL.into_iter().enumerate() {
+        let rect = cell(5 - i);
+        let r = ui.interact(
+            rect,
+            ui.scope_id().with(("header-colour", c.as_str())),
+            sense,
+        );
+        ids.push((c, r.id));
+        let selected = current == Some(c);
+        if r.has_focus() {
+            focused = Some(c);
+            // Arrows, Tab and Escape belong to the swatch while it has the keyboard, so the six
+            // are one Tab stop and the way out is explicit.
+            ui.memory_mut(|m| {
+                m.set_focus_lock_filter(
+                    r.id,
+                    egui::EventFilter {
+                        horizontal_arrows: true,
+                        tab: true,
+                        escape: true,
+                        ..Default::default()
+                    },
+                )
+            });
+        }
+        let name = format!(
+            "{} note colour{}",
+            c.label(),
+            if selected { ", selected" } else { "" }
+        );
+        r.widget_info(|| {
+            egui::WidgetInfo::selected(egui::Role::RadioButton, enabled, selected, &name)
+        });
+        let centre = rect.center();
+        let radius = if r.hovered() || r.has_focus() {
+            HEADER_DOT + 1.0
+        } else {
+            HEADER_DOT
+        };
+        ui.painter().circle_filled(centre, radius, ch.tag(c));
+        if selected {
+            ui.painter()
+                .circle_stroke(centre, HEADER_DOT + 3.0, Stroke::new(1.5, ch.text));
+        } else if r.has_focus() {
+            ui.painter()
+                .circle_stroke(centre, HEADER_DOT + 3.0, Stroke::new(1.5, ch.accent));
+        }
+        let tip = if selected {
+            format!("{} (click to clear)", c.label())
+        } else {
+            c.label().to_owned()
+        };
+        if r.on_hover_text(tip).clicked() {
+            out.cmd = Some(if selected { None } else { Some(c) });
+        }
+    }
+    // Keys act on a swatch only if it already had the keyboard in the frame before: the Tab that
+    // brought focus here is still in this frame's input and must not also take it away.
+    let had = ui
+        .ctx()
+        .data_mut(|d| d.get_temp::<bool>(ui.scope_id().with("had-focus")))
+        == Some(true);
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(ui.scope_id().with("had-focus"), focused.is_some()));
+    if let Some(at) = focused
+        .filter(|_| had)
+        .and_then(|f| ids.iter().position(|(c, _)| *c == f))
+    {
+        let (step, tab, back, esc) = ui.input_mut(|i| {
+            let step = if i.consume_key(egui::Modifiers::NONE, Key::ArrowRight) {
+                1
+            } else if i.consume_key(egui::Modifiers::NONE, Key::ArrowLeft) {
+                -1
+            } else {
+                0
+            };
+            // Shift+Tab first: a plain Tab pattern also matches it.
+            let back = i.consume_key(egui::Modifiers::SHIFT, Key::Tab);
+            (
+                step,
+                i.consume_key(egui::Modifiers::NONE, Key::Tab),
+                back,
+                i.consume_key(egui::Modifiers::NONE, Key::Escape),
+            )
+        });
+        if step != 0 {
+            let to = (at as isize + step).clamp(0, ids.len() as isize - 1) as usize;
+            ui.memory_mut(|m| m.request_focus(ids[to].1));
+        } else if tab {
+            out.focus = Some(Focus::Editor);
+        } else if back {
+            out.focus = Some(Focus::Title);
+        } else if esc {
+            out.focus = Some(Focus::Tree);
+        }
+    }
+    out
+}
+
 fn menu_entries(
     ui: &mut egui::Ui,
     on: Option<NodeId>,
@@ -1085,7 +1291,7 @@ fn menu_entries(
     let mut picked = None;
     if let (Some(id), Some(current)) = (on, colour) {
         ui.separator();
-        picked = colour_picker(ui, id, current, ch);
+        picked = colour_picker(ui, id, current, None, ch);
     }
     ui.separator();
     pick(ui, "Move to Trash", "Delete", on.is_some(), Cmd::Delete);

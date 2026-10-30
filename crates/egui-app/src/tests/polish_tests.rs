@@ -124,7 +124,23 @@ impl H {
         for s in &self.shapes {
             collect(&s.shape, &mut p);
         }
+        // `dots` are the tree pane's; the note header's colour swatches are `header_dots`.
+        let split = self.tree_right();
+        p.dots.retain(|d| d.centre.x < split);
         p
+    }
+
+    /// The circles painted in the note header (the colour picker's swatches and rings).
+    pub(super) fn header_dots(&self) -> Vec<Dot> {
+        let mut p = Painted::default();
+        for s in &self.shapes {
+            collect(&s.shape, &mut p);
+        }
+        let split = self.tree_right();
+        p.dots
+            .into_iter()
+            .filter(|d| d.centre.x >= split && d.centre.y < crate::layout::HEADER_H)
+            .collect()
     }
 
     pub(super) fn chrome(&self) -> Chrome {

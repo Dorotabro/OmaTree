@@ -823,6 +823,7 @@ fn timings() {
 }
 
 mod colour_tests;
+mod header_colour_tests;
 mod identity_tests;
 mod lifecycle_tests;
 mod mac_keys_tests;
