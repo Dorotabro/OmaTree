@@ -121,8 +121,8 @@ const IMAGE_PAD: f32 = image_size::PAD;
 const DOC_PAD: f32 = 16.0;
 const BASE_SIZE: f32 = 16.0;
 
-/// Table layouts keyed by (table source, wrap width bits, pixels-per-point bits).
-type TableCache = HashMap<(String, u32, u32), Rc<table::TableLayout>>;
+/// Table layouts keyed by (table source, inline signature, wrap width bits, pixels-per-point bits).
+type TableCache = HashMap<(String, u64, u32, u32), Rc<table::TableLayout>>;
 /// Full table layouts kept (only the tables near the viewport are drawn).
 const MAX_LAYOUTS: usize = 256;
 
@@ -146,6 +146,7 @@ fn table_height(
     let body = &src[t.source_range()];
     let mut h = std::collections::hash_map::DefaultHasher::new();
     body.hash(&mut h);
+    t.inline_sig.hash(&mut h);
     let key = (
         h.finish(),
         wrap.to_bits(),
@@ -200,6 +201,7 @@ fn table_layout(
     let r = t.source_range();
     let key = (
         src[r].to_owned(),
+        t.inline_sig,
         wrap.to_bits(),
         ctx.pixels_per_point().to_bits(),
     );
@@ -1577,6 +1579,9 @@ impl EditorView {
                                 let sel = a.min(b)..a.max(b);
                                 let colors = table::Colors {
                                     text: pal.text,
+                                    code_text: pal.code_text,
+                                    code_bg: pal.code_bg,
+                                    link: pal.link,
                                     header_bg: pal.code_block_bg,
                                     border: pal.separator,
                                     header_rule: pal.rule,
@@ -1606,9 +1611,6 @@ impl EditorView {
                                         Pos2::new(out.galley_pos.x, top),
                                         &l,
                                         t,
-                                        text,
-                                        BASE_SIZE,
-                                        bold.as_ref(),
                                         &colors,
                                     );
                                     #[cfg(test)]
@@ -1861,3 +1863,6 @@ mod multinote_host;
 #[cfg(test)]
 #[path = "multinote_tests.rs"]
 mod multinote_tests;
+#[cfg(test)]
+#[path = "table_tests.rs"]
+mod table_tests;

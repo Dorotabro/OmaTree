@@ -29,6 +29,12 @@ pub struct Table {
     /// The `| --- | :---: |` line (found by scanning: the line after the header).
     pub separator: Range<usize>,
     pub rows: Vec<Row>,
+    /// The inline spans (bold, italic, strikethrough, code, link) the parser found inside the cells,
+    /// as it reports them for the whole note: the same spans that style the raw source. The grid
+    /// painter conceals their markers and styles their text from these; it parses nothing itself.
+    pub inline: Vec<Span>,
+    /// A hash of `inline` relative to the table's start (see `table::signature_of`).
+    pub inline_sig: u64,
 }
 
 impl Table {
@@ -243,7 +249,7 @@ const PARSER_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_STRIKETHROUGH);
 
 pub fn parse(src: &str) -> Vec<Span> {
-    let mut spans = Vec::new();
+    let mut spans: Vec<Span> = Vec::new();
     // Stack of (kind-start info) for constructs whose markers depend on children.
     let mut link_stack: Vec<LinkPending> = Vec::new();
     let mut image_depth = 0usize;
@@ -297,11 +303,33 @@ pub fn parse(src: &str) -> Vec<Span> {
                     // The separator is the line right after the header line.
                     let sep_start = (header.range.end + 1).min(src.len());
                     let separator = trim_nl(src, line_range(src, sep_start));
+                    // Everything pushed since the table began is inside it (cells hold inline
+                    // constructs only), and everything pushed before it starts before it.
+                    let mut inline: Vec<Span> = spans
+                        .iter()
+                        .rev()
+                        .take_while(|s| s.range.start >= range.start)
+                        .filter(|s| {
+                            matches!(
+                                s.kind,
+                                Kind::Strong
+                                    | Kind::Emphasis
+                                    | Kind::Strikethrough
+                                    | Kind::Code
+                                    | Kind::Link { .. }
+                            )
+                        })
+                        .cloned()
+                        .collect();
+                    inline.reverse();
+                    let inline_sig = crate::table::signature_of(header.range.start, &inline);
                     let t = Table {
                         align,
                         header,
                         separator,
                         rows,
+                        inline,
+                        inline_sig,
                     };
                     let reveal = t.source_range();
                     spans.push(Span {

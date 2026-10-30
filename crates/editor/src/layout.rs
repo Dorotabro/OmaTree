@@ -116,8 +116,20 @@ pub fn touches(r: &Range<usize>, sel: &Range<usize>) -> bool {
 pub fn compute_flags(src: &str, spans: &[Span], p: &Params) -> (Vec<Flags>, Vec<ImageSlot>) {
     let mut flags = vec![Flags::default(); src.len()];
     let mut images = Vec::new();
+    // A table the caret or selection touches shows its complete source: the inline constructs
+    // inside it reveal their delimiters too (they would otherwise stay concealed until the caret
+    // reached each one), so editing a cell always shows what the cell really contains.
+    let raw_tables: Vec<&Range<usize>> = spans
+        .iter()
+        .filter(|s| matches!(s.kind, Kind::Table(_)) && touches(&s.reveal, &p.selection))
+        .map(|s| &s.range)
+        .collect();
     for s in spans {
-        let active = touches(&s.reveal, &p.selection);
+        let in_raw_table = !matches!(s.kind, Kind::Table(_))
+            && raw_tables
+                .iter()
+                .any(|r| s.range.start >= r.start && s.range.end <= r.end);
+        let active = in_raw_table || touches(&s.reveal, &p.selection);
         let mut apply = |r: Range<usize>, f: &dyn Fn(&mut Flags)| {
             for fl in &mut flags[r] {
                 f(fl);

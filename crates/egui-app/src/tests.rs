@@ -828,6 +828,7 @@ mod identity_tests;
 mod lifecycle_tests;
 mod mac_keys_tests;
 mod native_quit_tests;
+mod table_inline_tests;
 
 mod audit_tests;
 mod compact_tests;

@@ -1623,6 +1623,79 @@ Not run: Linux, Windows, VoiceOver, a mouse-only clear in the compact popup (tes
 **Validation (this Mac).** See the T2 report: fmt and clippy clean; `omatree-egui` 383 passed; core and editor suites
 unchanged; the one core failure is still the macOS `ulimit -v` test `memory_exhaustion_is_an_error_never_an_abort`.
 
+### T3 record (inline Markdown in table cells)
+
+**Status: implemented and verified on the real Mac (macOS 27.0.1, arm64) on `egui-integration`; not committed.** Tables
+painted as grids now show bold, italic, bold-italic, inline code, strikethrough and links instead of their delimiters,
+with escapes resolved; the raw table (caret inside) shows every delimiter. The Markdown bytes, the table editing model,
+undo and the schema are untouched. Design in `ARCHITECTURE.md`, "Inline Markdown in table cells (T3)".
+
+**What changed.** `markdown.rs`: `Table` gained `inline` (the parser's own inline spans inside the table) and
+`inline_sig`. `table.rs`: `runs` (cell → styled runs), one `LayoutJob` per cell with mixed faces and the document's
+baseline handling, `Run`, extra `Colors` (code, code background, link), fonts and metrics cached in `TableLayout`; `paint`
+lost its `src`/`base`/`bold` arguments. `layout.rs`: delimiters of inline spans inside a touched table are revealed.
+`view.rs`: the layout caches are keyed with `inline_sig`; the palette's code and link colours are passed to the painter.
+No new dependency, no parser added.
+
+**Decisions.** Derive display runs from the spans the parser already produces (so the grid and the raw styling cannot
+disagree on precedence) instead of re-parsing cells. Escapes: conceal the backslash before ASCII punctuation outside code,
+`\|` everywhere. Links: style, do not open. Raw mode: reveal every delimiter in a touched table (the ticket's "complete raw
+Markdown table"; before T3 each one stayed hidden until the caret reached it). Plain cells keep their exact previous job.
+
+**Tests.** `crates/editor/src/table_tests.rs` (23): the run builder for bold, italic, `***`, code, strikethrough, links
+(inline and autolink), mixed, adjacent and nested styles, header cells, escaped punctuation, escaped pipes in text and in
+code, a backslash before a letter, literal backticks, nine malformed or unsupported delimiters left literal, empty and
+whitespace cells, Czech, emoji and CJK, LF and CRLF giving the same runs, plain cells unchanged; geometry (a mixed cell
+stays within 1.3x of a plain row and narrower than its raw text, wrapped styled cells at 700/420/300/120 pt grow their
+row and never exceed the width, alignment data kept); through the real `EditorView` (the grid shows no `**`, `~~`, `](` or
+backtick; the code cell is monospace in the palette's code colours, the link underlined in the link colour, the bold-italic
+cell has italic and strike sections; the bytes identical across eight caret positions and a selection across the table; raw
+table with every delimiter in the reveal colour and none visible when concealed; caret in/out switching; a click on a
+rendered `javascript:` link and an `https` link opens nothing and enters the source; edit, undo, redo; switching notes
+with a table raw; CRLF; dark and light palettes; windows of 900/520/420 pt; right-aligned column text ends at one x; plain
+tables still one section with no line height). **Negative control:** `table::tests_off` renders cells as before T3; a test
+shows the bold-cell check passes with styling and fails with it off, and that the markers then show. In
+`crates/egui-app/src/tests/table_inline_tests.rs` (1): LF and CRLF notes keep their bytes through caret moves, autosave,
+Save As (core) and reopening.
+
+**Performance** (release build, `styled_cells_cost_is_recorded`, ms per frame; the same harness run on the commit before
+T3 as the baseline; styled documents have more text and spans than the plain ones):
+| Document | Before T3 plain / styled | After T3 plain / styled |
+|---|---|---|
+| small table: open | 8.5 / 3.8 | 10.1 / 3.8 |
+| 200-row table: open | 11.6 / 16.3 | 10.4 / 16.6 |
+| 200-row table: steady frame | 0.26 / 0.28 | 0.25 / 0.32 |
+| 200-row table: typing frame | 0.32 / 0.44 | 0.31 / 0.50 |
+| 40 tables: steady / typing | 0.10 / 0.17, 0.19 / 0.39 | 0.09 / 0.19, 0.19 / 0.43 |
+| 30 long wrapped rows: steady / typing | 0.07 / 0.10, 0.10 / 0.18 | 0.06 / 0.15, 0.09 / 0.25 |
+Plain tables are unchanged within noise; styled ones cost up to ~0.1 ms per frame more than the pre-T3 numbers (they now
+build several sections per cell). An earlier version that re-measured fonts and hashed the inline spans on every frame
+cost twice as much in a debug build; both are now computed once. Debug-build numbers are 5-10x larger and are not a guide.
+
+**Real-Mac validation** (release build, disposable notebook, isolated HOME; screenshots read; the pre-T3 binary built in a
+temporary worktree gave the "before" picture):
+| Check | Result |
+|---|---|
+| Grid with all styles | bold, italic and bold-italic visibly distinct; code on its background with the escaped pipe shown as `|`; strike; links underlined in the link colour; the escaped asterisks shown as plain `*`; Czech and the crab emoji; header bold |
+| Click into the table | raw source with every delimiter visible (dimmed) |
+| Edit in a cell, click out | grid back with the edit; Cmd+Z restored the stored bytes exactly (checked in the file) |
+| Wrapping | a long mixed cell wraps over several lines; rows grow; no clipping; 560 pt window keeps all three columns inside the pane |
+| Light and dark | both legible (light via a per-app default, removed afterwards) |
+| Quit and reopen | stored body byte-identical to the original after the whole session |
+Not run: Linux, Windows, a stylus/IME, VoiceOver.
+
+**Known limits.** (1) Column widths are as before: one very long cell squeezes the others, so short words can break
+("Markdo / wn", `*escaped*` over three lines); styled text did not change this, a better distribution would be its own
+ticket. (2) A stray `-` under a rendered table (concealed separator) appears in the pre-T3 build too and was not touched.
+(3) Typing a pipe or an extra cell that makes the header and delimiter rows disagree turns the table into a paragraph, with
+that paragraph's own inline rendering, as before. (4) Links in the grid are styled, not clickable. (5) Images, nested
+tables and HTML in cells are shown as written. (6) The PDF and Markdown exporters were not changed.
+
+**Validation (this Mac).** `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` clean;
+`omatree-editor` 249 passed (226 before), `omatree-egui` 384 passed, Qt (`-p omatree`) 43 passed; release build ok;
+`verify-sources.sh` and `pre-e9-compat.sh` pass; `omatree-core` 373 passed, 1 failed: still the macOS `ulimit -v` test
+`integrity_tests::memory_exhaustion_is_an_error_never_an_abort`, unrelated, unresolved, not weakened.
+
 ### Recommendation: first ticket
 
 **Start with E1 (extract `omatree-core`)**, run in parallel with E2 in the spike repository if there are two people or sessions.

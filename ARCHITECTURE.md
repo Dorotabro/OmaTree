@@ -497,3 +497,43 @@ intercepted globally. The tree menu's Colour row is unchanged. Accessible names:
 "Green note colour, selected"; the compact control is a button "Note colour, green" / "Note colour, none". The
 compact popup's clear button is named "No colour" (not "Clear note colour"), the same widget as the tree menu's.
 VoiceOver was not tested.
+
+### Inline Markdown in table cells (T3)
+
+*Two modes, unchanged.* A table the caret or selection touches is **raw source in the editor's own text**, and one it
+does not touch is concealed and painted as a grid (`table.rs`). T3 changes what the grid shows and what the raw mode
+reveals, not how either is edited: there is no editable cell, no overlay, and the grid never writes anything back.
+
+*Where the formatting comes from.* `markdown::parse` already reports the inline spans (bold, italic, strikethrough, code,
+link, with their delimiter ranges) for the whole note, cells included; they style the raw source. The table painter
+simply ignored them and showed cell text as written. `Table` now carries the spans that fall inside it (`Table::inline`,
+copied while the parser builds the table) and a hash of their shape (`inline_sig`). `table::runs` turns one cell into
+display runs (text plus bold/italic/strike/code/link flags): the trimmed source with every delimiter of those spans
+removed, outside code a backslash before ASCII punctuation concealed (the punctuation stays literal), and `\|` read as
+`|` (as GFM does in cells, code included). Whatever the parser did not turn into a span (an unmatched `**`, `snake_case`,
+an image inside a cell) stays as written. There is no second Markdown parser and no second authoritative text: the runs
+are derived display data, rebuilt from the source.
+
+*Layout and painting.* One `LayoutJob` per cell, a section per run, so measuring (natural widths, wrapping, row
+heights) and painting see the same flow. Faces follow the document text (`layout::format_for`): bold uses the bold
+family (or the 4 % letter-spacing fallback), italic is egui's slant, code is monospace at 0.92 of the body size on
+`code_bg` in `code_text` with no emphasis, links use the link colour and an underline, strikethrough a 1 px line. A cell
+that mixes faces (code, or bold in a body row with a real bold family) gets one explicit line box for all of them and the
+bold face's baseline shift (`fonts::bold_drop`), exactly as in the document; a plain cell stays one section with no
+explicit line height, i.e. the same job as before T3, so plain tables measure and paint as they did. Header cells are
+bold whatever they contain. Colours come from the editor palette at paint time; measuring uses uncoloured jobs, so a theme
+change invalidates nothing. The fonts, line heights and bold drop are measured once per layout and kept in the cached
+`TableLayout`, not per frame. The cache key gained `inline_sig`, because the same table source can parse differently in
+another note (a reference link definition coming or going).
+
+*Raw mode.* While a table is touched, the inline constructs inside it now reveal their delimiters (dimmed, in the reveal
+colour) instead of each waiting for the caret to reach it: editing a cell shows what the cell contains
+(`layout::compute_flags`, `raw_tables`). The text stays styled with the delimiters visible, which is the editor's usual
+reveal; the grid hides them.
+
+*Links.* A link in a cell is styled only. The grid has no interaction at all, so a click enters the raw table like a
+click on any cell; nothing is opened, loaded or read, whatever the destination (the existing policy, `links::safe_http_url`,
+still governs links in running text). Opening links from the grid was left out (optional in the ticket).
+
+*Unchanged and out of scope:* column-width distribution (a very long cell still squeezes its neighbours, as before),
+PDF/Markdown export, nested tables, images in cells.
