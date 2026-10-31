@@ -42,5 +42,6 @@ Description: local-first tree-structured note-taking application (egui version)
  Notes are Markdown that you edit in place. A notebook is a single local
  file with the extension .omatree; there is no account and no cloud service.
  This is the egui version, which can be installed next to the Qt version
- ("omatree"). It saves notebooks as schema version 4, which older versions
- refuse to open.
+ ("omatree"). A notebook stays at its old format until it needs a newer one:
+ saving a pasted image makes it schema version 4 and saving a colour tag makes
+ it version 5. OmaTree 0.1.2 and earlier refuse to open versions 4 and 5.

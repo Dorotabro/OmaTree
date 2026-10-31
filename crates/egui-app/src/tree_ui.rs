@@ -383,8 +383,28 @@ impl Host {
                         overflow_character: Some('\u{2026}'),
                     };
                     let galley = painter.layout_job(job);
-                    if galley.elided && resp.hovered() && self.drag.is_none() {
-                        resp.show_tooltip_text(&r.title);
+                    // Not while this row's menu is open (or opening): it would sit on top of the menu.
+                    let menu_open =
+                        egui::Popup::is_id_open(&ctx, egui::Popup::default_response_id(&resp));
+                    if galley.elided
+                        && resp.hovered()
+                        && self.drag.is_none()
+                        && !menu_open
+                        && !resp.secondary_clicked()
+                    {
+                        // Not `resp.show_tooltip_text`: that tooltip's popup id is the row's, which is
+                        // also the id of the row's context menu below, and egui asserts (debug builds)
+                        // when one id moves from the Tooltip layer to the menu's. The tooltip gets an id
+                        // of its own.
+                        egui::Tooltip::always_open(
+                            ctx.clone(),
+                            resp.layer_id,
+                            resp.id.with("elided-title"),
+                            &resp,
+                        )
+                        .show(|ui| {
+                            ui.label(r.title.as_str());
+                        });
                     }
                     painter.galley(
                         Pos2::new(text_left, rect.center().y - galley.size().y / 2.0),

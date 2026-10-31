@@ -44,7 +44,7 @@ Screenshots of OmaTree on Windows and macOS will be added when builds of the egu
 - Linux packages of the egui version (Arch / Omarchy, Debian / Ubuntu, AppImage) can be built with the scripts in `packaging/egui/`; how, and what was and was not verified, is in [`docs/PACKAGING_EGUI.md`](docs/PACKAGING_EGUI.md). They install next to the Qt version and are named `omatree-egui`.
 - There are **no Windows or macOS packages** of the egui version (no installer, no `.app`, no disk image).
 
-**Notebook compatibility.** The egui version raises a notebook's schema version only when it has to: to version 4 when an image is saved and to version 5 when a colour tag is saved. Releases up to and including Qt v0.1.2 refuse to open a version 4 or 5 notebook. Keep a copy of any notebook you still need to open with an older version. Unmodified notebooks stay at their old version and still open everywhere.
+**Notebook compatibility.** The egui version raises a notebook's schema version only when it has to: to version 4 when an image is saved and to version 5 when a colour tag is saved. Releases up to and including Qt v0.1.2 refuse to open a version 4 or 5 notebook. Keep a copy of any notebook you still need to open with an older version. A notebook is never lowered again, and one that needs neither stays at version 3 and still opens everywhere.
 
 ## Getting started
 

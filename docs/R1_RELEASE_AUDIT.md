@@ -6,6 +6,8 @@ cut-over; no schema, feature or version change; no real notebook was opened.** F
 scripts and source plus the checks in "Validation"; a script that exists is **not** evidence that it works
 unless a record says it was run.
 
+**Update:** R2 (`docs/R2_RELEASE_REPORT.md`) fixed the stale schema text (B5), fixed the elided-title assertion, rebuilt and verified candidate Linux packages (B3, candidate level) and ran a Linux GUI check (B4). B1 and B2 remain open.
+
 Related: `docs/RELEASING.md` (procedure), `docs/screenshots/README.md` (images), `docs/PACKAGING_EGUI.md`,
 `docs/EGUI_MIGRATION_PLAN.md` (E12a–E13a, M1, T1–T3 records).
 

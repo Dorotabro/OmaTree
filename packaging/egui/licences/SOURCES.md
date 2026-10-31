@@ -1,8 +1,8 @@
 # Upstream licence texts (ticket E12c)
 
 Sixteen crates in the egui build declare a licence expression in their manifests but do **not** ship
-the licence file inside the published crate (the editor library, a seventeenth, has no licence at all
-and is a maintainer decision: see `THIRD_PARTY.md`). So that the packages carry the notice, the texts
+the licence file inside the published crate (the editor library, a workspace crate since P2, declares
+`MIT OR Apache-2.0` like OmaTree; confirming its ownership facts is still a maintainer decision: see `THIRD_PARTY.md`). So that the packages carry the notice, the texts
 below were copied unmodified from the crates' own upstream repositories on 2026-10-27 and are added
 to `third-party-licenses.txt` by `packaging/egui/third-party.py`. This supplies attribution material;
 it is not a licensing decision and it does not replace checking the published crate.

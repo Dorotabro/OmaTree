@@ -133,6 +133,23 @@ never touched; the recent-notebooks list stays in the user's configuration (belo
 The AppImage does not install itself; integrate it with your desktop's AppImage tool for a menu entry and file
 association. It contains the same desktop entry, icons and MIME data.
 
+## Notebook compatibility
+
+The egui version writes the oldest schema a notebook can do with, and raises it only when a save needs it
+(`ARCHITECTURE.md`, "Colour tags (T1)" and the E9 records):
+
+| Schema | Written when | OmaTree 0.1.2 (Qt) and the pre-T1 egui build |
+|---|---|---|
+| 3 | the notebook has neither an image nor a colour tag | opens it |
+| 4 | a save has to store an image (E9) | **refuses** it, file unchanged |
+| 5 | a save has to store a colour tag (T1; a v3 or v4 notebook migrates to 5 inside that save) | **refuses** it, file unchanged |
+
+A notebook is never lowered, and clearing every tag does not bring a version 5 file back to 4 or 3.
+`tools/pre-e9-compat.sh` demonstrates the refusals against a pre-E9 core. The Qt application built from this
+repository shares `omatree-core`, so it reads all three, but a Qt save writes the tags back unchanged and
+shows none. The AppStream and Debian descriptions and the README carry the same warning; the release notes
+must repeat it.
+
 ## Where things are stored
 
 - Recent notebooks: `$XDG_CONFIG_HOME/omatree/recent.txt` (else `~/.config/omatree/recent.txt`), one path

@@ -833,6 +833,7 @@ mod table_inline_tests;
 mod audit_tests;
 mod compact_tests;
 mod drag_tests;
+mod elided_title_tests;
 mod export_tests;
 mod files_tests;
 mod hardening_tests;

@@ -17,8 +17,10 @@
     </p>
     <p>
       This is the egui version of OmaTree, installable next to the Qt version while
-      the two coexist. Notebooks it saves use schema version 4, which older OmaTree
-      versions refuse to open.
+      the two coexist. A notebook stays in its old format until it needs a newer one:
+      saving a pasted image makes it schema version 4 and saving a colour tag makes it
+      version 5. OmaTree 0.1.2 and earlier refuse to open versions 4 and 5, so keep a
+      copy of notebooks you still need there.
     </p>
   </description>
   <launchable type="desktop-id">io.github.Dorotabro.OmaTreeEgui.desktop</launchable>
