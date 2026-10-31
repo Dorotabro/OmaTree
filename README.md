@@ -1,301 +1,153 @@
 # OmaTree
 
-**OmaTree is a local-first tree-structured note-taking app, inspired by CherryTree and designed with Omarchy in mind.**
+**A local-first notebook for people who think in trees.** A tree of notes on the left, the selected note on the right, and nothing else in the way. Inspired by CherryTree, designed with [Omarchy](https://omarchy.org) in mind.
 
-Notes live in a simple hierarchy: every node is a note, and every note can have child notes nested as deeply as needed. The interface stays deliberately minimal, with the tree on the left and the selected note on the right. A notebook is stored locally as a single `.omatree` file.
+Every node is a note, and every note can have child notes, nested as deeply as you like. Notes are Markdown, rendered live while you type. A notebook is one `.omatree` file on your disk.
 
-## What it does
+OmaTree is written in Rust with [egui](https://github.com/emilk/egui). It is a native application: no Electron, no web view, no Qt.
 
-- **Notes in a tree.** Create, rename, nest, reorder and move notes with the mouse or keyboard.
-- **Markdown.** Notes are plain text; `Ctrl+E` (`⌘E` on macOS) switches between editing and a read-only Markdown Preview. Preview never loads images or other resources, local or remote.
-- **Local search.** `Ctrl+F` (`⌘F` on macOS) searches titles and note text in the open notebook.
-- **Keyboard-first workflow.** The whole application can be driven from the keyboard; `F1` lists the shortcuts.
-- **Autosave and recovery.** Deleted notes go to a persistent Trash, and structural changes create recovery checkpoints.
-- **One notebook, one file.** Each notebook is a single local `.omatree` SQLite file. No account, cloud service, telemetry or network access is required.
-- **Theme integration.** On Omarchy, OmaTree follows the current theme live. Elsewhere it follows the system light/dark preference.
+![OmaTree with the dark Kanagawa theme: a note tree with colour tags, a styled table and the colour picker](docs/screenshots/omatree-dark-kanagawa-editor.png)
 
-## What it deliberately is not
+> **Status: pre-release.** This README describes the Rust + egui version, which is developed on the
+> `egui-integration` branch and has **not been released yet**. The latest published release is
+> [v0.1.2](https://github.com/Dorotabro/OmaTree/releases/tag/v0.1.2), the earlier Qt version. See [Downloads](#downloads-and-installation).
 
-OmaTree is small on purpose. It has no sync, collaboration, plugins, graph view, AI features or rich-text editing, and it is not intended to grow into a general knowledge-management platform.
+## Features
 
-See [`VISION.md`](VISION.md) for the design philosophy.
+- **Notes in a tree.** Create, rename, nest, reorder and drag notes with the mouse or the keyboard. Collapse or expand a whole branch at once.
+- **Live Markdown.** You edit the Markdown source itself; headings, emphasis, lists, tasks, links, code and emoji are rendered as you type, and the raw syntax appears where the caret is. There is no separate Preview mode.
+- **Styled tables.** Markdown tables are drawn as real grids, with bold, italic, code, strikethrough and links inside cells.
+- **Images inside the notebook.** Paste an image from the clipboard and it is stored in the notebook file, so the notebook stays one portable file. OmaTree never fetches remote images and never reads arbitrary files from disk.
+- **Colour tags.** Mark any note with one of six colours, from the tree menu or the colour picker in the note header. A collapsed branch hints at tagged notes inside it.
+- **Search.** The search field is always at the top of the tree; `Ctrl+F` jumps to it. It searches titles and note text.
+- **Autosave and recovery.** Deleted notes go to a persistent Trash, structural changes create checkpoints, and *Recovery* restores either.
+- **Compact Notebook.** Removes images that no note, Trash entry or checkpoint still uses, after showing you what would go and asking first.
+- **Export.** Export a note as Markdown, a folder with its images, a ZIP, or a PDF.
+- **Omarchy themes.** On Omarchy, OmaTree follows the current theme and switches live when you change it. Elsewhere it follows the system light or dark setting.
+- **Keyboard first.** Everything can be done without the mouse; `F1` lists every shortcut.
+- **Local and private.** No account, cloud service, telemetry or network access.
 
-## Status
+## More screenshots
 
-This is **v0.1.2**. It adds Windows support (x64) and fixes Markdown Preview so that it no longer swallows the application's keyboard shortcuts. v0.1.1 added macOS support (Apple Silicon); v0.1.0, the first public release, was Linux only.
-
-The notebook format is versioned but may still change between releases, so keep backups of notebooks that matter to you.
-
-## Install
-
-Release downloads are available from the [GitHub Releases page](https://github.com/Dorotabro/OmaTree/releases). Each release also includes `SHA256SUMS`.
-
-| System | Package | Qt |
-|---|---|---|
-| Omarchy / Arch Linux | native package | system |
-| Debian 13+, recent Ubuntu | native `.deb` | system Qt 6.8+ |
-| Other x86_64 Linux | AppImage | bundled Qt 6.8.3 |
-| macOS 14+, Apple Silicon | disk image (`.dmg`), **unsigned and not notarized** | bundled Qt 6.11.2 |
-| Windows 10 (1903+) / 11, x64 | installer (`.exe`), **unsigned** | bundled Qt 6.8.3 |
-
-There is no build for Intel Macs and none for Windows on ARM.
-
-The v0.1.2 release contains these files (Linux and Windows are x86-64; the Mac build is arm64, Apple Silicon):
-
-| File | System |
+| Light theme | Notebook menu |
 |---|---|
-| `omatree-0.1.2-1-x86_64.pkg.tar.zst` | Omarchy / Arch Linux, x86_64 |
-| `omatree_0.1.2_amd64.deb` | Debian / Ubuntu, amd64 |
-| `OmaTree-0.1.2-x86_64.AppImage` | other Linux, x86_64 |
-| `OmaTree-0.1.2-arm64.dmg` | macOS 14+, Apple Silicon (arm64) |
-| `OmaTree-0.1.2-x64-setup.exe` | Windows 10 (1903+) / 11, x64 |
-| `SHA256SUMS` | SHA-256 checksums of the five files above |
+| ![OmaTree with a light theme](docs/screenshots/omatree-light-editor.png) | ![The notebook menu in the dark theme](docs/screenshots/omatree-dark-notebook-menu.png) |
 
-To check a download, compare its SHA-256 with the line in `SHA256SUMS`: on Linux, `grep <file name> SHA256SUMS | sha256sum -c -`; on macOS, the `shasum` command shown below; on Windows, `Get-FileHash` as shown below.
+Screenshots of OmaTree on Windows and macOS will be added when builds of the egui version exist for them. See [`docs/screenshots/README.md`](docs/screenshots/README.md).
 
-### egui version (pre-release, Linux only)
+## Downloads and installation
 
-OmaTree is being migrated from Qt to egui. The egui version (`omatree-egui`, no Qt) is built as separate Linux packages that install **next to** the Qt version and share none of its files: `omatree-egui-0.1.2-1-x86_64.pkg.tar.zst` (Arch / Omarchy), `omatree-egui_0.1.2_amd64.deb` (Debian 13+, Ubuntu 24.04+) and `OmaTree-egui-0.1.2-x86_64.AppImage` (other x86_64 Linux, glibc 2.30+). They are not published yet; see [`docs/PACKAGING_EGUI.md`](docs/PACKAGING_EGUI.md) for what was verified, how to build, install, run and remove them, and the known limits. The egui version is built from this repository alone: `crates/core` (notebook and SQLite), `crates/editor` (the Markdown editor, an ordinary workspace crate since ticket P2) and `crates/egui-app`; `cargo build --locked --release -p omatree-egui` compiles all three, with no private repository or sibling checkout involved. Windows and macOS builds of the egui version have not been run (see "E12c record" in `docs/EGUI_MIGRATION_PLAN.md`). **Notebooks saved by the egui version use schema version 4, which OmaTree releases before this branch (including the released Qt 0.1.2) refuse to open**, so keep a copy of anything you still need to open with them.
+**There is no download of the egui version yet.** Nothing in this section has been published.
 
-### Omarchy / Arch Linux
+- The latest release, [v0.1.2](https://github.com/Dorotabro/OmaTree/releases/tag/v0.1.2), is the **Qt** version (Linux, macOS on Apple Silicon, Windows x64). Its install instructions are in the [README at that tag](https://github.com/Dorotabro/OmaTree/blob/v0.1.2/README.md).
+- The egui version can be **built from source** today (below).
+- Linux packages of the egui version (Arch / Omarchy, Debian / Ubuntu, AppImage) can be built with the scripts in `packaging/egui/`; how, and what was and was not verified, is in [`docs/PACKAGING_EGUI.md`](docs/PACKAGING_EGUI.md). They install next to the Qt version and are named `omatree-egui`.
+- There are **no Windows or macOS packages** of the egui version (no installer, no `.app`, no disk image).
 
-The native package uses the system Qt 6:
+**Notebook compatibility.** The egui version raises a notebook's schema version only when it has to: to version 4 when an image is saved and to version 5 when a colour tag is saved. Releases up to and including Qt v0.1.2 refuse to open a version 4 or 5 notebook. Keep a copy of any notebook you still need to open with an older version. Unmodified notebooks stay at their old version and still open everywhere.
 
-```bash
-sudo pacman -U ./omatree-0.1.2-1-x86_64.pkg.tar.zst
-```
+## Getting started
 
-Remove it with:
+1. Start OmaTree. You get an empty, untitled notebook; nothing is written to disk until you save.
+2. `Ctrl+N` creates a note, `Ctrl+Shift+N` a child of the selected note. Type a title, press `Enter`, and write.
+3. Type `/` at the start of a line for the slash menu: headings, lists, tasks, code blocks, tables, emoji and images.
+4. Press `Ctrl+S`. An untitled notebook asks where to save; OmaTree adds `.omatree` for you. After that, changes are saved automatically.
+5. `Ctrl+F` searches, `Escape` returns to the tree, and `F1` shows every shortcut.
 
-```bash
-sudo pacman -R omatree
-```
+To open a notebook directly, pass its path: `omatree-egui path/to/notes.omatree`.
 
-### Debian / Ubuntu
+## Keyboard shortcuts
 
-The native amd64 package uses the system Qt 6.
+`Ctrl` is `⌘` on macOS. `F1` shows the full list for your platform.
 
-OmaTree needs a newer Qt than Debian 12 and Ubuntu 22.04/24.04 provide, so the `.deb` is currently supported where it has been tested:
+| Keys | Action |
+|---|---|
+| `Ctrl+N` / `Ctrl+Shift+N` | New note / new child note |
+| `F2` | Rename the note |
+| `Alt+↑` / `Alt+↓` | Move the note among its siblings |
+| `↑` `↓` `←` `→` | Move through the tree, collapse, expand |
+| `Ctrl+←` / `Ctrl+→` | Collapse / expand the whole subtree |
+| `Enter` | Edit the selected note |
+| `Delete` | Move the note to Trash (asks first; on macOS the Delete key) |
+| `Shift+F10` | Tree menu, including Colour |
+| `Ctrl+F` | Go to search |
+| `Ctrl+B` / `Ctrl+I` / `Ctrl+E` | Bold / italic / inline code |
+| `Ctrl+Shift+8` / `Ctrl+Shift+7` | Bulleted / numbered list |
+| `Ctrl+Enter` | Tick or untick a task |
+| `/strike` | Strikethrough (slash menu) |
+| `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo (per note) |
+| `Ctrl+S` / `Ctrl+Shift+S` | Save / Save As |
+| `Ctrl+O` / `Ctrl+Alt+N` | Open / new notebook |
+| `Ctrl+Shift+E` | Export the note |
+| `Ctrl+Shift+R` | Recovery (Trash and checkpoints) |
+| `F1` | Keyboard shortcuts |
 
-- Debian 13
-- Ubuntu 25.10
-- Ubuntu 26.04
+## Notebook format and portability
 
-Install with `apt` so dependencies are resolved automatically:
+A notebook is a single [SQLite](https://sqlite.org) file with the extension `.omatree`, for example `notes.omatree`. It holds the note tree, the note texts (plain Markdown), colour tags, the images you pasted, the Trash and the recovery checkpoints. You can copy it, back it up, sync it with any file tool you already use, or open it with the `sqlite3` command line.
 
-```bash
-sudo apt install ./omatree_0.1.2_amd64.deb
-```
+- Images are stored in the notebook and referenced from the Markdown as `assets/<id>.<ext>`. Export to a folder or ZIP writes them out next to the Markdown.
+- The notebook is versioned. Older versions of OmaTree refuse a notebook written by a newer schema rather than damage it; see the compatibility note above.
+- The list of recent notebooks is the only thing OmaTree stores outside the notebook (a small text file in your configuration directory).
 
-Remove it with:
+## Omarchy theme integration
 
-```bash
-sudo apt purge omatree
-```
+On Linux, OmaTree reads the active Omarchy theme from `$XDG_STATE_HOME/omarchy/current/theme/colors.toml` (by default `~/.local/state/omarchy/current/theme/colors.toml`) and re-reads it while running, so switching the theme in Omarchy restyles the open window. If the file is missing or invalid, OmaTree uses its built-in light and dark palettes and follows the system's light or dark preference. Omarchy is never required, and non-Linux platforms never look for it.
 
-On Debian 12, Ubuntu 22.04 or Ubuntu 24.04, use the AppImage instead.
+## Building from source
 
-### Other x86_64 Linux: AppImage
-
-The AppImage bundles its own Qt runtime, so it does not depend on your system Qt version:
-
-```bash
-chmod +x OmaTree-0.1.2-x86_64.AppImage
-./OmaTree-0.1.2-x86_64.AppImage
-```
-
-You can also pass a `.omatree` file path to open it directly.
-
-The AppImage has a measured **glibc 2.30+** requirement on x86_64 and needs the usual Linux desktop libraries such as OpenGL/EGL, X11 or Wayland client libraries, fontconfig, FreeType and libxkbcommon.
-
-It has been tested on:
-
-- Ubuntu 20.04
-- Debian 11, 12 and 13
-- Ubuntu 24.04 and 26.04
-- Arch Linux on real Wayland and X11/XWayland sessions
-
-Without FUSE, run it with:
+You need a Rust toolchain (the project is developed with Rust 1.99; no minimum version is declared) and a C compiler (SQLite is compiled in). **Qt is not needed** for the egui version.
 
 ```bash
-APPIMAGE_EXTRACT_AND_RUN=1 ./OmaTree-0.1.2-x86_64.AppImage
+git clone https://github.com/Dorotabro/OmaTree.git
+cd OmaTree
+git checkout egui-integration
+
+cargo build --locked --release -p omatree-egui
+./target/release/omatree-egui
 ```
 
-The AppImage does not install itself. Desktop-menu and `.omatree` file association integration depends on your desktop or AppImage integration tool. The AppImage contains the desktop, icon and MIME metadata those tools can use.
+Name the package with `-p omatree-egui`: a plain `cargo build` still builds the Qt application (it is the workspace default until the egui version replaces it). Everything the egui build needs is in this repository (`crates/core`, `crates/editor`, `crates/egui-app`) plus crates from crates.io.
 
-### macOS (Apple Silicon)
+On Linux the window system libraries are loaded at run time: Wayland or X11, EGL/OpenGL, `libxkbcommon`, fontconfig, and `libdbus` for the native file dialogs (through the XDG desktop portal). Without a portal, OmaTree offers to type a path instead.
 
-`OmaTree-0.1.2-arm64.dmg` is for Macs with Apple silicon (M1 or newer) running **macOS 14 Sonoma or later**. It contains `OmaTree.app` with its own Qt, so nothing else needs to be installed. Notebooks open from Finder (double-click or Open With), and the shortcuts use ⌘ (`F1` lists them).
-
-**The app is not signed with an Apple Developer ID and is not notarized by Apple.** macOS therefore blocks it the first time it is opened. This is expected; you approve it once:
-
-1. Open the disk image and drag `OmaTree` to `Applications`.
-2. Open `OmaTree` from `Applications`. macOS says it cannot check the app for malicious software. Click **Done** (not *Move to Trash*).
-3. Open **System Settings → Privacy & Security** and scroll down to **Security**. There is a note that "OmaTree" was blocked; click **Open Anyway**, authenticate, and click **Open**.
-
-macOS remembers the choice. If you would rather not use System Settings, `xattr -dr com.apple.quarantine /Applications/OmaTree.app` in Terminal removes the quarantine mark instead. Only do either if you got the file from the [Releases page](https://github.com/Dorotabro/OmaTree/releases) and its checksum matches:
+Before sending changes:
 
 ```bash
-grep OmaTree-0.1.2-arm64.dmg SHA256SUMS | shasum -a 256 -c -
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build --release -p omatree-egui
 ```
 
-Remove OmaTree by dragging it to the Trash. Your notebooks are ordinary files and are not touched.
+The workspace tests include the Qt package, so Qt 6 must be installed to run all of them. For the egui crates alone use `cargo test -p omatree-core -p omatree-editor -p omatree-egui`. See [`CONTRIBUTING.md`](CONTRIBUTING.md), [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`VISION.md`](VISION.md).
 
-### Windows (x64)
+## Supported and unverified platforms
 
-`OmaTree-0.1.2-x64-setup.exe` is for 64-bit Windows 10 **version 1903 or later**, and Windows 11. It contains its own Qt, so nothing else needs to be installed. There is no build for Windows on ARM.
+| Platform | State |
+|---|---|
+| **Linux, Wayland (Omarchy / Hyprland)** | Developed and tested here, including the Arch package (installed into an isolated root, not a real system). |
+| Linux, XWayland | Keyboard, mouse, clipboard and rendering checked. |
+| Linux, native X11 | **Not verified** (only Xvfb and XWayland were available). |
+| Debian 13 / Ubuntu 24.04 (`.deb`) | Installed, started and removed in containers. `.deb` needs glibc 2.39 or newer. |
+| AppImage, glibc 2.30+ | Started in Ubuntu 20.04 and Debian 12 containers on X11; native Wayland was checked from the AppImage on the development machine. |
+| **macOS (Apple Silicon)** | Runs when built from source (checked on macOS 27). There is **no app bundle or installer**, opening a notebook from Finder is **not implemented**, and the menu bar shows the executable name. |
+| **Windows** | **Not verified at run time.** The code type-checks for the MinGW target; it has not been started on Windows, and there is no installer or file association. |
+| Screen readers, input methods, Hi-DPI | Not verified. |
 
-Run the installer and follow the steps. It installs **for your user only** (under `%LOCALAPPDATA%\Programs\OmaTree`), so it does not need administrator rights and normally shows no UAC prompt. It adds OmaTree to the Start menu (a desktop shortcut is offered, unchecked) and associates `.omatree` files with OmaTree, so a double-click in Explorer opens the notebook. Remove it under **Settings → Apps → Installed apps**; your notebooks are ordinary files and are not touched.
+Windows and macOS users who want something that works today should use the Qt version from the [v0.1.2 release](https://github.com/Dorotabro/OmaTree/releases/tag/v0.1.2).
 
-**The installer is not code-signed.** Windows SmartScreen may therefore show *Windows protected your PC* and name the publisher as *Unknown publisher* the first time you run a downloaded copy. This is expected for an unsigned program, not a sign that something is wrong with the file. If you got it from the [Releases page](https://github.com/Dorotabro/OmaTree/releases):
+## What OmaTree deliberately is not
 
-1. Run `OmaTree-0.1.2-x64-setup.exe`.
-2. If SmartScreen blocks it, click **More info**.
-3. Check that the file name shown is `OmaTree-0.1.2-x64-setup.exe`.
-4. Click **Run anyway**, if you trust the release.
+OmaTree is small on purpose. It has no sync, collaboration, plugins, graph view, AI features or rich-text editing, and it is not meant to grow into a knowledge-management platform. See [`VISION.md`](VISION.md).
 
-You do not need to turn off SmartScreen or your antivirus for this. To check that the file is the one that was published, compare its SHA-256 with the line in `SHA256SUMS` before running it:
+## Licence and acknowledgements
 
-```powershell
-Get-FileHash .\OmaTree-0.1.2-x64-setup.exe
-```
-
-The shortcuts are the Ctrl ones listed under `F1`. The window closes with Alt+F4 or its close button, both asking about unsaved changes.
-
-## Build from source
-
-You need:
-
-- a Rust toolchain
-- Qt 6 Base
-- Qt 6 Declarative
-- Qt Quick Controls, Layouts and Dialogs
-
-Qt **6.8 and 6.11 are tested**. Qt 6.4 is too old for the current UI.
-
-On Arch Linux:
-
-```bash
-sudo pacman -S qt6-base qt6-declarative
-```
-
-Build and run:
-
-```bash
-cargo build --release
-./target/release/omatree
-```
-
-You can optionally pass a `.omatree` file path to open an existing notebook directly.
-
-On macOS, `brew install qt` provides Qt 6 and the same commands work. `packaging/macos/build-dmg.sh` builds the disk image.
-
-On Windows, use the MSVC toolchain: Visual Studio Build Tools 2022 with the C++ workload, Rust's `x86_64-pc-windows-msvc` target, and a Qt 6 `msvc2022_64` kit (for example Qt 6.8.3 from `aqtinstall`). Run the commands from a shell where the MSVC environment is loaded (`vcvars64.bat`), with `QMAKE` pointing at the kit's `qmake.exe` and its `bin` directory on `PATH`. `packaging\windows\build-installer.ps1` builds the installer. Ctrl+W is deliberately not bound on Windows. Quote a notebook path that contains spaces: `omatree.exe "C:\Users\me\My Notes\poznámky.omatree"`.
-
-For development:
-
-```bash
-cargo run
-```
-
-How the release packages are built and verified is documented in [`docs/PACKAGING.md`](docs/PACKAGING.md).
-
-## Notebook files
-
-An OmaTree notebook is stored as a single SQLite file with the `.omatree` extension, for example:
-
-```text
-notes.omatree
-```
-
-Notebook files contain the note tree, note contents, Trash and recovery history.
-
-Running OmaTree without a path starts a new untitled notebook.
-
-## Technology
-
-OmaTree is built with:
-
-- Rust
-- Qt 6
-- Qt Quick / QML
-- CXX-Qt
-- SQLite
-
-Rust owns the application logic and data model. QML handles presentation and interaction.
-
-## Development
-
-Before submitting changes, run:
-
-```bash
-cargo fmt --check
-cargo clippy --all-targets
-cargo test
-cargo build
-```
-
-Project design and development rules are documented in:
-
-- [`VISION.md`](VISION.md)
-- [`ARCHITECTURE.md`](ARCHITECTURE.md)
-- [`AGENTS.md`](AGENTS.md)
-- [`CONTRIBUTING.md`](CONTRIBUTING.md)
-
-## Testing
-
-Run the full suite:
-
-```bash
-cargo test
-```
-
-Run only the permanent integration scenarios:
-
-```bash
-cargo test integration_tests
-```
-
-The integration tests run the real application headlessly in separate processes using Qt's `offscreen` platform. They cover workflows across Rust, Qt models and QML, including saving and reopening, autosave, New/Open, Search, expansion state, Trash and Recovery, Markdown Preview resource blocking, theme switching, keyboard navigation and dialogs.
-
-The tests use temporary directories, contact only `127.0.0.1`, and fail on QML warnings or hung scenarios.
-
-See `src/integration_tests.rs` and `tests/qml/` for the harness and scenarios.
-
-## Platform support
-
-```text
-Linux
-  Arch / Omarchy              native package
-  Debian 13+, Ubuntu 25.10+   native .deb
-  other x86_64 Linux          AppImage (glibc 2.30+)
-
-macOS 14+, Apple Silicon      disk image (unsigned, not notarized)
-
-Windows 10 (1903+) / 11, x64  installer (unsigned)
-```
-
-Development happens primarily on Arch Linux / Omarchy.
-
-The macOS build is Apple Silicon only; there is no Intel (x86_64) build. The Windows build is x64 only; there is no ARM64 build. Windows 10 version 1903 is the minimum because the application asks Windows for a UTF-8 code page, so that notebook paths with accented or non-ASCII letters open correctly.
-
-## Design philosophy
-
-OmaTree is intentionally small.
-
-It is not intended to become a knowledge-management platform, collaboration suite, plugin ecosystem, graph database or productivity operating system.
-
-It is a tree of notes.
-
-That should remain easy to understand.
-
-## License
-
-OmaTree is licensed under either of:
+OmaTree is licensed under either of
 
 - [Apache License, Version 2.0](LICENSE-APACHE)
 - [MIT License](LICENSE-MIT)
 
 at your option.
 
-Third-party components are listed in [THIRD_PARTY.md](THIRD_PARTY.md).
+OmaTree stands on [egui and eframe](https://github.com/emilk/egui), [SQLite](https://sqlite.org), [pulldown-cmark](https://github.com/pulldown-cmark/pulldown-cmark), [krilla](https://github.com/LaurenzV/krilla) (PDF export), [AccessKit](https://github.com/AccessKit/accesskit), [rfd](https://github.com/PolyMeilex/rfd) and many other open-source crates, and bundles the Liberation fonts (SIL Open Font Licence 1.1). Every dependency and its licence is listed in [`THIRD_PARTY.md`](THIRD_PARTY.md); packages ship the full licence texts. OmaTree is inspired by [CherryTree](https://www.giuspen.net/cherrytree/), and its Omarchy integration follows [Omarchy](https://omarchy.org) by DHH and contributors.
