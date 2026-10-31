@@ -1,3 +1,12 @@
+omatree-egui (0.2.0) unstable; urgency=low
+
+  * First Rust and egui prerelease for Linux x86_64. It installs next to the
+    Qt package "omatree" and installs no file that package installs. Notebooks
+    that hold an image (schema 4) or a colour tag (schema 5) cannot be opened
+    by OmaTree 0.1.2.
+
+ -- OmaTree project <261649146+Dorotabro@users.noreply.github.com>  Sat, 31 Oct 2026 00:00:00 +0000
+
 omatree-egui (0.1.2) unstable; urgency=low
 
   * First package of the egui version of OmaTree (migration ticket E12b), a

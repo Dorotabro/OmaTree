@@ -135,6 +135,8 @@ Facts (no ownership, authorship or licence is asserted by R2; nothing in the lic
 3. Non-blocking, maintainer to accept or schedule: 16 crates' notices are *upstream copies*, three of them from branch heads
    (krilla, profiling, gl-rs) rather than the locked version's tag; the Liberation fonts' exact upstream release is not recorded.
 
+**Update (R3):** the maintainer authorized continuing `MIT OR Apache-2.0`; the decision, the AI-assistance provenance and the remaining unresolved items are recorded in `THIRD_PARTY.md` and `docs/R3_LICENSING_REPORT.md`. Blocker 1 above is therefore decided; the items named in that report remain open.
+
 ## 7. Version and identity status
 
 Working tree still `0.1.2` everywhere (as released Qt). Identity unchanged. Candidate artifacts prove `0.2.0` works with every

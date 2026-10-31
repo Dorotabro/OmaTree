@@ -1,6 +1,6 @@
 [package]
 name = "omatree-egui"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 description = "OmaTree's egui/eframe application shell (migration ticket E4). No Qt."
 license = "MIT OR Apache-2.0"

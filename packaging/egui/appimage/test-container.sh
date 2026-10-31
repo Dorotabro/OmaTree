@@ -2,8 +2,8 @@
 # Runs the egui AppImage in a clean container of the given image, to see whether it really runs
 # on a distribution other than the one it was built on.
 #
-#   packaging/egui/appimage/test-container.sh dist/OmaTree-egui-0.1.2-x86_64.AppImage ubuntu:20.04
-#   packaging/egui/appimage/test-container.sh dist/OmaTree-egui-0.1.2-x86_64.AppImage debian:12
+#   packaging/egui/appimage/test-container.sh dist/OmaTree-egui-0.2.0-x86_64.AppImage ubuntu:20.04
+#   packaging/egui/appimage/test-container.sh dist/OmaTree-egui-0.2.0-x86_64.AppImage debian:12
 #
 # The image gets only what an AppImage user is expected to have: the host's windowing, GL, font and
 # D-Bus libraries (installed by name, the same list as the .deb's Depends) plus Xvfb and Mesa's

@@ -18,3 +18,22 @@ it is not a licensing decision and it does not replace checking the published cr
 Where the ref is a branch rather than the tag of the locked version, the text is the repository's current
 one, which may differ from the published crate's in the copyright line; that is recorded here rather than
 assumed away. A licence file inside a published crate, where there is one, always takes precedence.
+
+## Verification against the exact published commits (R3, 2026-10-31)
+
+The rows above that name a branch were re-checked against the commit that each locked crate was published from.
+A published crate records it in its own `.cargo_vcs_info.json` (read from the crate sources in the Cargo home, as
+resolved by `Cargo.lock`), and the licence files were fetched from GitHub at that commit and compared byte for byte
+(ignoring line endings) with the copies in this directory:
+
+| Crate (locked version) | Commit recorded by the crate | Files compared | Result |
+|---|---|---|---|
+| krilla 0.8.2 | `3ffdf0588cf98050aad6edba51ca70162e1fb5b5` (`crates/krilla`) | `LICENSE_MIT`, `LICENSE_APACHE` | identical |
+| profiling 1.0.18 | `8271551172eb6fa4cba47369aedd93790c623df9` (`profiling`) | `LICENSE-MIT`, `LICENSE-APACHE` | identical |
+| gl_generator 0.14.0 | `ea503e8d5fb6d73c6030e6191ce738cd3bf3433e` | `LICENSE` | identical |
+| khronos_api 3.1.0 | `f150967b1c44ae888e6676f93f639ebc82771bdc` | `LICENSE` | identical |
+
+Nothing in this directory was replaced. The copyright lines are therefore those of the repositories at the commits the
+crates were built from (krilla: "Copyright (c) 2024 Laurenz Stampfl"; profiling: "Copyright (c) 2020 Philip Degarmo and
+other contributors"). The published crates still do not contain these files themselves, so they remain upstream copies,
+now tied to an exact commit instead of a branch head.

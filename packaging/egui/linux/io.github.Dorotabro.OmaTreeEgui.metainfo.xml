@@ -39,6 +39,11 @@
   </keywords>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.2.0" date="2026-10-31" type="development">
+      <description>
+        <p>First Rust and egui prerelease, for Linux x86_64. It installs next to the Qt version and uses a notebook format (schema 4 and 5, only when needed) that OmaTree 0.1.2 cannot open.</p>
+      </description>
+    </release>
     <release version="0.1.2" date="2026-10-27" type="development">
       <description>
         <p>Pre-release packaging of the egui version, for testing next to the Qt version.</p>

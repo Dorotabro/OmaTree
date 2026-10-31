@@ -8,9 +8,10 @@ OmaTree is written in Rust with [egui](https://github.com/emilk/egui). It is a n
 
 ![OmaTree with the dark Kanagawa theme: a note tree with colour tags, a styled table and the colour picker](docs/screenshots/omatree-dark-kanagawa-editor.png)
 
-> **Status: pre-release.** This README describes the Rust + egui version, which is developed on the
-> `egui-integration` branch and has **not been released yet**. The latest published release is
-> [v0.1.2](https://github.com/Dorotabro/OmaTree/releases/tag/v0.1.2), the earlier Qt version. See [Downloads](#downloads-and-installation).
+> **Status: pre-release, not yet published.** This README describes **OmaTree egui 0.2.0**, the Rust + egui
+> version, developed on the `egui-integration` branch. It is a separate prerelease and is **not on the Releases page
+> yet**. The latest published release is still [v0.1.2](https://github.com/Dorotabro/OmaTree/releases/tag/v0.1.2), the
+> earlier Qt version, and it stays available. See [Downloads](#downloads-and-installation).
 
 ## Features
 
@@ -39,9 +40,9 @@ Screenshots of OmaTree on Windows and macOS will be added when builds of the egu
 
 **There is no download of the egui version yet.** Nothing in this section has been published.
 
-- The latest release, [v0.1.2](https://github.com/Dorotabro/OmaTree/releases/tag/v0.1.2), is the **Qt** version (Linux, macOS on Apple Silicon, Windows x64). Its install instructions are in the [README at that tag](https://github.com/Dorotabro/OmaTree/blob/v0.1.2/README.md).
-- The egui version can be **built from source** today (below).
-- Linux packages of the egui version (Arch / Omarchy, Debian / Ubuntu, AppImage) can be built with the scripts in `packaging/egui/`; how, and what was and was not verified, is in [`docs/PACKAGING_EGUI.md`](docs/PACKAGING_EGUI.md). They install next to the Qt version and are named `omatree-egui`.
+- The latest release, [v0.1.2](https://github.com/Dorotabro/OmaTree/releases/tag/v0.1.2), is the **Qt** version (Linux, macOS on Apple Silicon, Windows x64) and **remains available and supported alongside the egui prerelease**. Its install instructions are in the [README at that tag](https://github.com/Dorotabro/OmaTree/blob/v0.1.2/README.md).
+- **OmaTree egui 0.2.0** is planned as a separate **prerelease for Linux x86_64 only**: an Arch / Omarchy package, a Debian / Ubuntu `.deb` and an AppImage, all named `omatree-egui`. They install next to the Qt version without replacing it. When it is published it will be marked *Pre-release* on the [Releases page](https://github.com/Dorotabro/OmaTree/releases) and the Qt release will stay the one marked *Latest*. Draft notes: [`docs/RELEASE_NOTES_0.2.0.md`](docs/RELEASE_NOTES_0.2.0.md).
+- Until then the egui version can be **built from source** (below). The packaging scripts in `packaging/egui/` build the three packages; see [`docs/PACKAGING_EGUI.md`](docs/PACKAGING_EGUI.md) for how and what was verified.
 - There are **no Windows or macOS packages** of the egui version (no installer, no `.app`, no disk image).
 
 **Notebook compatibility.** The egui version raises a notebook's schema version only when it has to: to version 4 when an image is saved and to version 5 when a colour tag is saved. Releases up to and including Qt v0.1.2 refuse to open a version 4 or 5 notebook. Keep a copy of any notebook you still need to open with an older version. A notebook is never lowered again, and one that needs neither stays at version 3 and still opens everywhere.
@@ -148,6 +149,6 @@ OmaTree is licensed under either of
 - [Apache License, Version 2.0](LICENSE-APACHE)
 - [MIT License](LICENSE-MIT)
 
-at your option.
+at your option. Copyright (c) 2026 OmaTree contributors.
 
 OmaTree stands on [egui and eframe](https://github.com/emilk/egui), [SQLite](https://sqlite.org), [pulldown-cmark](https://github.com/pulldown-cmark/pulldown-cmark), [krilla](https://github.com/LaurenzV/krilla) (PDF export), [AccessKit](https://github.com/AccessKit/accesskit), [rfd](https://github.com/PolyMeilex/rfd) and many other open-source crates, and bundles the Liberation fonts (SIL Open Font Licence 1.1). Every dependency and its licence is listed in [`THIRD_PARTY.md`](THIRD_PARTY.md); packages ship the full licence texts. OmaTree is inspired by [CherryTree](https://www.giuspen.net/cherrytree/), and its Omarchy integration follows [Omarchy](https://omarchy.org) by DHH and contributors.

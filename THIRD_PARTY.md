@@ -18,7 +18,7 @@ OmaTree itself is `MIT OR Apache-2.0` (see `LICENSE-MIT`, `LICENSE-APACHE`).
 Evidence: `cargo tree --locked -p omatree-egui --target x86_64-unknown-linux-gnu -e normal,build`
 for the compiled set, `cargo metadata --locked` for each crate's declared licence expression, and
 each crate's own source for its licence files, all read by `packaging/egui/third-party.py`
-(OmaTree 0.1.2, Rust 1.99, Linux x86_64). The table below is generated and
+(OmaTree 0.2.0, Rust 1.99, Linux x86_64). The table below is generated and
 `packaging/egui/tests/verify-sources.sh` fails if it is stale; the packages additionally ship
 `third-party-licenses.txt`, built by the same script, which holds every crate's licence and notice
 files (each distinct text once, with the crates it came from).
@@ -42,27 +42,87 @@ files (each distinct text once, with the crates it came from).
   GPL-2.0-only` (apply Apache-2.0), `MIT OR Apache-2.0 OR Zlib`, `Unlicense OR MIT` and similar. No
   crate in the compiled set is GPL/LGPL/AGPL-only.
 
-**Flagged for manual review (not resolved by this inventory):**
+**Licensing decision and provenance (R3, 2026-10-31), and what is still open.**
 
-1. **The editor crate (`omatree-editor`, `crates/editor`) — licence matches the maintainer's stated intention; ownership
-   facts remain unverified by any document.** Since ticket P2 the editor is a workspace crate of this repository, a
-   clean snapshot (no Git history) of revision `30a95dd43064232dc1ac04315c8020e2307a223c` of the former private
-   prototype repository, which carried no licence file at that revision. Its `Cargo.toml` declares
-   `MIT OR Apache-2.0`, the same as OmaTree (`Cargo.toml` of the root and of every workspace crate), and the root
-   `LICENSE-MIT` / `LICENSE-APACHE` cover the whole workspace (E13a re-checked this). **The maintainer's stated
-   intention (tickets P1, P2 and E13a) is to distribute the editor under the same licence as OmaTree.**
-   Basis for applying it: the prototype's 13 commits have a single author, the account that owns this repository;
-   the imported source contains no copied third-party source code (no copyright or "adapted from" markers; the
-   prototype's rules forbade copying without a licence check); the only third-party files are the fonts below,
-   which keep their own notice. The copyright line is the root licence's existing "OmaTree contributors"; **no
-   individual copyright holder is named or asserted, and nothing here is a legal conclusion** about the status of
-   code written with AI assistance. If the ownership or distribution rights of any editor material turn out to
-   be uncertain, that is for the maintainer to settle before publication; nothing found in the audit says so.
-   **Bundled fonts:** `crates/editor/assets/fonts/Liberation{Sans-Regular,Bold,Italic,BoldItalic},Mono-Regular}.ttf`,
-   SIL Open Font License 1.1, with `LICENSE-Liberation.txt` (copyright Google Corporation and Red Hat, Inc.).
-   They are embedded in the binary (PDF export). The exact upstream release is not recorded; the font
-   metadata reports Liberation 2.x. The notice is in `third-party-licenses.txt`.
-2. Sixteen crates declare a licence expression but ship no licence file inside the published crate (the
+*Decision.* The maintainer authorizes continuing the existing dual licence for the whole repository: **`MIT OR
+Apache-2.0`**, at the user's option. `LICENSE-MIT` and `LICENSE-APACHE` at the repository root are the licence texts
+and were left exactly as they were (`LICENSE-APACHE` is byte-identical, ignoring line endings, to the unmodified
+upstream text in `packaging/egui/licences/egui-LICENSE-APACHE`, SHA-256 `8173d5c2…`; `LICENSE-MIT` is the standard
+MIT text with the line below). The notice used everywhere (`LICENSE-MIT`, Debian `copyright`, the Qt installer's
+version resource, the macOS `Info.plist`) is the project's existing one, **"Copyright (c) 2026 OmaTree contributors"**;
+no individual or organisation is named as holder, and no AI provider is. `Cargo.toml` of the root package and of
+`omatree-core`, `omatree-editor` and `omatree-egui` declare `license = "MIT OR Apache-2.0"` (checked by
+`verify-sources.sh`); AppStream `project_license` and the Debian and Arch package metadata state the same. The
+crates are `publish = false` and carry no per-crate copy of the licence files; the repository root's two files cover the
+workspace, and every source archive and binary package contains both (below). `CONTRIBUTING.md` states that
+contributions are accepted under the project's licence.
+
+*The editor crate (`omatree-editor`, `crates/editor`).* Since ticket P2 it is a workspace crate, a clean snapshot (no
+Git history) of revision `30a95dd43064232dc1ac04315c8020e2307a223c` of the former private prototype repository. That
+revision carried **no licence file**; the crate now declares and is distributed under the workspace's licence on the
+maintainer's decision above. The prototype's 13 commits had a single author, the account that owns this repository;
+the imported source contains no copyright or "adapted from" marker.
+
+*Provenance: AI-assisted development.* **The maintainer confirms that the application, including the editor crate, was
+developed primarily with AI coding assistance.** This is recorded as a provenance fact. It is not treated as an automatic
+assignment of copyright to anyone, and not as a prohibition on licensing. This document draws **no legal conclusion**
+about whether, or to whom, rights subsist in AI-assisted output; that varies by jurisdiction and is the maintainer's
+responsibility. Consequences recorded here: the copyright line stays the generic project line above; nothing in the
+repository attributes ownership to an AI provider; and because such code can resemble code the assistant has seen, the
+absence of copied code below rests on the checks listed, not on a guarantee.
+
+*Review of third-party code copied into the repository (not added as a dependency).* Searched Rust, C++, QML, shell,
+Python, manifests and scripts for copyright and SPDX headers, "adapted from / copied from / based on / ported from",
+licence-header text, source URLs (Stack Overflow, gists, GitHub repositories other than this one), vendored directories
+and large data tables. **Found: none** (only this project's own `Dorotabro/OmaTree` URLs; the emoji catalogue comes from
+the `emojis` crate, a dependency). A search cannot prove that no passage resembles other people's code; no similarity
+analysis was done. The Qt-only C++ and QML are legacy and are not in the egui packages.
+
+*Separately licensed files that are in the repository or compiled into the binary.*
+
+   | Material | Terms | Where the notice is |
+   |---|---|---|
+   | Liberation Sans (Regular, Bold, Italic, Bold Italic) and Liberation Mono Regular, `crates/editor/assets/fonts/`, embedded for PDF export | SIL Open Font License 1.1, "Digitized data copyright (c) 2010 Google Corporation; Copyright (c) 2012 Red Hat, Inc.", Reserved Font Name "Liberation" | `LICENSE-Liberation.txt` beside the fonts (in every source archive) and `third-party-licenses.txt` in every package |
+   | egui's default fonts (Ubuntu-Light, Hack, Noto Emoji, egui and emoji icon fonts) via `epaint_default_fonts` | OFL-1.1, Ubuntu Font Licence 1.0, Hack and MIT texts | `third-party-licenses.txt` |
+   | SQLite (compiled in through `libsqlite3-sys`) | public domain | none required |
+   | The 300 compiled crates | per the generated table below | `third-party-licenses.txt` (each distinct text once, with its crates) |
+   | Emoji data in the `emojis` crate | `(MIT OR Apache-2.0) AND Unicode-3.0` | the crate ships `LICENSE-UNICODE`, in the bundle |
+
+   SHA-256 of the five embedded font files (`verify-sources.sh` fails if a file changes without this table):
+
+   | File | SHA-256 |
+   |---|---|
+   | `LiberationMono-Regular.ttf` | `47ed5b5fcfe6b3c9228937b05de9c769f5fa55b777d539af0f65172f0a24c90b` |
+   | `LiberationSans-Bold.ttf` | `769673c4355020b1e28a14c366a152da410ab6b16239fe883ebc35b73624835b` |
+   | `LiberationSans-BoldItalic.ttf` | `4b3d18cbd1b8c068115be4072f43418b194994313f47dbfd3588808903a55d34` |
+   | `LiberationSans-Italic.ttf` | `8649cf5f2cbe4727549d78b714a3a7ee540718a13557769c4612fea105294c7e` |
+   | `LiberationSans-Regular.ttf` | `baccc64becc3eb7d104b7c84d99f5314a0a1f896e2b3ea6c2f22fc08d2003bee` |
+
+   The font files report version 2.1.x in their metadata and are **not verified byte-for-byte against an upstream
+   release** (no upstream hashes were recorded); the OFL permits embedding, and the Reserved Font Name applies to
+   modified versions, so confirm that they are unmodified Liberation files if that matters.
+
+**Unresolved rights and attribution issues (flagged, not resolved):**
+
+1. **AI-assisted provenance.** Recorded above. Whether anyone holds copyright in AI-assisted code, and the correctness of
+   the generic holder "OmaTree contributors", is not decided by this document. If the maintainer wants a named holder or
+   a different notice, `LICENSE-MIT`, Debian `copyright`, `packaging/windows/OmaTree.iss` and
+   `packaging/macos/Info.plist.in` carry the current line and must change together.
+2. **Logo and icon provenance is not documented.** `assets/logo/omatree-logo.svg` (it embeds a raster image), the PNG
+   icons derived from it and `windows/omatree.ico` were added by the maintainer's account (commit `8ea3bfa`, 2026-10-04).
+   Who created them, with which tool, and under what terms is **not recorded anywhere**. They are distributed in every
+   package, so the maintainer must state their origin and that they may be distributed under `MIT OR Apache-2.0` (or
+   state another licence for them).
+3. **Contributors other than the maintainer's accounts.** `git log` shows one outside contributor (Arthur Augusto,
+   `omastore.toml`, 7 lines, PR #1) and commits under the name "Martin Rudinec" from two local machine names. There is no
+   contributor licence agreement; `CONTRIBUTING.md` states that contributions are accepted under the project's licence.
+   The maintainer should confirm that the "Martin Rudinec" commits are theirs.
+4. **Screenshots** (`docs/screenshots/`) show OmaTree with the Kanagawa and a light palette and with Noto Emoji glyphs
+   rendered; they are the maintainer's captures, are not in any package, and are covered by the repository licence unless
+   stated otherwise. Colour palettes are data, not code.
+5. **Upstream licence copies and font release:** the Liberation fonts' exact release (above). The sixteen upstream copies (item 6) are still copies, not files shipped by the crates; the three taken from branch heads were verified identical to the commits the crates were published from.
+
+6. Sixteen crates declare a licence expression but ship no licence file inside the published crate (the
    egui family: `egui`, `eframe`, `epaint`, `emath`, `ecolor`, `egui-winit`, `egui_glow`,
    `egui_system_font_provider`; the `accesskit` family: `accesskit`, `accesskit_consumer`,
    `accesskit_atspi_common`, `accesskit_unix`, `accesskit_winit`; `krilla`, `profiling`, `gl_generator`,
@@ -71,7 +131,7 @@ files (each distinct text once, with the crates it came from).
    `SOURCES.md`) and are included in `third-party-licenses.txt`, marked as upstream copies. For egui (tag
    `0.37.0`, the locked version) and accesskit (tag `accesskit-v0.25.1`) the ref is the release; for
    `krilla`, `profiling` and `gl-rs` no matching tag was found, so the default branch's text was used and
-   its copyright line may differ from the published crate's. AccessKit's MIT file carries no copyright
+   its copyright line may differ from the published crate's. **R3 follow-up:** the texts were re-compared with the repositories at the exact commits recorded in the locked crates' `.cargo_vcs_info.json` (krilla 0.8.2 `3ffdf058…`, profiling 1.0.18 `82715511…`, gl_generator 0.14.0 `ea503e8d…`, khronos_api 3.1.0 `f150967b…`) and are **identical**; nothing was replaced (`packaging/egui/licences/SOURCES.md`). AccessKit's MIT file carries no copyright
    line upstream either. This is attribution material, not a legal conclusion.
 
 The crates directly depended on by `omatree-egui` that matter most: `eframe`/`egui` 0.37 (UI, with

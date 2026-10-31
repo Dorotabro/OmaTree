@@ -20,6 +20,11 @@ Version placeholders: `X.Y.Z` is the version in `Cargo.toml`, `vX.Y.Z` the tag. 
 
 - All **release blockers** in `docs/R1_RELEASE_AUDIT.md` are closed, and the maintainer has approved the version,
   the licence and copyright statement, and the artifact list.
+- **Licensing (R3):** the repository is `MIT OR Apache-2.0` by the maintainer's decision of 2026-10-31
+  (`THIRD_PARTY.md`, "Licensing decision and provenance"; `docs/EGUI_DECISIONS.md` decision 10). The items listed
+  there under "Unresolved rights and attribution issues" (notably the **logo and icon provenance**, and the AI-assistance
+  provenance) are either resolved by the maintainer in writing, with `THIRD_PARTY.md` updated, or accepted explicitly
+  for a prerelease. Do not publish with them silently open.
 - A Linux x86_64 machine with Rust (the pinned toolchain, see `docs/PACKAGING_EGUI.md` "Reproducibility"), `git`,
   `python3`, `makepkg`, Docker (or Podman) with network access, `bsdtar`, `readelf`, `objdump`, `xmllint`,
   `desktop-file-validate`, `appstreamcli`, and `gh` logged in.
@@ -37,6 +42,11 @@ tools/pre-e9-compat.sh
 packaging/egui/tests/verify-sources.sh
 python3 packaging/egui/third-party.py check THIRD_PARTY.md
 ```
+
+`verify-sources.sh` includes the licensing checks: every manifest declares `MIT OR Apache-2.0`; `LICENSE-MIT` and the
+unmodified `LICENSE-APACHE` are present and tracked; AppStream, Debian `copyright` and the PKGBUILD agree with them and with
+the notice "Copyright (c) 2026 OmaTree contributors"; no AI provider is named as holder; the embedded fonts match the
+hashes in `THIRD_PARTY.md`.
 
 All must pass. Known environment-specific failures must be listed in the release notes, not hidden. Today the
 only one is `integrity_tests::memory_exhaustion_is_an_error_never_an_abort` on **macOS** (it uses `ulimit -v`);
@@ -111,29 +121,26 @@ git push origin vX.Y.Z
 git rev-parse vX.Y.Z^{commit}              # record this hash in the release notes
 ```
 
-## 6. Build every platform from the same tag
+## 6. Build every package from the same tag
 
-Build from a clean worktree of the tag so that nothing from a dirty tree or an earlier build can get in. There
-is no egui equivalent of `packaging/release-build.sh`, so this is **manual**:
+Use the egui release script. It builds the three Linux packages from **one** revision in a temporary clean worktree,
+checks the version everywhere, runs `verify-sources.sh` and `verify-package.sh`, and writes `PROVENANCE.txt` and the
+checksums. It never tags, pushes, uploads or publishes, never modifies a tracked file and does not use the Qt scripts.
 
 ```bash
-W=$(mktemp -d)
-git worktree add --detach "$W/src" vX.Y.Z
-cd "$W/src"
-git status --porcelain --ignored          # must print nothing
-packaging/egui/arch/build-package.sh      # dist/omatree-egui-X.Y.Z-1-x86_64.pkg.tar.zst
-packaging/egui/debian/build-package.sh    # dist/omatree-egui_X.Y.Z_amd64.deb
-packaging/egui/appimage/build-package.sh  # dist/OmaTree-egui-X.Y.Z-x86_64.AppImage
+packaging/egui/release-build.sh --version 0.2.0 --ref v0.2.0      # final build from the tag
+packaging/egui/release-build.sh --version 0.2.0                   # candidate from a clean HEAD of egui-integration or main
+packaging/egui/release-build.sh --version 0.2.0 --ref <commit>    # candidate from any commit
 ```
 
-(After the E13 cut-over the names lose `-egui`; the scripts and `verify-sources.sh` change with them.)
+Output goes to `dist/egui-release-0.2.0/` (`--out` changes it): the three packages, `PROVENANCE.txt`, `logs/`, and
+`SHA256SUMS` (only for a build from the tag `v0.2.0`; every other build writes `SHA256SUMS.candidate`). It refuses: a HEAD build
+on another branch or with a dirty tree; a lightweight `v*` tag; a version that is not plain `X.Y.Z`; manifests, `Cargo.lock`,
+AppStream or the Debian changelog that do not all say the requested version. A Docker daemon, `makepkg`, `bsdtar`
+and network access to crates.io are needed. Use a fresh `OMATREE_CACHE` and `CARGO_HOME` to prove no stale cache supplies anything.
 
-The scripts build from a snapshot of `git ls-files -co`, which in a clean worktree is the tag. They use
-`--locked` and need network access for crates.io. Use a fresh `OMATREE_CACHE` to prove no stale cache supplies
-anything. Artifacts are written to the **ignored** `dist/` of that worktree: copy them out before removing it.
-
-- **Windows, macOS:** not built. No egui packaging exists (see audit). Do not build the Qt scripts and publish
-  their output as the egui release.
+The three artifacts are traceable to one commit through `PROVENANCE.txt` (commit, tree, toolchain, images, hashes).
+No Windows or macOS package exists; do not build the Qt scripts and publish their output as the egui release.
 
 ## 7. Package inspection
 
@@ -175,7 +182,8 @@ Record pass, fail or **not tested** for each, per platform. Anything not run is 
 
 ## 9. SHA-256 checksums
 
-**Manual**: the checksum scripts in `packaging/` name Qt files and do not apply.
+The release script writes `SHA256SUMS` for a build from the tag. The checksum scripts in `packaging/` (not `packaging/egui/`) name Qt files and do not apply.
+Final checksums must describe the files that are **attached to the release**: recompute them from those files and compare.
 
 ```bash
 cd dist
@@ -219,6 +227,8 @@ Download the uploaded files into a new empty directory and check them against `S
 - the notebook compatibility warning: notebooks written by this version may be schema 4 or 5 and are refused by
   Qt v0.1.2 and earlier; keep copies;
 - known limitations (audit "Acceptable documented limitations"), unverified platforms, and known test failures;
+- the licence (`MIT OR Apache-2.0`, notice "OmaTree contributors") and where the third-party notices are installed
+  (`/usr/share/licenses/omatree-egui/` on Arch and in the AppImage, `/usr/share/doc/omatree-egui/` on Debian);
 - how to verify checksums;
 - that the Qt version remains available at `v0.1.2`.
 

@@ -137,6 +137,21 @@ check "THIRD_PARTY.md records the editor crate's licence basis and its fonts" ba
 check "the editor crate declares the same licence as the workspace" bash -c "test \"\$(sed -n 's/^license = \"\(.*\)\"/\\1/p' crates/editor/Cargo.toml)\" = \"\$(sed -n 's/^license = \"\(.*\)\"/\\1/p' Cargo.toml | head -1)\""
 check "THIRD_PARTY.md labels the Qt sections as legacy and not applying to egui" grep -q 'None of$' THIRD_PARTY.md
 
+echo "== licensing (MIT OR Apache-2.0)"
+check "the root package and every workspace crate declare exactly 'MIT OR Apache-2.0'" bash -c "for m in Cargo.toml crates/*/Cargo.toml; do test \"\$(sed -n 's/^license = \"\(.*\)\"/\\1/p' \$m | head -1)\" = 'MIT OR Apache-2.0' || { echo \$m; exit 1; }; done"
+check "LICENSE-MIT is the MIT text with the project's notice" bash -c "head -1 LICENSE-MIT | grep -qx 'MIT License' && grep -qx 'Copyright (c) 2026 OmaTree contributors' LICENSE-MIT && grep -q 'Permission is hereby granted, free of charge' LICENSE-MIT && grep -q 'THE SOFTWARE IS PROVIDED \"AS IS\"' LICENSE-MIT"
+check "LICENSE-APACHE is the unmodified Apache-2.0 text (same as the upstream copy kept in packaging/egui/licences)" bash -c "diff -q <(tr -d '\r' < LICENSE-APACHE) <(tr -d '\r' < packaging/egui/licences/egui-LICENSE-APACHE) >/dev/null && grep -q 'Version 2.0, January 2004' LICENSE-APACHE"
+check "both licence files and the fonts' notice are tracked, so every source archive contains them" bash -c "git ls-files --error-unmatch LICENSE-MIT LICENSE-APACHE crates/editor/assets/fonts/LICENSE-Liberation.txt >/dev/null"
+check "AppStream, Debian copyright and the PKGBUILD state the same licence and the project's notice" bash -c "
+    grep -q '<project_license>MIT OR Apache-2.0</project_license>' $L/$id.metainfo.xml &&
+    grep -qx 'Copyright: 2026 OmaTree contributors' packaging/egui/debian/debian/copyright &&
+    grep -qx 'License: MIT or Apache-2.0' packaging/egui/debian/debian/copyright &&
+    grep -q \"^license=('MIT' 'Apache-2.0')\" packaging/egui/arch/PKGBUILD.in"
+check "the packaging scripts install both licence texts and THIRD_PARTY.md" bash -c "grep -q 'LICENSE-MIT' $L/stage.sh && grep -q 'LICENSE-APACHE' $L/stage.sh && grep -q 'THIRD_PARTY.md' $L/stage.sh"
+check "no AI provider or other third party is named as copyright holder of OmaTree" bash -c "! grep -iE 'copyright.*(anthropic|openai|claude|chatgpt|gemini|copilot|google llc)' LICENSE-MIT LICENSE-APACHE packaging/egui/debian/debian/copyright $L/$id.metainfo.xml Cargo.toml crates/*/Cargo.toml | grep -q ."
+check "the five embedded Liberation fonts match the SHA-256 table in THIRD_PARTY.md" bash -c "for f in crates/editor/assets/fonts/*.ttf; do grep -q \"\$(sha256sum \$f | cut -d' ' -f1)\" THIRD_PARTY.md || { echo \$f; exit 1; }; done"
+check "THIRD_PARTY.md records the licensing decision, the AI-assistance provenance and the unresolved issues" bash -c "grep -q 'Licensing decision and provenance' THIRD_PARTY.md && grep -q 'developed primarily with AI coding assistance' THIRD_PARTY.md && grep -q 'Unresolved rights and attribution issues' THIRD_PARTY.md && grep -q 'Logo and icon provenance is not documented' THIRD_PARTY.md"
+
 echo "== the user's own configuration"
 check "no real MIME, desktop-entry, mimeapps or OmaTree configuration was touched" test "$before" = "$(fingerprint)"
 

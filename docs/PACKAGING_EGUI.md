@@ -8,9 +8,9 @@ Three formats are built from one staging script, `packaging/egui/linux/stage.sh`
 
 | Format | File | Built in | Binary needs glibc |
 |---|---|---|---|
-| Arch / Omarchy | `omatree-egui-0.1.2-1-x86_64.pkg.tar.zst` | `makepkg` on the host (Arch, rolling) | ≥ 2.43 (host's 2.44) |
-| Debian / Ubuntu | `omatree-egui_0.1.2_amd64.deb` | Debian 13 container (glibc 2.41) | ≥ 2.39 (`libc6 (>= 2.39)`) |
-| AppImage | `OmaTree-egui-0.1.2-x86_64.AppImage` | Ubuntu 20.04 container (glibc 2.31) | ≥ 2.30 |
+| Arch / Omarchy | `omatree-egui-0.2.0-1-x86_64.pkg.tar.zst` | `makepkg` on the host (Arch, rolling) | ≥ 2.43 (host's 2.44) |
+| Debian / Ubuntu | `omatree-egui_0.2.0_amd64.deb` | Debian 13 container (glibc 2.41) | ≥ 2.39 (`libc6 (>= 2.39)`) |
+| AppImage | `OmaTree-egui-0.2.0-x86_64.AppImage` | Ubuntu 20.04 container (glibc 2.31) | ≥ 2.30 |
 
 ## What is verified, and how
 
@@ -112,16 +112,16 @@ Nothing below was run against the real system by this ticket.
 
 ```bash
 # Arch / Omarchy
-sudo pacman -U omatree-egui-0.1.2-1-x86_64.pkg.tar.zst
+sudo pacman -U omatree-egui-0.2.0-1-x86_64.pkg.tar.zst
 sudo pacman -R omatree-egui
 
 # Debian 13+ / Ubuntu 24.04+
-sudo apt install ./omatree-egui_0.1.2_amd64.deb
+sudo apt install ./omatree-egui_0.2.0_amd64.deb
 sudo apt remove omatree-egui          # or purge; there are no configuration files
 
 # Any x86_64 Linux with glibc 2.30+ and a Wayland or X11 desktop
-chmod +x OmaTree-egui-0.1.2-x86_64.AppImage
-./OmaTree-egui-0.1.2-x86_64.AppImage [notebook.omatree]
+chmod +x OmaTree-egui-0.2.0-x86_64.AppImage
+./OmaTree-egui-0.2.0-x86_64.AppImage [notebook.omatree]
 ```
 
 The Qt package (`omatree`) can stay installed. Both then appear in the launcher ("OmaTree" and
@@ -239,9 +239,9 @@ Arch `makepkg`; for Debian and AppImage Docker or Podman. The build never uses `
 (the Qt binary): every script builds `-p omatree-egui --locked`.
 
 ```bash
-packaging/egui/arch/build-package.sh        # dist/omatree-egui-0.1.2-1-x86_64.pkg.tar.zst
-packaging/egui/debian/build-package.sh      # dist/omatree-egui_0.1.2_amd64.deb  (+ lintian.txt)
-packaging/egui/appimage/build-package.sh    # dist/OmaTree-egui-0.1.2-x86_64.AppImage
+packaging/egui/arch/build-package.sh        # dist/omatree-egui-0.2.0-1-x86_64.pkg.tar.zst
+packaging/egui/debian/build-package.sh      # dist/omatree-egui_0.2.0_amd64.deb  (+ lintian.txt)
+packaging/egui/appimage/build-package.sh    # dist/OmaTree-egui-0.2.0-x86_64.AppImage
 ```
 
 Each snapshots the working tree (tracked and new, non-ignored files), builds from the snapshot with the
@@ -256,15 +256,19 @@ public crates on crates.io (`--locked`). Use a fresh `OMATREE_CACHE` directory t
 supplies anything. Earlier sections of this document and the E12b record describe the private-repository
 arrangement and are historical.
 
+`packaging/egui/release-build.sh --version X.Y.Z [--ref REF]` runs the three scripts above from one clean
+worktree, verifies them and writes the provenance and checksum files (see `docs/RELEASING.md` §6). It is the
+tool for release candidates and for the tagged build.
+
 ### Verifying
 
 ```bash
 packaging/egui/tests/verify-sources.sh                     # source-level checks, no root, no display
-packaging/egui/verify-package.sh dist/omatree-egui-0.1.2-1-x86_64.pkg.tar.zst
-packaging/egui/verify-package.sh dist/omatree-egui_0.1.2_amd64.deb
-packaging/egui/verify-package.sh dist/OmaTree-egui-0.1.2-x86_64.AppImage
-packaging/egui/debian/test-install.sh dist/omatree-egui_0.1.2_amd64.deb debian:13   # also ubuntu:24.04
-packaging/egui/appimage/test-container.sh dist/OmaTree-egui-0.1.2-x86_64.AppImage ubuntu:20.04   # also debian:12
+packaging/egui/verify-package.sh dist/omatree-egui-0.2.0-1-x86_64.pkg.tar.zst
+packaging/egui/verify-package.sh dist/omatree-egui_0.2.0_amd64.deb
+packaging/egui/verify-package.sh dist/OmaTree-egui-0.2.0-x86_64.AppImage
+packaging/egui/debian/test-install.sh dist/omatree-egui_0.2.0_amd64.deb debian:13   # also ubuntu:24.04
+packaging/egui/appimage/test-container.sh dist/OmaTree-egui-0.2.0-x86_64.AppImage ubuntu:20.04   # also debian:12
 cargo test -p omatree-egui packaging_tests
 ```
 

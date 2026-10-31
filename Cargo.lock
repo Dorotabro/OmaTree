@@ -2831,7 +2831,7 @@ dependencies = [
 
 [[package]]
 name = "omatree"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "cxx",
  "cxx-qt",
@@ -2843,7 +2843,7 @@ dependencies = [
 
 [[package]]
 name = "omatree-core"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "getrandom 0.3.4",
  "rusqlite",
@@ -2852,7 +2852,7 @@ dependencies = [
 
 [[package]]
 name = "omatree-editor"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "egui",
  "emojis",
@@ -2868,7 +2868,7 @@ dependencies = [
 
 [[package]]
 name = "omatree-egui"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "eframe",

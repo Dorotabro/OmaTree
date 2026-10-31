@@ -3,8 +3,8 @@
 # libraries the package declares and nothing else from a desktop, then runs it against them and
 # purges it. This is the real runtime test of the Debian package (verify-deb.sh only inspects it).
 #
-#   packaging/egui/debian/test-install.sh dist/omatree-egui_0.1.2_amd64.deb debian:13
-#   packaging/egui/debian/test-install.sh dist/omatree-egui_0.1.2_amd64.deb ubuntu:24.04
+#   packaging/egui/debian/test-install.sh dist/omatree-egui_0.2.0_amd64.deb debian:13
+#   packaging/egui/debian/test-install.sh dist/omatree-egui_0.2.0_amd64.deb ubuntu:24.04
 #
 # Installs with --no-install-recommends, so Depends alone has to be enough to resolve every library
 # the executable opens at run time. A display is provided inside the container only: Xvfb (X11) and,

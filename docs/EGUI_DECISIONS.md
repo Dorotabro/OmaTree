@@ -20,6 +20,7 @@ Status labels used in this document and in the instructions it updates:
 | 7 | Attachment identifiers are random 128-bit ids, rendered as portable relative paths such as `assets/<32-hex-id>.png`. | Content hashing and deduplication are not part of the first version. Exported Markdown keeps working in other tools. |
 | 8 | The integrated app loads images only from notebook-owned attachments. It never fetches remote resources and never loads arbitrary filesystem images. | The editor's filesystem store (`FsStore`) is not linked into OmaTree. Remote and unresolved references show as text or a placeholder. The existing "no networking" rule stands. |
 | 9 | Attachment cleanup and database compaction are required product functionality. | Specified below; ticket E9 includes pruning and Compact Notebook, and E10 and later tickets must not close without them. |
+| 10 | **Licence (R3, 2026-10-31):** the whole repository, including the editor crate, continues under `MIT OR Apache-2.0`; copyright notice "Copyright (c) 2026 OmaTree contributors". AI-assisted development is recorded as provenance, not as an assignment of copyright. | `THIRD_PARTY.md` records the decision, the provenance statement and the unresolved items; `verify-sources.sh` checks the declarations. |
 
 ## Attachment cleanup and compaction requirements
 

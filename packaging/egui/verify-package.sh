@@ -1,9 +1,9 @@
 #!/bin/bash
 # Checks a built egui OmaTree Linux package without installing it.
 #
-#   packaging/egui/verify-package.sh dist/omatree-egui-0.1.2-1-x86_64.pkg.tar.zst
-#   packaging/egui/verify-package.sh dist/omatree-egui_0.1.2_amd64.deb
-#   packaging/egui/verify-package.sh dist/OmaTree-egui-0.1.2-x86_64.AppImage
+#   packaging/egui/verify-package.sh dist/omatree-egui-0.2.0-1-x86_64.pkg.tar.zst
+#   packaging/egui/verify-package.sh dist/omatree-egui_0.2.0_amd64.deb
+#   packaging/egui/verify-package.sh dist/OmaTree-egui-0.2.0-x86_64.AppImage
 #
 # Picks the verifier by file type; each shares the checks in packaging/egui/linux/verify-common.sh.
 # Exit status is non-zero if any check failed. (The Qt packages' verifier is packaging/verify-package.sh.)
