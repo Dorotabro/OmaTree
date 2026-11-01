@@ -1,5 +1,10 @@
 # OmaTree
 
+> **Technology note.** The current application uses Qt 6 / QML; a migration to Rust +
+> egui/eframe is approved and in progress (`docs/EGUI_DECISIONS.md`). The product vision
+> below does not depend on the toolkit and is unchanged. In the egui version the note
+> editor renders Markdown live while you edit, instead of offering a separate Preview.
+
 OmaTree is a tiny tree-structured note editor.
 
 It exists because hierarchical notes are useful, but applications providing them often become visually cluttered and unnecessarily complicated.
@@ -87,7 +92,7 @@ On Omarchy it should eventually integrate tightly with the current desktop theme
 
 This is enhancement, not dependency.
 
-Without Omarchy, OmaTree must remain a normal cross-platform Qt application.
+Without Omarchy, OmaTree must remain a normal cross-platform desktop application.
 
 ## Non-goals
 

@@ -1,0 +1,45 @@
+[package]
+name = "omatree-egui"
+version = "0.2.0"
+edition = "2021"
+description = "OmaTree's egui/eframe application shell (migration ticket E4). No Qt."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Dorotabro/OmaTree"
+publish = false
+
+[lib]
+name = "omatree_egui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "omatree-egui"
+path = "src/main.rs"
+
+[dependencies]
+omatree-core = { path = "../core" }
+# The editor library is a workspace crate (`crates/editor`, package `omatree-editor`, library `omatree_editor`). It was
+# imported from the former private prototype repository, revision 30a95dd, in ticket P2; see
+# docs/EGUI_MIGRATION_PLAN.md, "P2 record".
+omatree-editor = { path = "../editor" }
+# The egui/eframe line the editor crate is built against (the crate itself names egui only).
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "links", "default_fonts", "system_fonts", "glow", "wayland", "x11"] }
+# Named only for the traits `rfd` takes a dialog parent through (already in the lock file as a dependency of
+# winit and rfd; no new crate). See docs/PACKAGING_EGUI.md, "File dialogs and the desktop portal".
+raw-window-handle = "0.6"
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "wayland", "pollster"] }
+# The editor crate builds `image` with PNG only. Cargo unifies features per crate, so asking for
+# `jpeg` here (the decoder crates are already in the lock file) lets the editor's own
+# `image::load_from_memory` show JPEG attachments, with no second decoder. See docs/EGUI_MIGRATION_PLAN.md, "E10 implementation record".
+# Local time for the Recovery list (E12c). Only the `clock` feature: the zone comes from the operating system
+# (libc on Unix, the Windows API, Core Foundation on macOS), nothing is bundled, and the stored values stay UTC.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+
+# macOS only: the Command+Q guard adds one method to winit's application delegate (src/native_quit/macos.rs).
+# The same objc2 line winit, eframe and rfd already use, so it adds no crate to the lock file.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+
+[dev-dependencies]
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+tempfile = "3"

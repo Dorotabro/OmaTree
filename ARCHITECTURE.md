@@ -4,11 +4,24 @@ This document describes the technical direction and how the application is built
 
 It is deliberately small and may evolve.
 
+> **Migration in progress.** Qt/QML is being replaced by egui/eframe (see
+> `docs/EGUI_DECISIONS.md`, `docs/EGUI_MIGRATION_PLAN.md`). Everything from
+> "Technology stack" to "Platform-specific code" below describes the **legacy Qt
+> implementation**, which stays buildable and tested until the cut-over (ticket E13, the
+> maintainer's decision). The section "Target architecture (egui)" at the end describes the
+> **egui application, which is implemented** on Linux through ticket E12a; what remains is
+> the cut-over itself (E13). Packaging (E12b) and the cross-platform audit (E12c) are done; Windows and macOS remain unverified.
+
+## Current implementation (Qt)
+
 ## Technology stack
 
 ### Core
 
-Rust
+Rust. Since ticket E1 the Qt-free domain code lives in the library crate
+`omatree-core` (`crates/core`): `notebook`, `document`, `storage`, `recovery`,
+`search`, `theme` (palette) and `link`. The Qt application at the repository
+root depends on it. `cargo test -p omatree-core` needs no Qt.
 
 Responsibilities include:
 
@@ -132,3 +145,395 @@ A dependency should solve a concrete problem rather than merely provide convenie
 
 Keep changes small and independently testable, and preserve OmaTree's deliberately
 small scope (see `VISION.md`).
+
+---
+
+# Target architecture (egui): implemented on `egui-integration`
+
+The decisions are recorded in `docs/EGUI_DECISIONS.md`; the sequence, APIs, risks and the
+per-ticket implementation records are in `docs/EGUI_MIGRATION_PLAN.md`. This section states the
+shape of what exists.
+
+## Crates
+
+Status (after E12a): all three exist. `omatree-core` is `crates/core`. `omatree-egui`
+(`crates/egui-app`) is a complete notebook application on Linux: hierarchical tree with drag and
+drop, Search, Recovery (Trash and checkpoints), F1, themes, New/Open/Save As through native
+dialogs, autosave, conflict recovery, images stored in the notebook (PNG and JPEG), export of the
+active note (Markdown, folder, ZIP, PDF), Compact Notebook, and AccessKit accessibility. The
+editor library is the workspace crate `crates/editor` (package `omatree-editor`, library
+`omatree_editor`), imported in ticket P2 as a snapshot of revision `30a95dd` of the former private
+prototype repository; there is no Git dependency any more (earlier records describing the pin are
+historical; see the P2 record in `docs/EGUI_MIGRATION_PLAN.md`).
+
+    OmaTree/
+    ├── crates/
+    │   ├── core/        omatree-core
+    │   ├── editor/      omatree-editor (library `omatree_editor`)
+    │   └── egui-app/    omatree-egui (binary `omatree-egui`)
+    └── Cargo.lock       one lock file for the whole workspace
+
+    omatree-core     [implemented] Qt-free, egui-free: notebook, document, storage (SQLite,
+                     schema 4 with attachments), recovery, search, theme palette, link safety,
+                     reference-aware pruning and space reclamation
+    omatree-editor   [workspace crate, since P2] egui Markdown editor library:
+                     live-rendered source-backed editing, attachments trait, export, PDF
+    omatree (Qt)     [legacy, implemented] the Qt application at the repository root; depends on
+                     omatree-core; behaviour unchanged; still built and tested
+    omatree-egui     [implemented on Linux] the egui application over core + editor; Windows and
+                     macOS are **unverified** (E12c audited them: Windows type-checks for
+                     `x86_64-pc-windows-gnu`, nothing was run); Linux packages are E12b
+
+The standalone editor keeps a runnable demo binary built on the same library.
+
+## Layers
+
+    ┌──────────────────────────────┐
+    │   egui host (tree, dialogs)  │
+    │   EditorView (note editor)   │
+    └──────────────┬───────────────┘
+                   │  plain Rust calls, no bridge
+    ┌──────────────▼───────────────┐
+    │        omatree-core          │
+    │ Document · Notebook · Search │
+    │ Recovery · Attachments       │
+    └──────────────┬───────────────┘
+                SQLite (one notebook, one file)
+
+## Principles
+
+- `Document` is the only owner of note content. The editor works on a working copy of the
+  active note's text and writes every real change back to `Document`.
+- Markdown source is the single authoritative text. The editor never serialises a rich
+  document back to Markdown.
+- Live Markdown rendering replaces Edit/Preview; raw source of the span under the caret
+  stays visible and editable.
+- Caret, selection and undo history are kept per note.
+- Images come only from notebook-owned attachments (random 128-bit ids, stored in
+  SQLite, referenced as `assets/<32-hex-id>.<ext>`). No remote loading, no arbitrary
+  filesystem images, no networking.
+- Attachment cleanup is reference-aware (active notes, Trash, retained checkpoints) and
+  never automatic for recoverable attachments. **Compact Notebook** is a deliberate,
+  confirmed operation; pruning and SQLite space reclamation are separate steps.
+- Shortcuts: Ctrl+E inline code; Ctrl+Shift+S Save As.
+- Theme: the existing semantic palette (Omarchy, else system light/dark) drives the
+  egui visuals.
+- Export (Markdown folder, ZIP, PDF) reads only the attachment store.
+## Implemented in E4 (egui shell, since extended: see the sections below)
+
+    omatree-egui (crates/egui-app)  Host: Document, rows, selected node, one text buffer,
+                                    status, UnavailableStore, EditorKeys::omatree()
+        ├── omatree-core            Document is the owner of every body; write-through via
+        │                           Document::set_body on changed frames, before switching
+        │                           notes and before saving
+        └── omatree_editor          EditorView keyed by NoteKey { notebook counter, node id }
+
+- The host lends one `String` (the selected note) to the editor; caret, selection and undo
+  live in egui memory per `NoteKey`. Opening a notebook bumps the counter and forgets the
+  old notebook's state.
+- Attachments are unavailable until E9: `UnavailableStore` refuses every put and get, so
+  no reference is created and no file or URL is ever loaded.
+- Ctrl+S saves; Ctrl+Shift+S is reserved for Save As and is consumed by the host so it
+  never saves or formats; Ctrl+E is inline code.
+- Not yet: autosave, Save As, close guard, tree interaction, Search/Trash/Recovery, theme.
+
+## Lifecycle added in E4.1
+
+- `Host::logic` (called from `eframe::App::logic`, so it also runs while minimised) answers
+  every close request: a clean notebook closes; a dirty one gets `CancelClose` and a modal
+  Save / Discard (confirmed twice) / Cancel. A Save that fails keeps the window open and
+  dirty and offers Save As. Repeated requests never bypass the question.
+- Save is `Document::save`; Save As (Ctrl+Shift+S) is an in-app path dialog over
+  `Document::save_as` with overwrite confirmation; a native file dialog is left to E8.
+- Autosave follows the Qt timer (1 s after the last real edit, existing notebooks only,
+  first failure reported once) and additionally stops after an external-modification
+  conflict until the user resolves it.
+- (E4.1, historical) The editor library was then pinned by commit in `crates/egui-app/Cargo.toml`
+  and `Cargo.lock`. Since P2 it is the workspace crate `crates/editor`, built with everything else.
+
+## Tree and note operations added in E5a
+
+- `Tree` (derived from `Document`, rebuilt only when structure or a title changes) holds every
+  note in order and the list of visible rows; `Document` stays the owner of hierarchy and of
+  which notes are open. Rows are painted by hand and only the viewport is touched.
+- The tree is one focusable widget; its keys (arrows, Ctrl+arrows, Enter, Delete, Page keys,
+  Shift+F10) act only while it has the keyboard. Ctrl+N, Ctrl+Shift+N, F2 and Alt+Up/Down are
+  application-wide.
+- The note title is an editable field committed against its own note before that note is left;
+  a refused title blocks the move, creation, save and close.
+- Create, rename, move and delete use `Document` methods; deleting flushes the editor first and
+  forgets editor state (caret, selection, undo) of every deleted note.
+- Expansion is view state (never dirties); content changes start the autosave countdown, and
+  `Host::logic` re-requests a repaint on every frame while it runs.
+
+## Theme pipeline (E6a)
+
+`omatree_core::theme` is the only authority on colours (Omarchy discovery, parsing, confirmation,
+fallbacks). The egui host's `theme.rs` translates the resulting `Palette` into egui visuals and
+the editor's palette, once per change; the editor never reads files or the environment, and the
+host never watches a second source. See `docs/EGUI_MIGRATION_PLAN.md`, "E6a implementation record".
+
+## Chrome spacing and derived colours (E6b)
+
+The egui host's measurements live in one file, `crates/egui-app/src/layout.rs` (the shared 16-point
+axis that equals the editor's own document padding, bar and row heights, pane limits). Presentation
+colours that are not a palette role as such (selected/hover fills, guides, a label that reads on the
+danger fill, text pulled to a legibility floor) are derived once per palette change by
+`theme::Chrome` from the E6a palette; nothing in the host holds a theme-specific colour.
+
+## Search (E7a)
+
+`crates/egui-app/src/search.rs` holds the query, the derived result list and its drawing; the searching
+itself is `omatree_core::search::search` over the in-memory `Document`, so there is no second engine or
+index. Results are throwaway: invalidated by query, structure or body changes (a debounce for bodies),
+never trusted on activation (the note is looked up again by `NodeId`), and chosen through
+`Host::select`, so pending-title validation and hierarchy reveal stay in one place.
+
+## Recovery, shortcuts and F1 (E7b)
+
+`recovery_ui.rs` lists what `Document::recovery()` retains and calls `restore_trash` /
+`restore_checkpoint`; it then repairs the host (tree, selection, editor state, Search) in the same
+call. `keymap.rs` holds the application-wide shortcuts once: `Host::handle_shortcuts` consumes them
+and `help.rs` (F1) prints them through egui's formatter, together with the editor's `EditorKeys`.
+`Dialog` has two new variants (`Recovery`, `Shortcuts`); both go through `open_dialog`, `focus_back`
+and `cancel_dialog` like every other question.
+
+## The egui application today (E12a)
+
+`crates/egui-app` is one `Host` over exactly one `Document` (`omatree-core`) and one `EditorView`.
+It starts with an untitled in-memory notebook or the path given; there is no second store of
+notebook content. Modules: `tree`/`tree_ui`/`drag` (virtualised tree, keys, drag and drop),
+`search`, `recovery_ui`, `help` + `keymap` (F1 and the one shortcut table), `theme` + `layout`
+(palette-derived colours, spacing), `lifecycle` (Save, autosave, conflicts, the modal questions)
+and `files` (New, Open, and the native file dialogs).
+
+Leaving a notebook (closing the window, New, Open) has one guard, `Host::request_leave`: commit
+the title, flush the editor, ask Save / Discard / Cancel when dirty, and carry on only after a
+successful save or a confirmed discard; the waiting action is a single `Option<Leave>` consumed
+once. A notebook is only ever replaced by `Host::install`, which resets editor state, Search,
+Recovery and autosave state together. The system file dialogs (`rfd`, desktop portal) run on a
+thread and are polled once per frame; without them a typed-path dialog asks the same questions.
+
+### Conflicts, reload and open requests (E8b)
+
+`reload.rs` is the way out of an external-modification conflict: Save As, or Reload from Disk through
+`Document::open_existing` and `Host::install` (nothing is reset unless the load worked), never an
+overwrite. `files.rs` also owns the command-line check and `request_open_path`, the single entry for
+every other incoming open request, and `recent.rs` keeps the recent-notebooks paths in the user's
+configuration folder. There is still no single-instance channel: a second launch is a second process.
+
+## Attachments (E9a)
+
+Images belong to the notebook, not to any note: each is a BLOB row in the `attachments` table of the
+same SQLite file (schema version 4), named by a random 128-bit id and referenced from Markdown as
+`assets/<id>.png|jpg`. There is no foreign key to notes, Trash or checkpoints, so what an attachment
+"belongs to" is derived from the bodies, and nothing deletes one except the future, explicit Compact
+Notebook operation. A new attachment is first held in memory by the `Document` (`put_attachment`,
+readable at once, also for an untitled notebook) and is written by the next save in the *same
+checked transaction* as the notes; a file stays at schema version 3 until that first save, which
+creates the table and sets version 4 atomically. Save As copies everything stored, plus what is
+pending. The Qt build shares this core; it never writes attachments and older binaries refuse a
+version 4 file without touching it (`tools/pre-e9-compat.sh`).
+
+### Compact Notebook, core half (E9b)
+
+`omatree-core` can say which stored attachments nothing refers to any more and delete exactly
+those, but only when a caller asks and only in two separate, separately authorized steps.
+`Document::preview_attachment_prune` scans (read-only) every body that can still be recovered, in
+memory and in the file: active notes, every Trash node, every checkpoint, by the plain-text rule
+`assets/<32 lowercase hex>.png|jpg` (no Markdown parsing, so code blocks and comments count). An
+attachment is protected when the in-memory notebook *or* the file mentions it. The preview returns
+a report and an opaque token (a digest of everything the decision rests on); `prune_attachments`
+refuses without a saved notebook (`NeedsSave`, it never saves), refuses a changed notebook
+(`Stale`), and then deletes inside one `begin_checked_write` transaction that re-derives the
+unreferenced set from the file and refuses unless it is exactly the reviewed one. A caller cannot
+supply ids. Reclaiming file space (`preview_reclaim` / `reclaim_space`, a `VACUUM` on the same
+connection) has its own token and never runs by itself, not even after a prune: deleting rows does
+not shrink the file. See `docs/EGUI_MIGRATION_PLAN.md`, "E9b implementation record".
+
+### Attachment integrity (E9c)
+
+Storage trusts nothing it reads back about an attachment. Opening a version 4 file checks the
+shape of the `attachments` table (columns, types, primary key) and refuses a file that has it
+wrong or missing, leaving the file untouched. Every row that is listed, copied or considered for
+pruning is validated without reading its BLOB (id format, media type, recorded size, the type of
+each column, `length(data)` equal to `byte_len`), and a row that fails is an *error*, never
+"unreferenced": no prune or Save As proceeds past it. Reading an image's bytes also checks its
+structure (signature, chunk or segment layout, end marker) and that it matches the recorded
+media type; decoding the pixels is the display boundary's job (E10), not storage's.
+`Document::verify_integrity` is the explicit, whole-file check (SQLite `integrity_check`,
+`foreign_key_check`, duplicate ids, every row, every image's structure); it is never run by an
+ordinary open or save. `Save As` claims a new target atomically (`create_new`) so that exactly the
+file it made is removed on any failure. Attachment reads and the in-memory copy of an image are
+fallible allocations: running out of memory is an `AttachmentError::Storage`, never an abort, and a
+transient failure (memory, lock, I/O) is not reported as a damaged notebook. See
+`docs/EGUI_MIGRATION_PLAN.md`, "E9c implementation record".
+
+### Embedded images in the egui app (E10)
+
+The editor library only talks to an `AttachmentStore`. The egui host gives it `DocStore`
+(`crates/egui-app/src/store.rs`): a per-frame view of the open `Document`, so images are the
+notebook's own SQLite attachments and the `Document` stays the single authority (one connection,
+the E9 pending store and transaction rules, the E9c integrity checks). A pasted clipboard image is
+encoded to PNG by the editor, stored through `Document::put_attachment` (which enforces the
+64 MiB limit and a 128 MiB budget for all unsaved images, `MAX_PENDING_BYTES`), and only then
+referenced by the editor's own undoable edit. Saving commits pending images in the same
+transaction as the notes. References resolve only inside the notebook (`assets/<32 hex>.png|jpg`);
+anything else is shown as its Markdown source and never reaches a file or network loader. PNG and
+JPEG are decoded at display time by the editor's `image` dependency (the host enables its `jpeg`
+feature). The host reports refused pastes and damaged or unreadable images in the status bar and
+never treats a display problem as permission to delete an attachment. See
+`docs/EGUI_MIGRATION_PLAN.md`, "E10 implementation record".
+
+### Exporting a note (E11a)
+
+`note_export.rs` exports the selected note's current text, unsaved edits included, as Markdown, a
+Markdown folder, a ZIP or a PDF. The formats are the editor library's (`export::plan`,
+`write_dir`, `write_zip`, `pdf::export_pdf`); images are read only through `DocStore`, so pending
+and committed attachments both work and nothing outside the notebook is read. Exporting changes
+nothing in the notebook (no edit, checkpoint, save or dirty-state change). Output is staged in a
+hidden sibling and renamed into place, and an existing single file is replaced only after
+confirmation and only by a finished export; an existing folder and the notebook's own file are
+never replaced. Ctrl+Shift+E is detected by the editor (so it wins over Ctrl+E) and acted on by
+the host. See `docs/EGUI_MIGRATION_PLAN.md`, "E11a implementation record".
+
+### Compact Notebook interface (E11b)
+
+`compact_ui.rs` is a staged modal over the E9b core: a read-only report, an explicit confirmation
+(Cancel focused), a "Working…" frame, then the committed result; reclaiming disk space is a
+separate stage with its own preview, token and confirmation. The host holds the core's opaque
+tokens and passes them back unchanged; it never names an image, issues SQL or saves on its own
+account. Pruning needs a saved, clean notebook, so unsaved work is offered Save first, which
+authorizes nothing. A stale token, an unsaved change or an external write deletes nothing and
+says so; the review is dropped when the dialog closes or the notebook is replaced. The core
+calls are synchronous (one owning connection), so a large notebook pauses briefly. See
+`docs/EGUI_MIGRATION_PLAN.md`, "E11b implementation record".
+
+### Linux runtime audit (E12a)
+
+Findings that changed the code: with a text field focused the window rendered at the display's
+refresh rate because egui-winit re-sent the input method's cursor rectangle on every input event
+and the input method answered each message with an empty pre-edit event; `Host::filter_input`
+(through `eframe::App::raw_input_hook`) drops an empty pre-edit when no composition is in
+progress and passes real composition untouched. A pasted image goes at the end of the note when
+the note's editor has never had a caret. A doubled extension from the desktop portal is
+collapsed. AccessKit is enabled (`eframe` feature `accesskit`): the tree rows, the tree, the title
+field and the editor have roles and names. The window's launch size can be set with
+`OMATREE_WINDOW_SIZE=WxH` for diagnostics. See `docs/EGUI_MIGRATION_PLAN.md`, "E12a record".
+
+## Cross-platform audit (E12c)
+
+Platform differences live in small, tested seams: `recent.rs` (`Platform`, `config_base`: where the recent list is stored on Windows, macOS and elsewhere),
+`files.rs` (`Launcher`: native dialogs are built on the UI thread with the window as parent, then awaited in a thread), `startup.rs` (plain-language start-up failures, original text kept),
+`recovery_ui.rs` (local time with offset, UTC stored), and a Linux-only IME filter in `lib.rs`. Windows and macOS were compiled for (`x86_64-pc-windows-gnu`, type-check only) but never run;
+macOS Finder "Open With" needs an app-registered `NSApplicationDelegate` that does not exist yet. The record, checklists and matrix are in `docs/EGUI_MIGRATION_PLAN.md`, "E12c record".
+
+## Linux distribution of the egui version (E12b)
+
+The egui application is packaged from its own tree, `packaging/egui/`, independent of the Qt packaging, which is unchanged until E13. One staging script feeds the Arch, Debian and AppImage builds. The application identity is the single constant `omatree_egui::APP_ID` (`io.github.Dorotabro.OmaTreeEgui`), which equals the window's Wayland app_id, the desktop file name and `StartupWMClass`, the icon name and the AppStream id, so it can coexist with the Qt version (`io.github.Dorotabro.OmaTree`) and is renamed at E13. The executable links only glibc; windowing, GL, font and D-Bus libraries are opened at run time from the host, so packages declare them by hand and the AppImage bundles none. The pinned editor library is private, so container builds are seeded from the already-fetched Cargo cache after checking the commit. Details and results: `docs/PACKAGING_EGUI.md`.
+
+## Colour tags (T1)
+
+A note may carry **one colour tag or none**: lightweight visual organisation with no built-in meaning. The tag is
+presentation metadata: it is not part of the note's Markdown, is not searched, and is not in any export.
+
+**Model.** `omatree_core::notebook::Colour` is a fixed six-value enum (`Red`, `Orange`, `Yellow`, `Green`, `Blue`,
+`Purple`) with stable identifiers (`as_str`: `red` … `purple`, a file format that never changes) and an exact
+`parse`. `Node::colour()` holds it; `Notebook::set_colour` and `Document::set_colour` change it. The authoritative
+state is therefore in `omatree-core`; the egui tree only copies it into its drawing rows (`Row::colour`, rebuilt
+with the tree). Only the *identity* is stored, never a theme-specific colour.
+
+**Persistence (schema version 5).** A nullable `colour TEXT` column on `nodes`, `trash_nodes` and `checkpoint_nodes`
+(each with `CHECK (colour IS NULL OR colour IN ('red', …, 'purple'))`), so a tag is stored with the note wherever the
+note is stored. It is written by the same checked transaction as every other part of a save. The file is raised to 5
+**only by a save that has a tag to write**, inside that transaction (`migrate`: three `ALTER TABLE … ADD COLUMN`,
+then `user_version`); a notebook that never has a tag stays at 3 or 4, exactly as before. A file never goes back
+down, and an untagged save of a version 5 file writes NULLs. On load, an identifier that is not one of the six is an
+**error** (the notebook is refused untouched), never a silently dropped tag.
+
+**Trash and checkpoints.** Both hold *copies of nodes*, so tags travel with them: deleting a subtree keeps every tag
+in it, restoring brings them back, a checkpoint records the tags as they were and restoring one restores exactly
+those. Changing a tag is an ordinary edit like a rename: it makes the active state dirty (so autosave and the close
+guard, including the macOS Command+Q guard, cover it) and takes no checkpoint. Rename, move and reorder never touch it.
+
+**Compatibility.** A build from before T1 (maximum schema 4) refuses a version 5 file with "unsupported notebook
+schema version 5" and leaves it byte for byte unchanged (`tools/pre-e9-compat.sh HEAD`); it opens untagged version 3
+and 4 files as before. **A notebook with tags cannot be opened by an older build.** The Qt application is such a
+build: it shares `omatree-core`, so it also understands version 5 and ignores tags, but a Qt save writes the tags back
+unchanged (they are part of the node), it neither shows nor edits them.
+
+**UI (egui).** `Tree::build` computes for each row its own tag and `below`, a bitmask of the colours present beneath
+it (one linear pass from the end of the depth-first list). The tree paints, in a right-hand gutter that exists only
+when there is something to draw: the note's own tag as one small dot, and, **only while the branch is closed**, up to
+three tiny dots (the colours inside, palette order) to its left; the cue yields to the title in a very narrow pane,
+the note's own dot never does. Title colour is unchanged. Colours come from `Chrome::tags`: six fixed hues, with
+lightness and saturation chosen for a dark or light theme and pulled to at least 3:1 contrast on every surface a row can
+sit on, so the marks follow theme changes. The tree menu (right-click, or Shift+F10 / the Menu key) gains a **Colour**
+row: six focusable swatches (current one ringed, Left/Right move between them, Enter or Space picks, Escape closes) and a
+separate "No colour" command; the tree gets the keyboard back afterwards. Accessible names: the row says
+`"<title>, red tag"` and, closed, `", contains coloured notes"`; swatches are radio buttons with their names.
+
+### Header colour picker (T2)
+
+The same tag, a second way in. At the right of the active note's header (the row the title is in, above the existing
+rule; the header's height, the editor's margins and the rule are unchanged) `header_picker` (`tree_ui.rs`) draws the six
+T1 colours in palette order as 13 pt dots in 22 pt click targets. The selected colour has a ring in the text colour; a
+focused one an accent ring. **There is no second state:** every frame the picker reads `Notebook::get(id).colour()` and
+a click or key sends `Host::set_colour` (the T1 path: `Document::set_colour`, dirty state, autosave, close guard, the tree
+rebuild), so the tree, the tree menu and the header cannot disagree. Clicking the selected colour clears the tag; there
+is no separate clear button in the wide layout (the tooltip says so).
+
+*Layout.* The row is split into a flexible title region and a fixed picker region (`HEADER_PICKER_W`: six cells, five
+gaps, the right gutter). When the row is narrower than `HEADER_FULL_MIN` (the region, both gutters and 150 pt for the
+title) the six collapse into one 22 pt control: the current colour as a dot (a hollow ring when untagged) that opens the
+tree menu's own `colour_picker` (six swatches and "No colour", Escape cancels) with the keyboard on the current colour.
+The title and the picker never overlap; the picker is a child `Ui` and does not move the header's cursor.
+
+*Keyboard.* Tab from the title enters the swatches as **one** stop; inside, Left/Right move (clamped), Enter or Space
+picks (focus stays on the swatch), Tab continues to the editor, Shift+Tab goes back to the title, Escape goes to the
+tree. While a swatch has the keyboard it takes Tab and Escape through egui's focus-lock filter, and acts on a key only
+if it held the keyboard in the previous frame (so the Tab that arrived is not also a Tab that leaves). Nothing is
+intercepted globally. The tree menu's Colour row is unchanged. Accessible names: radio buttons "Red note colour",
+"Green note colour, selected"; the compact control is a button "Note colour, green" / "Note colour, none". The
+compact popup's clear button is named "No colour" (not "Clear note colour"), the same widget as the tree menu's.
+VoiceOver was not tested.
+
+### Inline Markdown in table cells (T3)
+
+*Two modes, unchanged.* A table the caret or selection touches is **raw source in the editor's own text**, and one it
+does not touch is concealed and painted as a grid (`table.rs`). T3 changes what the grid shows and what the raw mode
+reveals, not how either is edited: there is no editable cell, no overlay, and the grid never writes anything back.
+
+*Where the formatting comes from.* `markdown::parse` already reports the inline spans (bold, italic, strikethrough, code,
+link, with their delimiter ranges) for the whole note, cells included; they style the raw source. The table painter
+simply ignored them and showed cell text as written. `Table` now carries the spans that fall inside it (`Table::inline`,
+copied while the parser builds the table) and a hash of their shape (`inline_sig`). `table::runs` turns one cell into
+display runs (text plus bold/italic/strike/code/link flags): the trimmed source with every delimiter of those spans
+removed, outside code a backslash before ASCII punctuation concealed (the punctuation stays literal), and `\|` read as
+`|` (as GFM does in cells, code included). Whatever the parser did not turn into a span (an unmatched `**`, `snake_case`,
+an image inside a cell) stays as written. There is no second Markdown parser and no second authoritative text: the runs
+are derived display data, rebuilt from the source.
+
+*Layout and painting.* One `LayoutJob` per cell, a section per run, so measuring (natural widths, wrapping, row
+heights) and painting see the same flow. Faces follow the document text (`layout::format_for`): bold uses the bold
+family (or the 4 % letter-spacing fallback), italic is egui's slant, code is monospace at 0.92 of the body size on
+`code_bg` in `code_text` with no emphasis, links use the link colour and an underline, strikethrough a 1 px line. A cell
+that mixes faces (code, or bold in a body row with a real bold family) gets one explicit line box for all of them and the
+bold face's baseline shift (`fonts::bold_drop`), exactly as in the document; a plain cell stays one section with no
+explicit line height, i.e. the same job as before T3, so plain tables measure and paint as they did. Header cells are
+bold whatever they contain. Colours come from the editor palette at paint time; measuring uses uncoloured jobs, so a theme
+change invalidates nothing. The fonts, line heights and bold drop are measured once per layout and kept in the cached
+`TableLayout`, not per frame. The cache key gained `inline_sig`, because the same table source can parse differently in
+another note (a reference link definition coming or going).
+
+*Raw mode.* While a table is touched, the inline constructs inside it now reveal their delimiters (dimmed, in the reveal
+colour) instead of each waiting for the caret to reach it: editing a cell shows what the cell contains
+(`layout::compute_flags`, `raw_tables`). The text stays styled with the delimiters visible, which is the editor's usual
+reveal; the grid hides them.
+
+*Links.* A link in a cell is styled only. The grid has no interaction at all, so a click enters the raw table like a
+click on any cell; nothing is opened, loaded or read, whatever the destination (the existing policy, `links::safe_http_url`,
+still governs links in running text). Opening links from the grid was left out (optional in the ticket).
+
+*Unchanged and out of scope:* column-width distribution (a very long cell still squeezes its neighbours, as before),
+PDF/Markdown export, nested tables, images in cells.

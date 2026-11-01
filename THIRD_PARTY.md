@@ -2,11 +2,516 @@
 
 This is an inventory prepared for binary distribution. It records what OmaTree
 uses and what a package must do. It is **not** legal advice.
-Facts below come from the installed Qt files' SPDX headers and license texts, `Cargo.lock`/`cargo metadata`, and the crates' own sources, as
-of OmaTree 0.1.2 (the dependency set is the same as in 0.1.1) on the development machine (Arch Linux). The macOS app bundle is
-covered at the end.
+
+OmaTree currently ships as two applications from this repository, and this file covers both:
+
+- **the egui version** (`omatree-egui`, the migration target; no Qt): the next section, with a
+  crate table generated from the resolved dependency graph;
+- **the legacy Qt version** (`omatree`, until the E13 cut-over): every section from "Legacy Qt
+  application" on. Those sections describe Qt packaging only and do **not** apply to the egui
+  packages.
 
 OmaTree itself is `MIT OR Apache-2.0` (see `LICENSE-MIT`, `LICENSE-APACHE`).
+
+## The egui version (`omatree-egui`)
+
+Evidence: `cargo tree --locked -p omatree-egui --target x86_64-unknown-linux-gnu -e normal,build`
+for the compiled set, `cargo metadata --locked` for each crate's declared licence expression, and
+each crate's own source for its licence files, all read by `packaging/egui/third-party.py`
+(OmaTree 0.2.0, Rust 1.99, Linux x86_64). The table below is generated and
+`packaging/egui/tests/verify-sources.sh` fails if it is stale; the packages additionally ship
+`third-party-licenses.txt`, built by the same script, which holds every crate's licence and notice
+files (each distinct text once, with the crates it came from).
+
+- **Linkage.** The executable is dynamically linked only to `libc`, `libm`, `libgcc_s` and the
+  loader. Wayland, X11/XCB, xkbcommon, EGL/OpenGL, fontconfig and `libdbus-1` are opened at run time
+  (`dlopen`) from the system, so no copy of them is distributed and none is a licence matter of
+  these packages. **No Qt, CXX-Qt or QML component is linked, bundled or required.**
+- **SQLite** is compiled in (`rusqlite` with `bundled`, SQLite 3.53.2 inside `libsqlite3-sys`), public
+  domain, no attribution text required.
+- **Fonts compiled into the binary** (`epaint_default_fonts`, licence expression
+  `(MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0`): Ubuntu-Light, Hack, Noto Emoji and the egui
+  and emoji icon fonts. Their texts (`OFL.txt`, `UFL.txt`, the Hack and emoji-icon-font licences)
+  are in `third-party-licenses.txt`. The SIL OFL and the Ubuntu Font Licence both ask that their text
+  accompany redistributed copies of the fonts, which is why that bundle is installed in every package.
+- **Licences with an attached-notice duty in binary form:** MIT, BSD-2/3-Clause, ISC, Zlib (no duty
+  for binaries), Apache-2.0 (licence text; `subsetter` ships a `NOTICE` file, which is in the
+  bundle, and no other compiled crate does), Unicode-3.0 (the `icu_*` and `unicode-ident` family: licence text must accompany),
+  OFL-1.1 and Ubuntu-font-1.0 (above). All are in `third-party-licenses.txt`.
+- **Dual or alternative licences are taken under their permissive option:** `Apache-2.0 OR
+  GPL-2.0-only` (apply Apache-2.0), `MIT OR Apache-2.0 OR Zlib`, `Unlicense OR MIT` and similar. No
+  crate in the compiled set is GPL/LGPL/AGPL-only.
+
+**Licensing decision and provenance (R3, 2026-10-31), and what is still open.**
+
+*Final licensing decision for 0.2.0 (2026-11-01).* The maintainer approves the existing **`MIT OR Apache-2.0`** dual licence for the
+project code they are entitled to license; accepts **"OmaTree contributors"** as the project's copyright attribution, with the
+development assistance from ChatGPT and Claude documented separately (the provenance paragraph below, not the copyright line);
+confirms the logo and icons as their own artwork (below); notes that the OmaStore listing was removed; and states that
+third-party dependencies, fonts and assets keep their own licences and notices (inventoried in this file and shipped in
+`third-party-licenses.txt`). Final checks found no unresolved obligation (R3b, 2026-11-01): the contributor history is accounted for
+(the maintainer's two Git identities, one account alias, and one outside contribution that no longer exists in the tree); no
+copied third-party code was found; the Liberation fonts, the sixteen upstream notice copies, the 300 compiled crates, SQLite and
+the logo are covered; every package carries both licence texts and the third-party notices. **The licensing gate is closed.** This
+records the maintainer's decision and the audit's findings; it is not legal advice, and it draws no conclusion about rights in
+AI-assisted output beyond the maintainer's own decision above.
+
+*Decision.* The maintainer authorizes continuing the existing dual licence for the whole repository: **`MIT OR
+Apache-2.0`**, at the user's option. `LICENSE-MIT` and `LICENSE-APACHE` at the repository root are the licence texts
+and were left exactly as they were (`LICENSE-APACHE` is byte-identical, ignoring line endings, to the unmodified
+upstream text in `packaging/egui/licences/egui-LICENSE-APACHE`, SHA-256 `8173d5c2…`; `LICENSE-MIT` is the standard
+MIT text with the line below). The notice used everywhere (`LICENSE-MIT`, Debian `copyright`, the Qt installer's
+version resource, the macOS `Info.plist`) is the project's existing one, **"Copyright (c) 2026 OmaTree contributors"**;
+no individual or organisation is named as holder, and no AI provider is. `Cargo.toml` of the root package and of
+`omatree-core`, `omatree-editor` and `omatree-egui` declare `license = "MIT OR Apache-2.0"` (checked by
+`verify-sources.sh`); AppStream `project_license` and the Debian and Arch package metadata state the same. The
+crates are `publish = false` and carry no per-crate copy of the licence files; the repository root's two files cover the
+workspace, and every source archive and binary package contains both (below). `CONTRIBUTING.md` states that
+contributions are accepted under the project's licence.
+
+*The editor crate (`omatree-editor`, `crates/editor`).* Since ticket P2 it is a workspace crate, a clean snapshot (no
+Git history) of revision `30a95dd43064232dc1ac04315c8020e2307a223c` of the former private prototype repository. That
+revision carried **no licence file**; the crate now declares and is distributed under the workspace's licence on the
+maintainer's decision above. The prototype's 13 commits all have one author identity, the account that owns this repository
+(same GitHub account id; re-checked in R3a); the imported source contains no copyright, SPDX or "adapted from" marker. Later
+changes in this repository (5 commits: 3 by the maintainer's account, including the 0.2.0 version bump, and 2, M1 and T3, by "Martin Rudinec") are covered by item 3 below.
+
+*Provenance: AI-assisted development.* **The maintainer confirms that the application, including the editor crate, was
+developed primarily with AI coding assistance (ChatGPT and Claude), and that all development and project contributions are theirs (the one outside contribution, the OmaStore listing, was removed on 2026-10-31).** This is recorded as a provenance fact. It is not treated as an automatic
+assignment of copyright to anyone, and not as a prohibition on licensing. This document draws **no legal conclusion**
+about whether, or to whom, rights subsist in AI-assisted output; that varies by jurisdiction and is the maintainer's
+responsibility. Consequences recorded here: the copyright line stays the generic project line above; nothing in the
+repository attributes ownership to an AI provider; and because such code can resemble code the assistant has seen, the
+absence of copied code below rests on the checks listed, not on a guarantee.
+
+*Review of third-party code copied into the repository (not added as a dependency).* Searched Rust, C++, QML, shell,
+Python, manifests and scripts for copyright and SPDX headers, "adapted from / copied from / based on / ported from",
+licence-header text, source URLs (Stack Overflow, gists, GitHub repositories other than this one), vendored directories
+and large data tables. **Found: none** (only this project's own `Dorotabro/OmaTree` URLs; the emoji catalogue comes from
+the `emojis` crate, a dependency). A search cannot prove that no passage resembles other people's code; no similarity
+analysis was done. The Qt-only C++ and QML are legacy and are not in the egui packages.
+
+*Separately licensed files that are in the repository or compiled into the binary.*
+
+   | Material | Terms | Where the notice is |
+   |---|---|---|
+   | Liberation Sans (Regular, Bold, Italic, Bold Italic) and Liberation Mono Regular, `crates/editor/assets/fonts/`, embedded for PDF export | SIL Open Font License 1.1, "Digitized data copyright (c) 2010 Google Corporation; Copyright (c) 2012 Red Hat, Inc.", Reserved Font Name "Liberation" | `LICENSE-Liberation.txt` beside the fonts (in every source archive) and `third-party-licenses.txt` in every package |
+   | egui's default fonts (Ubuntu-Light, Hack, Noto Emoji, egui and emoji icon fonts) via `epaint_default_fonts` | OFL-1.1, Ubuntu Font Licence 1.0, Hack and MIT texts | `third-party-licenses.txt` |
+   | SQLite (compiled in through `libsqlite3-sys`) | public domain | none required |
+   | The 300 compiled crates | per the generated table below | `third-party-licenses.txt` (each distinct text once, with its crates) |
+   | Emoji data in the `emojis` crate | `(MIT OR Apache-2.0) AND Unicode-3.0` | the crate ships `LICENSE-UNICODE`, in the bundle |
+
+   SHA-256 of the five embedded font files (`verify-sources.sh` fails if a file changes without this table):
+
+   | File | SHA-256 |
+   |---|---|
+   | `LiberationMono-Regular.ttf` | `47ed5b5fcfe6b3c9228937b05de9c769f5fa55b777d539af0f65172f0a24c90b` |
+   | `LiberationSans-Bold.ttf` | `769673c4355020b1e28a14c366a152da410ab6b16239fe883ebc35b73624835b` |
+   | `LiberationSans-BoldItalic.ttf` | `4b3d18cbd1b8c068115be4072f43418b194994313f47dbfd3588808903a55d34` |
+   | `LiberationSans-Italic.ttf` | `8649cf5f2cbe4727549d78b714a3a7ee540718a13557769c4612fea105294c7e` |
+   | `LiberationSans-Regular.ttf` | `baccc64becc3eb7d104b7c84d99f5314a0a1f896e2b3ea6c2f22fc08d2003bee` |
+
+   **Origin and release (R3a, 2026-10-31).** All five files report `Version 2.1.5`, the copyright line above and the OFL licence
+   description in their `name` tables, all equal to the upstream 2.1.5 files'. `LICENSE-Liberation.txt` is byte-identical to the `LICENSE` of the upstream release
+   archive `liberation-fonts-ttf-2.1.5.tar.gz` (github.com/liberationfonts/liberation-fonts, archive SHA-256
+   `7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0`). The five files are **byte-identical** to the ones in
+   Arch Linux `ttf-liberation 2.1.5-2` (`pacman -Qkk`: 0 altered files). They are **not byte-identical** to the upstream
+   archive's TTFs, and neither are Debian's `fonts-liberation 1:2.1.5-3` (distributions rebuild the fonts). Table-by-table
+   comparison with the upstream 2.1.5 files: every glyph outline, advance width, `name` table, kerning and hinting table is
+   identical, and the character mapping is identical (only its binary encoding and the build timestamp differ), **except**
+   one glyph, U+25D5 (`uni25D5`), in `LiberationSans-Regular` and `LiberationSans-Italic`, which differs in outline. OmaTree
+   never edited the files (one commit adds them, `9924630`, ticket P2; they are byte-identical to the prototype repository's, added in `712f3e2` and
+   never changed there). Conclusion recorded: these are the unmodified Liberation 2.1.5 fonts as built and distributed by Arch Linux;
+   OmaTree has made no modification, so the Reserved Font Name restriction on modified versions does not arise from
+   OmaTree's use. The OFL requires the copyright notice and licence text to accompany redistribution; both are in
+   `LICENSE-Liberation.txt`, in `third-party-licenses.txt` of every package, and (R3a) in the Debian `copyright` file.
+
+**Rights and attribution issues: status (all closed 2026-11-01; kept as the record of what was checked):**
+
+1. **AI-assisted provenance and the generic holder.** Recorded above. Whether anyone holds copyright in AI-assisted code
+   is not decided by this document. R3a checked the history behind the wording "OmaTree contributors": the repository has at
+   least three contributing identities (below), so a generic project line is accurate and does not name an individual or an
+   AI provider (checked by `verify-sources.sh`). If the maintainer wants a named holder or a different notice,
+   `LICENSE-MIT`, Debian `copyright`, `packaging/windows/OmaTree.iss` and `packaging/macos/Info.plist.in` carry the current
+   line and must change together. **Closed: the maintainer accepted the wording on 2026-11-01 (above).**
+2. **Logo and icons: provenance and permission recorded; nothing open.** On 2026-10-31 the maintainer confirmed that the
+   original OmaTree logo was designed and drawn entirely by him in Affinity; that it consists of simple lines and dots on a
+   blue background; that no AI-generated graphics and no third-party artwork were used; and that he authorizes distribution
+   of the original logo and its exported icon variants under **`MIT OR Apache-2.0`**, alongside OmaTree. R3 checked the files
+   against that description: the SVG holds five circles, five paths and three rectangles plus one embedded 2000 x 2000 PNG
+   that is a single flat colour (`#283845`); the shipped PNG icons match the SVG rendered at the same size (RMSE 0.1-1.4 %); the
+   32, 64, 128 and 256 px frames of `windows/omatree.ico` are pixel-identical to the shipped PNGs and its 16, 24 and 48 px frames
+   show the same motif; the icons in the Arch, Debian and AppImage candidates are byte-identical to these files. The files'
+   SHA-256 (`verify-sources.sh` fails if one changes, so a new artwork needs a new statement):
+
+   | File | SHA-256 |
+   |---|---|
+   | `assets/logo/omatree-logo.svg` | `6e8581eedea7ee4d39aa22aadfd1c3e4d3f2a246a6c16391d323ed27e435a1bb` |
+   | `assets/logo/omatree-icon-32.png` | `b29ab1931fc556c9a15ac617e00f9cc0c8c1a329ef066056bcaa5cb946997a75` |
+   | `assets/logo/omatree-icon-64.png` | `0c16a8581beef7f52860d9d02e29c320a5896bcf6b2cc312a49596688836cd9e` |
+   | `assets/logo/omatree-icon-128.png` | `1a7023f604aef4c0b263c004a4be3ee8d5460acf6be447e71e7a919b4667f659` |
+   | `assets/logo/omatree-icon-256.png` | `b8ecc1bdfc853d7db3d852ceb5432a9d7ba4d4454fabf09f4d3b7d1cc8ab84e5` |
+   | `assets/logo/omatree-icon-512.png` | `d74df7c2ffca2725777c9214c4dd4c32e66dec2f6ba0162bd0426853deafb153` |
+   | `assets/logo/omatree-icon-1024.png` | `f4fb1e7a26e6f903dccf8968cf779afcd902e5ae8d9cd7db57aa7cc7d35707f9` |
+   | `windows/omatree.ico` | `5a049cde10e8459af63bede9bcda4218aabfc850e687e77e461cfcb4ecd4793a` |
+
+   This is the maintainer's statement of authorship and permission; the files themselves carry no author metadata, and no
+   legal conclusion is drawn here.
+3. **Contributors: history audit (R3a, 2026-10-31).** From `git log --all` (78 commits on all refs, none signed) and `git blame`
+   at HEAD (tracked text files, lines):
+
+   | Identity in Git | Commits | Lines at HEAD | What | Licensing position |
+   |---|---|---|---|---|
+   | `Dorotabro <261649146+Dorotabro@users.noreply.github.com>` | 66 (+3 below) | about 60,900 | the Qt and egui applications, core, editor, packaging | the repository owner's GitHub account |
+   | `Finish Some`, **same noreply address, same GitHub account id 261649146** | 3 | about 3,400 | Windows compatibility, installer, Preview key handling (`packaging/windows`, small edits in `src/`, `qml/`, `crates/core`) | same account as above under another display name: account identity, not the name, links them |
+   | `Martin Rudinec <neonapex@Mac.localdomain>` and `<neonapex@Martins-MacBook-Air.local>` | 4 + 4 | about 6,700 (editor 1,234; egui-app 3,030; core 660; packaging 1,528; Qt 259) | macOS packaging and compatibility (v0.1.1), M1 quit lifecycle, T1 colour tags, T2 header colour picker, T3 table inline formatting | two unconfigured local-machine identities with no account link in Git; **resolved by the maintainer's statement**: the maintainer states (2026-10-31) that "Martin Rudinec" is their own commit identity, from two of their machines, and that exactly one other human contributor exists (the OmaStore listing). Recorded as the maintainer's statement; it is not inferred from the name. Every commit is dated after `LICENSE-MIT`/`LICENSE-APACHE` (2026-10-03) and `CONTRIBUTING.md`'s licence sentence (2026-10-05) were committed |
+   | `Arthur Augusto <59454155+KitsuneSemCalda@users.noreply.github.com>` | 1 (merged by GitHub, PR #1, 2026-10-11) | 0 (the 7 lines were removed) | `omastore.toml`, **removed from the tree on 2026-10-31** | none remains in the tree; the commit stays in history |
+   | the prototype repository (`omatree-egui-editor-library`, 13 commits to `30a95dd`) | 13 | imported as `crates/editor` | the egui Markdown editor | all 13 commits by the account `Dorotabro` (same id); the revision has **no licence file, no copyright, SPDX or `license` field** |
+
+   *Outside contribution: no longer included.* PR #1 had added `omastore.toml`, seven lines of OmaStore listing metadata for the
+   Qt package; it was in no egui package. R3a inspected it (one commit, one file, unchanged since; no code, licence header,
+   trailer or notice requirement) and found no obligations, but it had no written grant from its author. **On 2026-10-31 the
+   maintainer decided to remove the file entirely**; it is deleted from the tree, so the 0.2.0 source archive and the packages
+   contain nothing from the outside contributor, and the maintainer chose not to contact the author. The commit `b29e0bf` remains in
+   Git history and in the earlier tags. Nothing in the tree depends on the file. **No contributor question remains**; the
+   maintainer states that all other development and contributions are theirs.
+4. **Screenshots** (`docs/screenshots/`) show OmaTree with the Kanagawa and a light palette and with Noto Emoji glyphs
+   rendered; they are the maintainer's captures, are not in any package, and are covered by the repository licence unless
+   stated otherwise. Colour palettes are data, not code.
+5. **Upstream licence copies:** the sixteen upstream copies (item 6) are still copies, not files shipped by the crates; the three taken from branch heads were verified identical to the commits the crates were published from. **Fonts: resolved in R3a** (origin, release and notices above). **Debian: resolved in R3a**, the `copyright` file keeps the Debian-conventional reference (lintian requires it and rejects an embedded copy) and now also points at the complete Apache-2.0 text that the package installs as `/usr/share/doc/omatree-egui/LICENSE-APACHE` beside `LICENSE-MIT`.
+
+6. Sixteen crates declare a licence expression but ship no licence file inside the published crate (the
+   egui family: `egui`, `eframe`, `epaint`, `emath`, `ecolor`, `egui-winit`, `egui_glow`,
+   `egui_system_font_provider`; the `accesskit` family: `accesskit`, `accesskit_consumer`,
+   `accesskit_atspi_common`, `accesskit_unix`, `accesskit_winit`; `krilla`, `profiling`, `gl_generator`,
+   `khronos_api`). **Status after E12c: notice material supplied.** The upstream repositories' own licence
+   texts were copied unmodified into `packaging/egui/licences/` (provenance, refs and hashes-by-source in
+   `SOURCES.md`) and are included in `third-party-licenses.txt`, marked as upstream copies. For egui (tag
+   `0.37.0`, the locked version) and accesskit (tag `accesskit-v0.25.1`) the ref is the release; for
+   `krilla`, `profiling` and `gl-rs` no matching tag was found, so the default branch's text was used and
+   its copyright line may differ from the published crate's. **R3 follow-up:** the texts were re-compared with the repositories at the exact commits recorded in the locked crates' `.cargo_vcs_info.json` (krilla 0.8.2 `3ffdf058…`, profiling 1.0.18 `82715511…`, gl_generator 0.14.0 `ea503e8d…`, khronos_api 3.1.0 `f150967b…`) and are **identical**; nothing was replaced (`packaging/egui/licences/SOURCES.md`). AccessKit's MIT file carries no copyright
+   line upstream either. This is attribution material, not a legal conclusion.
+
+The crates directly depended on by `omatree-egui` that matter most: `eframe`/`egui` 0.37 (UI, with
+the `accesskit` feature added in E12a: AccessKit, AT-SPI through `zbus`/`atspi`), `omatree-editor`
+(the workspace editor crate), `rfd` 0.17 (file dialogs through the XDG desktop portal, `xdg-portal` + `pollster`,
+no GTK), `image` 0.25 (JPEG), `rusqlite` 0.40 (via `omatree-core`), `krilla` and `zip` (PDF and ZIP
+export, via `omatree-core`).
+
+<!-- BEGIN GENERATED: egui-crates -->
+300 crates are compiled into `omatree-egui` (excluding `omatree-egui`, `omatree-core` and `omatree-editor`, which are OmaTree's own); 5 are direct dependencies (**bold**).
+
+| Crate | Version | License expression | Source |
+|---|---|---|---|
+| accesskit | 0.25.1 | MIT OR Apache-2.0 | crates.io |
+| accesskit_atspi_common | 0.21.0 | MIT OR Apache-2.0 | crates.io |
+| accesskit_consumer | 0.39.1 | MIT OR Apache-2.0 | crates.io |
+| accesskit_unix | 0.24.0 | MIT OR Apache-2.0 | crates.io |
+| accesskit_winit | 0.34.1 | Apache-2.0 | crates.io |
+| adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 | crates.io |
+| ahash | 0.8.12 | MIT OR Apache-2.0 | crates.io |
+| arboard | 3.7.0 | MIT OR Apache-2.0 | crates.io |
+| arrayref | 0.3.9 | BSD-2-Clause | crates.io |
+| arrayvec | 0.7.8 | MIT OR Apache-2.0 | crates.io |
+| as-raw-xcb-connection | 1.0.1 | MIT OR Apache-2.0 | crates.io |
+| async-broadcast | 0.7.2 | MIT OR Apache-2.0 | crates.io |
+| async-channel | 2.5.0 | Apache-2.0 OR MIT | crates.io |
+| async-executor | 1.14.0 | Apache-2.0 OR MIT | crates.io |
+| async-io | 2.6.0 | Apache-2.0 OR MIT | crates.io |
+| async-lock | 3.4.2 | Apache-2.0 OR MIT | crates.io |
+| async-process | 2.5.0 | Apache-2.0 OR MIT | crates.io |
+| async-recursion | 1.2.0 | MIT OR Apache-2.0 | crates.io |
+| async-signal | 0.2.14 | Apache-2.0 OR MIT | crates.io |
+| async-task | 4.7.1 | Apache-2.0 OR MIT | crates.io |
+| async-trait | 0.1.92 | MIT OR Apache-2.0 | crates.io |
+| atomic-waker | 1.1.2 | Apache-2.0 OR MIT | crates.io |
+| atspi | 0.29.0 | Apache-2.0 OR MIT | crates.io |
+| atspi-common | 0.13.0 | Apache-2.0 OR MIT | crates.io |
+| atspi-proxies | 0.13.0 | Apache-2.0 OR MIT | crates.io |
+| autocfg | 1.5.1 | Apache-2.0 OR MIT | crates.io |
+| base64 | 0.22.1 | MIT OR Apache-2.0 | crates.io |
+| bitflags | 2.13.2 | MIT OR Apache-2.0 | crates.io |
+| blocking | 1.7.0 | Apache-2.0 OR MIT | crates.io |
+| bumpalo | 3.20.3 | MIT OR Apache-2.0 | crates.io |
+| bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT | crates.io |
+| bytemuck_derive | 1.12.1 | Zlib OR Apache-2.0 OR MIT | crates.io |
+| byteorder-lite | 0.1.0 | Unlicense OR MIT | crates.io |
+| calloop | 0.13.0 | MIT | crates.io |
+| calloop | 0.14.5 | MIT | crates.io |
+| calloop-wayland-source | 0.3.0 | MIT | crates.io |
+| calloop-wayland-source | 0.4.1 | MIT | crates.io |
+| cc | 1.5.1 | MIT OR Apache-2.0 | crates.io |
+| cfg-if | 1.0.5 | MIT OR Apache-2.0 | crates.io |
+| cfg_aliases | 0.2.2 | MIT | crates.io |
+| **chrono** | 0.4.45 | MIT OR Apache-2.0 | crates.io |
+| color | 0.3.3 | Apache-2.0 OR MIT | crates.io |
+| color_quant | 1.1.0 | MIT | crates.io |
+| concurrent-queue | 2.5.0 | Apache-2.0 OR MIT | crates.io |
+| core_maths | 0.1.1 | MIT | crates.io |
+| crc32fast | 1.5.3 | MIT OR Apache-2.0 | crates.io |
+| crossbeam-utils | 0.8.23 | MIT OR Apache-2.0 | crates.io |
+| cursor-icon | 1.2.0 | MIT OR Apache-2.0 OR Zlib | crates.io |
+| displaydoc | 0.2.7 | MIT OR Apache-2.0 | crates.io |
+| dlib | 0.5.3 | MIT | crates.io |
+| document-features | 0.2.12 | MIT OR Apache-2.0 | crates.io |
+| downcast-rs | 1.2.1 | MIT/Apache-2.0 | crates.io |
+| dpi | 0.1.2 | Apache-2.0 AND MIT | crates.io |
+| ecolor | 0.37.0 | MIT OR Apache-2.0 | crates.io |
+| **eframe** | 0.37.0 | MIT OR Apache-2.0 | crates.io |
+| egui | 0.37.0 | MIT OR Apache-2.0 | crates.io |
+| egui-winit | 0.37.0 | MIT OR Apache-2.0 | crates.io |
+| egui_glow | 0.37.0 | MIT OR Apache-2.0 | crates.io |
+| egui_system_font_provider | 0.37.0 | MIT OR Apache-2.0 | crates.io |
+| either | 1.19.0 | MIT OR Apache-2.0 | crates.io |
+| emath | 0.37.0 | MIT OR Apache-2.0 | crates.io |
+| emojis | 0.9.1 | (MIT OR Apache-2.0) AND Unicode-3.0 | crates.io |
+| endi | 1.1.1 | MIT | crates.io |
+| enumflags2 | 0.7.12 | MIT OR Apache-2.0 | crates.io |
+| enumflags2_derive | 0.7.12 | MIT OR Apache-2.0 | crates.io |
+| epaint | 0.37.0 | MIT OR Apache-2.0 | crates.io |
+| epaint_default_fonts | 0.37.0 | (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0 | crates.io |
+| equivalent | 1.0.2 | Apache-2.0 OR MIT | crates.io |
+| errno | 0.3.14 | MIT OR Apache-2.0 | crates.io |
+| euclid | 0.22.14 | MIT OR Apache-2.0 | crates.io |
+| event-listener | 5.4.2 | Apache-2.0 OR MIT | crates.io |
+| event-listener-strategy | 0.5.4 | Apache-2.0 OR MIT | crates.io |
+| fallible-iterator | 0.3.0 | MIT/Apache-2.0 | crates.io |
+| fallible-streaming-iterator | 0.1.9 | MIT/Apache-2.0 | crates.io |
+| fastrand | 2.5.0 | Apache-2.0 OR MIT | crates.io |
+| fdeflate | 0.3.7 | MIT OR Apache-2.0 | crates.io |
+| fearless_simd | 0.4.1 | Apache-2.0 OR MIT | crates.io |
+| find-msvc-tools | 0.1.14 | MIT OR Apache-2.0 | crates.io |
+| fixedbitset | 0.5.7 | MIT OR Apache-2.0 | crates.io |
+| flate2 | 1.1.10 | MIT OR Apache-2.0 | crates.io |
+| float-cmp | 0.9.0 | MIT | crates.io |
+| foldhash | 0.1.5 | Zlib | crates.io |
+| foldhash | 0.2.0 | Zlib | crates.io |
+| font-types | 0.11.3 | MIT OR Apache-2.0 | crates.io |
+| font-types | 0.12.7 | MIT OR Apache-2.0 | crates.io |
+| fontique | 0.11.1 | Apache-2.0 OR MIT | crates.io |
+| form_urlencoded | 1.2.2 | MIT OR Apache-2.0 | crates.io |
+| futures-core | 0.3.34 | MIT OR Apache-2.0 | crates.io |
+| futures-io | 0.3.34 | MIT OR Apache-2.0 | crates.io |
+| futures-lite | 2.6.1 | Apache-2.0 OR MIT | crates.io |
+| futures-macro | 0.3.34 | MIT OR Apache-2.0 | crates.io |
+| futures-task | 0.3.34 | MIT OR Apache-2.0 | crates.io |
+| futures-util | 0.3.34 | MIT OR Apache-2.0 | crates.io |
+| gethostname | 1.1.0 | Apache-2.0 | crates.io |
+| getrandom | 0.3.4 | MIT OR Apache-2.0 | crates.io |
+| getrandom | 0.4.3 | MIT OR Apache-2.0 | crates.io |
+| gif | 0.14.2 | MIT OR Apache-2.0 | crates.io |
+| gl_generator | 0.14.0 | Apache-2.0 | crates.io |
+| glifo | 0.3.0 | Apache-2.0 OR MIT | crates.io |
+| glow | 0.17.0 | MIT OR Apache-2.0 OR Zlib | crates.io |
+| glutin | 0.32.3 | Apache-2.0 | crates.io |
+| glutin-winit | 0.5.0 | MIT | crates.io |
+| glutin_egl_sys | 0.7.1 | Apache-2.0 | crates.io |
+| glutin_glx_sys | 0.6.1 | Apache-2.0 | crates.io |
+| guillotiere | 0.7.0 | MIT/Apache-2.0 | crates.io |
+| harfrust | 0.12.0 | MIT | crates.io |
+| hashbrown | 0.15.5 | MIT OR Apache-2.0 | crates.io |
+| hashbrown | 0.17.1 | MIT OR Apache-2.0 | crates.io |
+| hashlink | 0.12.2 | MIT OR Apache-2.0 | crates.io |
+| hex | 0.4.3 | MIT OR Apache-2.0 | crates.io |
+| iana-time-zone | 0.1.65 | MIT OR Apache-2.0 | crates.io |
+| icu_collections | 2.4.0 | Unicode-3.0 | crates.io |
+| icu_locale_core | 2.4.0 | Unicode-3.0 | crates.io |
+| icu_normalizer | 2.4.0 | Unicode-3.0 | crates.io |
+| icu_normalizer_data | 2.4.0 | Unicode-3.0 | crates.io |
+| icu_properties | 2.4.0 | Unicode-3.0 | crates.io |
+| icu_properties_data | 2.4.0 | Unicode-3.0 | crates.io |
+| icu_provider | 2.4.0 | Unicode-3.0 | crates.io |
+| idna | 1.1.0 | MIT OR Apache-2.0 | crates.io |
+| idna_adapter | 1.2.2 | Apache-2.0 OR MIT | crates.io |
+| **image** | 0.25.10 | MIT OR Apache-2.0 | crates.io |
+| image-webp | 0.2.4 | MIT OR Apache-2.0 | crates.io |
+| imagesize | 0.14.0 | MIT | crates.io |
+| indexmap | 2.14.2 | Apache-2.0 OR MIT | crates.io |
+| itertools | 0.15.0 | MIT OR Apache-2.0 | crates.io |
+| itoa | 1.0.18 | MIT OR Apache-2.0 | crates.io |
+| khronos_api | 3.1.0 | Apache-2.0 | crates.io |
+| krilla | 0.8.2 | MIT OR Apache-2.0 | crates.io |
+| kurbo | 0.13.1 | Apache-2.0 OR MIT | crates.io |
+| libc | 0.2.189 | MIT OR Apache-2.0 | crates.io |
+| libloading | 0.8.9 | ISC | crates.io |
+| libm | 0.2.16 | MIT | crates.io |
+| libsqlite3-sys | 0.38.2 | MIT | crates.io |
+| linebender_resource_handle | 0.1.1 | Apache-2.0 OR MIT | crates.io |
+| linux-raw-sys | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io |
+| linux-raw-sys | 0.4.15 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io |
+| litemap | 0.8.3 | Unicode-3.0 | crates.io |
+| litrs | 1.0.1 | MIT OR Apache-2.0 | crates.io |
+| lock_api | 0.4.14 | MIT OR Apache-2.0 | crates.io |
+| log | 0.4.34 | MIT OR Apache-2.0 | crates.io |
+| memchr | 2.8.3 | Unlicense OR MIT | crates.io |
+| memmap2 | 0.9.12 | MIT OR Apache-2.0 | crates.io |
+| miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | crates.io |
+| miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 | crates.io |
+| moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 | crates.io |
+| nohash-hasher | 0.2.0 | Apache-2.0 OR MIT | crates.io |
+| nom | 8.0.0 | MIT | crates.io |
+| num-traits | 0.2.19 | MIT OR Apache-2.0 | crates.io |
+| once_cell | 1.21.4 | MIT OR Apache-2.0 | crates.io |
+| ordered-stream | 0.2.0 | MIT OR Apache-2.0 | crates.io |
+| os_pipe | 1.2.3 | MIT | crates.io |
+| parking | 2.2.1 | Apache-2.0 OR MIT | crates.io |
+| parking_lot | 0.12.5 | MIT OR Apache-2.0 | crates.io |
+| parking_lot_core | 0.9.12 | MIT OR Apache-2.0 | crates.io |
+| parlance | 0.1.1 | Apache-2.0 OR MIT | crates.io |
+| pdf-writer | 0.15.0 | MIT OR Apache-2.0 | crates.io |
+| peniko | 0.6.1 | Apache-2.0 OR MIT | crates.io |
+| percent-encoding | 2.3.2 | MIT OR Apache-2.0 | crates.io |
+| petgraph | 0.8.3 | MIT OR Apache-2.0 | crates.io |
+| phf | 0.13.1 | MIT | crates.io |
+| phf | 0.14.0 | MIT | crates.io |
+| phf_generator | 0.14.0 | MIT | crates.io |
+| phf_macros | 0.14.0 | MIT | crates.io |
+| phf_shared | 0.13.1 | MIT | crates.io |
+| phf_shared | 0.14.0 | MIT | crates.io |
+| pin-project-lite | 0.2.17 | Apache-2.0 OR MIT | crates.io |
+| piper | 0.2.5 | MIT OR Apache-2.0 | crates.io |
+| pkg-config | 0.3.34 | MIT OR Apache-2.0 | crates.io |
+| png | 0.18.1 | MIT OR Apache-2.0 | crates.io |
+| poll-promise | 0.3.0 | MIT OR Apache-2.0 | crates.io |
+| polling | 3.11.0 | Apache-2.0 OR MIT | crates.io |
+| pollster | 0.4.0 | Apache-2.0/MIT | crates.io |
+| polycool | 0.4.0 | MIT OR Apache-2.0 | crates.io |
+| potential_utf | 0.1.6 | Unicode-3.0 | crates.io |
+| proc-macro-crate | 3.5.0 | MIT OR Apache-2.0 | crates.io |
+| proc-macro2 | 1.0.107 | MIT OR Apache-2.0 | crates.io |
+| profiling | 1.0.18 | MIT OR Apache-2.0 | crates.io |
+| pulldown-cmark | 0.13.5 | MIT | crates.io |
+| pxfm | 0.1.30 | BSD-3-Clause OR Apache-2.0 | crates.io |
+| quick-error | 2.0.1 | MIT/Apache-2.0 | crates.io |
+| quick-xml | 0.41.0 | MIT | crates.io |
+| quote | 1.0.47 | MIT OR Apache-2.0 | crates.io |
+| **raw-window-handle** | 0.6.2 | MIT OR Apache-2.0 OR Zlib | crates.io |
+| read-fonts | 0.39.2 | MIT OR Apache-2.0 | crates.io |
+| read-fonts | 0.41.0 | MIT OR Apache-2.0 | crates.io |
+| **rfd** | 0.17.2 | MIT | crates.io |
+| rusqlite | 0.40.2 | MIT | crates.io |
+| rustc-hash | 2.1.3 | Apache-2.0 OR MIT | crates.io |
+| rustix | 0.38.44 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io |
+| rustix | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io |
+| rustybuzz | 0.20.1 | MIT | crates.io |
+| ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 | crates.io |
+| scoped-tls | 1.0.1 | MIT/Apache-2.0 | crates.io |
+| scopeguard | 1.2.0 | MIT OR Apache-2.0 | crates.io |
+| self_cell | 1.3.0 | Apache-2.0 OR GPL-2.0-only | crates.io |
+| serde | 1.0.229 | MIT OR Apache-2.0 | crates.io |
+| serde_core | 1.0.229 | MIT OR Apache-2.0 | crates.io |
+| serde_derive | 1.0.229 | MIT OR Apache-2.0 | crates.io |
+| serde_repr | 0.1.21 | MIT OR Apache-2.0 | crates.io |
+| serde_spanned | 1.1.1 | MIT OR Apache-2.0 | crates.io |
+| shlex | 2.0.1 | MIT OR Apache-2.0 | crates.io |
+| signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 | crates.io |
+| simd-adler32 | 0.3.10 | MIT | crates.io |
+| siphasher | 1.0.4 | MIT OR Apache-2.0 | crates.io |
+| skrifa | 0.42.1 | MIT OR Apache-2.0 | crates.io |
+| skrifa | 0.44.0 | MIT OR Apache-2.0 | crates.io |
+| slab | 0.4.12 | MIT | crates.io |
+| smallvec | 1.16.2 | MIT OR Apache-2.0 | crates.io |
+| smithay-client-toolkit | 0.19.2 | MIT | crates.io |
+| smithay-client-toolkit | 0.20.0 | MIT | crates.io |
+| smithay-clipboard | 0.7.3 | MIT | crates.io |
+| smol_str | 0.2.2 | MIT OR Apache-2.0 | crates.io |
+| stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 | crates.io |
+| static_assertions | 1.1.0 | MIT OR Apache-2.0 | crates.io |
+| strict-num | 0.1.1 | MIT | crates.io |
+| subsetter | 0.2.6 | MIT OR Apache-2.0 | crates.io |
+| syn | 2.0.119 | MIT OR Apache-2.0 | crates.io |
+| syn | 3.0.6 | MIT OR Apache-2.0 | crates.io |
+| synstructure | 0.14.0 | MIT | crates.io |
+| sys-locale | 0.3.2 | MIT OR Apache-2.0 | crates.io |
+| thiserror | 1.0.69 | MIT OR Apache-2.0 | crates.io |
+| thiserror | 2.0.21 | MIT OR Apache-2.0 | crates.io |
+| thiserror-impl | 1.0.69 | MIT OR Apache-2.0 | crates.io |
+| thiserror-impl | 2.0.21 | MIT OR Apache-2.0 | crates.io |
+| tiny-skia-path | 0.12.0 | BSD-3-Clause | crates.io |
+| tinystr | 0.8.5 | Unicode-3.0 | crates.io |
+| toml | 1.1.6+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
+| toml_datetime | 1.1.1+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
+| toml_edit | 0.25.15+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
+| toml_parser | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
+| tracing | 0.1.44 | MIT | crates.io |
+| tracing-attributes | 0.1.31 | MIT | crates.io |
+| tracing-core | 0.1.36 | MIT | crates.io |
+| tree_magic_mini | 3.2.2 | MIT | crates.io |
+| ttf-parser | 0.25.1 | MIT OR Apache-2.0 | crates.io |
+| typed-path | 0.13.0 | MIT OR Apache-2.0 | crates.io |
+| unicase | 2.10.0 | MIT OR Apache-2.0 | crates.io |
+| unicode-bidi-mirroring | 0.4.0 | MIT/Apache-2.0 | crates.io |
+| unicode-ccc | 0.4.0 | MIT/Apache-2.0 | crates.io |
+| unicode-general-category | 1.1.0 | Apache-2.0 | crates.io |
+| unicode-ident | 1.0.26 | (MIT OR Apache-2.0) AND Unicode-3.0 | crates.io |
+| unicode-properties | 0.1.4 | MIT/Apache-2.0 | crates.io |
+| unicode-script | 0.5.8 | MIT OR Apache-2.0 | crates.io |
+| unicode-segmentation | 1.13.3 | MIT OR Apache-2.0 | crates.io |
+| url | 2.5.8 | MIT OR Apache-2.0 | crates.io |
+| utf8_iter | 1.0.4 | Apache-2.0 OR MIT | crates.io |
+| uuid | 1.29.0 | Apache-2.0 OR MIT | crates.io |
+| vcpkg | 0.2.15 | MIT/Apache-2.0 | crates.io |
+| vello_common | 0.2.0 | Apache-2.0 OR MIT | crates.io |
+| vello_cpu | 0.2.0 | Apache-2.0 OR MIT | crates.io |
+| version_check | 0.9.5 | MIT/Apache-2.0 | crates.io |
+| wayland-backend | 0.3.17 | MIT | crates.io |
+| wayland-client | 0.31.15 | MIT | crates.io |
+| wayland-csd-frame | 0.3.0 | MIT | crates.io |
+| wayland-cursor | 0.31.14 | MIT | crates.io |
+| wayland-protocols | 0.32.13 | MIT | crates.io |
+| wayland-protocols-experimental | 20250721.0.1 | MIT | crates.io |
+| wayland-protocols-misc | 0.3.12 | MIT | crates.io |
+| wayland-protocols-plasma | 0.3.12 | MIT | crates.io |
+| wayland-protocols-wlr | 0.3.12 | MIT | crates.io |
+| wayland-scanner | 0.31.11 | MIT | crates.io |
+| wayland-sys | 0.31.11 | MIT | crates.io |
+| web-time | 1.1.0 | MIT OR Apache-2.0 | crates.io |
+| webbrowser | 1.2.5 | MIT OR Apache-2.0 | crates.io |
+| weezl | 0.1.12 | MIT OR Apache-2.0 | crates.io |
+| winit | 0.30.13 | Apache-2.0 | crates.io |
+| winnow | 1.0.4 | MIT | crates.io |
+| wl-clipboard-rs | 0.9.4 | MIT OR Apache-2.0 | crates.io |
+| write-fonts | 0.48.1 | MIT OR Apache-2.0 | crates.io |
+| writeable | 0.6.4 | Unicode-3.0 | crates.io |
+| x11-dl | 2.21.0 | MIT | crates.io |
+| x11rb | 0.13.2 | MIT OR Apache-2.0 | crates.io |
+| x11rb-protocol | 0.13.2 | MIT OR Apache-2.0 | crates.io |
+| xcursor | 0.3.11 | MIT | crates.io |
+| xkbcommon-dl | 0.4.2 | MIT | crates.io |
+| xkeysym | 0.2.1 | MIT OR Apache-2.0 OR Zlib | crates.io |
+| xml-rs | 0.8.29 | MIT | crates.io |
+| xmp-writer | 0.3.3 | MIT OR Apache-2.0 | crates.io |
+| yeslogic-fontconfig-sys | 6.0.1 | MIT | crates.io |
+| yoke | 0.8.4 | Unicode-3.0 | crates.io |
+| yoke-derive | 0.8.4 | Unicode-3.0 | crates.io |
+| zbus | 5.19.0 | MIT | crates.io |
+| zbus-lockstep | 0.5.2 | MIT | crates.io |
+| zbus-lockstep-macros | 0.5.2 | MIT | crates.io |
+| zbus_macros | 5.19.0 | MIT | crates.io |
+| zbus_names | 4.3.5 | MIT | crates.io |
+| zbus_xml | 5.2.1 | MIT | crates.io |
+| zcheapstr | 1.1.0 | MIT | crates.io |
+| zerocopy | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT | crates.io |
+| zerofrom | 0.1.8 | Unicode-3.0 | crates.io |
+| zerofrom-derive | 0.1.8 | Unicode-3.0 | crates.io |
+| zerotrie | 0.2.5 | Unicode-3.0 | crates.io |
+| zerovec | 0.11.9 | Unicode-3.0 | crates.io |
+| zerovec-derive | 0.11.7 | Unicode-3.0 | crates.io |
+| zip | 9.1.0 | MIT | crates.io |
+| zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib | crates.io |
+| zune-jpeg | 0.5.15 | MIT OR Apache-2.0 OR Zlib | crates.io |
+| zvariant | 5.15.1 | MIT | crates.io |
+| zvariant_derive | 5.15.1 | MIT | crates.io |
+| zvariant_utils | 4.2.0 | MIT | crates.io |
+<!-- END GENERATED: egui-crates -->
+
+# Legacy Qt application
+
+Everything from here to the end of the file describes the Qt application (`omatree`) and its
+packages. Facts below come from the installed Qt files' SPDX headers and license texts,
+`Cargo.lock`/`cargo metadata`, and the crates' own sources, as of OmaTree 0.1.2 on the development
+machine (Arch Linux). The macOS app bundle and Windows installer are covered at the end. None of
+it applies to the egui packages.
 
 ## Qt
 
@@ -87,7 +592,7 @@ conclusion beyond the audit above.
   `https://download.qt.io/archive/qt/6.8/6.8.3/`. Both are explained in
   `QT-NOTICE.md`.
 
-## Rust dependencies
+## Rust dependencies (Qt application)
 
 Direct dependencies (all have machine-readable license metadata):
 

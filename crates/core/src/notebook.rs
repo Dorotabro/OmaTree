@@ -12,9 +12,65 @@ impl NodeId {
         self.0
     }
 
-    /// For rebuilding persisted ids; fresh ids only come from `Notebook`.
-    pub(crate) fn from_raw(raw: u64) -> Self {
+    /// For rebuilding persisted ids, and for adapters that carry an id through
+    /// a foreign handle. The result is an unvalidated name, not proof that a
+    /// node exists: look it up with `Notebook::get` before use. Fresh ids only
+    /// come from `Notebook`.
+    pub fn from_raw(raw: u64) -> Self {
         NodeId(raw)
+    }
+}
+
+/// A note's colour tag: one of six fixed identities (T1). The names are semantic, not RGB values:
+/// what a colour looks like is the theme's business and is never stored. A note has at most one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Colour {
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Blue,
+    Purple,
+}
+
+impl Colour {
+    /// Every colour, in palette order.
+    pub const ALL: [Colour; 6] = [
+        Colour::Red,
+        Colour::Orange,
+        Colour::Yellow,
+        Colour::Green,
+        Colour::Blue,
+        Colour::Purple,
+    ];
+
+    /// The identifier stored in the notebook file. These strings are a file format: they never change.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Colour::Red => "red",
+            Colour::Orange => "orange",
+            Colour::Yellow => "yellow",
+            Colour::Green => "green",
+            Colour::Blue => "blue",
+            Colour::Purple => "purple",
+        }
+    }
+
+    /// The name shown to people.
+    pub fn label(self) -> &'static str {
+        match self {
+            Colour::Red => "Red",
+            Colour::Orange => "Orange",
+            Colour::Yellow => "Yellow",
+            Colour::Green => "Green",
+            Colour::Blue => "Blue",
+            Colour::Purple => "Purple",
+        }
+    }
+
+    /// The colour stored as `text`, exactly (no case folding, no trimming); anything else is `None`.
+    pub fn parse(text: &str) -> Option<Colour> {
+        Colour::ALL.into_iter().find(|c| c.as_str() == text)
     }
 }
 
@@ -27,6 +83,7 @@ pub struct Node {
     position: usize,
     title: String,
     body: String,
+    colour: Option<Colour>,
 }
 
 impl Node {
@@ -44,7 +101,14 @@ impl Node {
             position,
             title,
             body,
+            colour: None,
         }
+    }
+
+    /// This node with its colour tag set (for rebuilding persisted nodes).
+    pub(crate) fn with_colour(mut self, colour: Option<Colour>) -> Self {
+        self.colour = colour;
+        self
     }
 
     pub fn id(&self) -> NodeId {
@@ -68,6 +132,11 @@ impl Node {
     pub fn body(&self) -> &str {
         &self.body
     }
+
+    /// The colour tag, if the note has one.
+    pub fn colour(&self) -> Option<Colour> {
+        self.colour
+    }
 }
 
 /// The title the UI gives a new note before the user renames it.
@@ -83,7 +152,7 @@ pub(crate) fn normalize_title(title: &str) -> String {
 /// A validated, non-trivial move: where the node is now and where it ends up.
 /// Positions are final sibling indexes, never Qt destination rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct MovePlan {
+pub struct MovePlan {
     pub old_parent: Option<NodeId>,
     pub old_position: usize,
     pub new_parent: Option<NodeId>,
@@ -323,7 +392,7 @@ impl Notebook {
     /// both must exist, the move must not create a cycle, and a new parent
     /// must not already have a child with an equivalent title. (The same
     /// parent is always fine: that is only a reorder.)
-    pub(crate) fn can_reparent(&self, id: NodeId, new_parent: Option<NodeId>) -> bool {
+    pub fn can_reparent(&self, id: NodeId, new_parent: Option<NodeId>) -> bool {
         self.plan_move(id, new_parent, usize::MAX).is_ok()
     }
 
@@ -374,7 +443,7 @@ impl Notebook {
     /// top level) at final sibling index `new_position`. Ids and contents are
     /// untouched and sibling positions stay contiguous. Returns whether the
     /// tree changed; on any error nothing changes.
-    pub(crate) fn move_node(
+    pub fn move_node(
         &mut self,
         id: NodeId,
         new_parent: Option<NodeId>,
@@ -418,7 +487,7 @@ impl Notebook {
 
     /// Every node in the order the tree is shown: each note, then its
     /// children (in sibling order), depth first. One pass over the notes.
-    pub(crate) fn depth_first(&self) -> Vec<&Node> {
+    pub fn depth_first(&self) -> Vec<&Node> {
         let mut children: BTreeMap<Option<NodeId>, Vec<&Node>> = BTreeMap::new();
         for node in self.nodes.values() {
             children.entry(node.parent_id).or_default().push(node);
@@ -505,7 +574,7 @@ impl Notebook {
 
     /// How many (parent, title) groups hold more than one equivalent sibling.
     /// Zero for any notebook that only ever saw the uniqueness rule.
-    pub(crate) fn sibling_title_conflicts(&self) -> usize {
+    pub fn sibling_title_conflicts(&self) -> usize {
         let mut seen: BTreeMap<(Option<NodeId>, String), usize> = BTreeMap::new();
         for node in self.nodes.values() {
             *seen
@@ -574,6 +643,20 @@ impl Notebook {
         Ok(())
     }
 
+    /// Sets or clears a note's colour tag. Returns whether it changed. The tag belongs to the note:
+    /// renaming, moving and reordering never touch it, and it travels with the note into Trash and
+    /// checkpoints because those hold copies of the node.
+    pub fn set_colour(
+        &mut self,
+        id: NodeId,
+        colour: Option<Colour>,
+    ) -> Result<bool, NotebookError> {
+        let node = self.require_mut(id)?;
+        let changed = node.colour != colour;
+        node.colour = colour;
+        Ok(changed)
+    }
+
     /// Root nodes in sibling order.
     pub fn roots(&self) -> Vec<&Node> {
         self.siblings(None)
@@ -622,6 +705,7 @@ impl Notebook {
                 position,
                 title: title.to_string(),
                 body: String::new(),
+                colour: None,
             },
         );
         id

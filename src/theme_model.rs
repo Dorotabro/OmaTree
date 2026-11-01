@@ -11,7 +11,16 @@ use core::pin::Pin;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
 
-use crate::theme::{default_omarchy_colors_path, select, OmarchyWatcher, Palette, Scheme};
+use omatree_core::theme::{default_omarchy_colors_path, select, OmarchyWatcher, Palette, Scheme};
+
+/// From `Qt::ColorScheme` (0 unknown, 1 light, 2 dark).
+fn scheme_from_qt(value: i32) -> Scheme {
+    match value {
+        1 => Scheme::Light,
+        2 => Scheme::Dark,
+        _ => Scheme::Unknown,
+    }
+}
 
 #[cxx_qt::bridge]
 pub mod qobject {
@@ -104,7 +113,7 @@ impl Default for ThemeRust {
         let mut watcher = OmarchyWatcher::new(default_omarchy_colors_path());
         let omarchy = watcher.load_now();
         let palette = select(omarchy, Scheme::Unknown);
-        let hex = |c: crate::theme::Rgb| QString::from(c.to_hex().as_str());
+        let hex = |c: omatree_core::theme::Rgb| QString::from(c.to_hex().as_str());
         ThemeRust {
             scheme: Scheme::Unknown,
             omarchy,
@@ -165,7 +174,7 @@ impl qobject::Theme {
     }
 
     fn set_system_scheme(mut self: Pin<&mut Self>, scheme: i32) {
-        let scheme = Scheme::from_qt(scheme);
+        let scheme = scheme_from_qt(scheme);
         if self.rust().scheme != scheme {
             self.as_mut().rust_mut().scheme = scheme;
             self.refresh();
@@ -185,5 +194,52 @@ impl qobject::Theme {
 
     fn using_omarchy(&self) -> bool {
         self.rust().omarchy.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn qt_colour_scheme_values_map_to_schemes() {
+        assert_eq!(scheme_from_qt(1), Scheme::Light);
+        assert_eq!(scheme_from_qt(2), Scheme::Dark);
+        assert_eq!(scheme_from_qt(0), Scheme::Unknown);
+        assert_eq!(scheme_from_qt(99), Scheme::Unknown);
+    }
+
+    #[test]
+    fn qml_contains_no_literal_ui_colours() {
+        // All colour decisions flow from the semantic Theme. A literal
+        // #rgb / #rrggbb / #aarrggbb string in any QML file is a regression.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("qml");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|e| e != "qml") {
+                continue;
+            }
+            checked += 1;
+            let text = std::fs::read_to_string(&path).unwrap();
+            for (n, line) in text.lines().enumerate() {
+                let code = line.split("//").next().unwrap_or("");
+                let mut rest = code;
+                while let Some(at) = rest.find('#') {
+                    let digits: String = rest[at + 1..]
+                        .chars()
+                        .take_while(|c| c.is_ascii_hexdigit())
+                        .collect();
+                    assert!(
+                        !matches!(digits.len(), 3 | 4 | 6 | 8),
+                        "{}:{} has a literal colour: {line}",
+                        path.display(),
+                        n + 1
+                    );
+                    rest = &rest[at + 1..];
+                }
+            }
+        }
+        assert!(checked >= 6, "looked at {checked} QML files");
     }
 }

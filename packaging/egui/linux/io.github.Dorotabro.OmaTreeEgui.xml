@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <!-- The established OmaTree notebook type, identified by file name only. A notebook is a
+       SQLite database inside, and generic SQLite files must not be claimed, so there is
+       deliberately no magic matching. The Qt package ships the same definition in its own
+       file; the two merge harmlessly while both are installed. -->
+  <mime-type type="application/x-omatree">
+    <comment>OmaTree notebook</comment>
+    <glob pattern="*.omatree"/>
+    <icon name="io.github.Dorotabro.OmaTreeEgui"/>
+  </mime-type>
+</mime-info>

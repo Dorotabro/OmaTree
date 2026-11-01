@@ -17,7 +17,7 @@ ideas will not fit, and that is by design.
     cargo clippy --all-targets
     cargo test
 
-`cargo test` includes the integration tests, which run the real application
+`cargo test` runs the whole workspace: the Qt-free `omatree-core` crate (`crates/core`, which needs no Qt, also testable alone with `cargo test -p omatree-core`) and the integration tests, which run the real application
 headless. Technology choices and rules are in [`AGENTS.md`](AGENTS.md) and
 [`ARCHITECTURE.md`](ARCHITECTURE.md).
 

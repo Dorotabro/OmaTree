@@ -43,6 +43,10 @@ impl Rgb {
 /// The semantic roles every OmaTree-owned UI element draws from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Palette {
+    /// Whether this is a dark palette: the theme's explicit `mode` when it has one, otherwise
+    /// the brightness of its background. Toolkits that need to pick a base style (egui's
+    /// light/dark visuals) read this rather than guessing from colours.
+    pub dark: bool,
     pub background: Rgb,
     pub surface: Rgb,
     pub surface_raised: Rgb,
@@ -67,6 +71,7 @@ impl Palette {
     /// OmaTree Dark. The only place these values are written down, together
     /// with `LIGHT`.
     pub const DARK: Palette = Palette {
+        dark: true,
         background: Rgb::hex(0x252A33),
         surface: Rgb::hex(0x2D3440),
         surface_raised: Rgb::hex(0x37404D),
@@ -85,6 +90,7 @@ impl Palette {
 
     /// OmaTree Light.
     pub const LIGHT: Palette = Palette {
+        dark: false,
         background: Rgb::hex(0xF2F4F7),
         surface: Rgb::hex(0xE7EBF0),
         surface_raised: Rgb::hex(0xDCE2E8),
@@ -123,23 +129,12 @@ impl Palette {
     }
 }
 
-/// The operating system's colour scheme as Qt reports it.
+/// The operating system's colour scheme, as the UI layer reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scheme {
     Light,
     Dark,
     Unknown,
-}
-
-impl Scheme {
-    /// From `Qt::ColorScheme` (0 unknown, 1 light, 2 dark).
-    pub fn from_qt(value: i32) -> Scheme {
-        match value {
-            1 => Scheme::Light,
-            2 => Scheme::Dark,
-            _ => Scheme::Unknown,
-        }
-    }
 }
 
 /// The palette to show: a valid Omarchy palette wins; otherwise the built-in
@@ -252,6 +247,7 @@ pub fn parse_omarchy(text: &str) -> Result<Palette, OmarchyError> {
         .find_map(|k| lookup(k));
 
     Ok(Palette {
+        dark,
         background,
         foreground,
         surface: pick(&["dark_background", "darker_background"], base.surface),
@@ -541,40 +537,6 @@ mod tests {
     }
 
     #[test]
-    fn qml_contains_no_literal_ui_colours() {
-        // All colour decisions flow from the semantic Theme. A literal
-        // #rgb / #rrggbb / #aarrggbb string in any QML file is a regression.
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("qml");
-        let mut checked = 0;
-        for entry in std::fs::read_dir(dir).unwrap() {
-            let path = entry.unwrap().path();
-            if path.extension().is_none_or(|e| e != "qml") {
-                continue;
-            }
-            checked += 1;
-            let text = std::fs::read_to_string(&path).unwrap();
-            for (n, line) in text.lines().enumerate() {
-                let code = line.split("//").next().unwrap_or("");
-                let mut rest = code;
-                while let Some(at) = rest.find('#') {
-                    let digits: String = rest[at + 1..]
-                        .chars()
-                        .take_while(|c| c.is_ascii_hexdigit())
-                        .collect();
-                    assert!(
-                        !matches!(digits.len(), 3 | 4 | 6 | 8),
-                        "{}:{} has a literal colour: {line}",
-                        path.display(),
-                        n + 1
-                    );
-                    rest = &rest[at + 1..];
-                }
-            }
-        }
-        assert!(checked >= 6, "looked at {checked} QML files");
-    }
-
-    #[test]
     fn colour_parsing_is_strict_about_the_format() {
         assert_eq!(Rgb::parse("#7aa2f7"), Some(Rgb(0x7a, 0xa2, 0xf7)));
         assert_eq!(Rgb::parse("  #7AA2F7 "), Some(Rgb(0x7a, 0xa2, 0xf7)));
@@ -740,6 +702,28 @@ mod tests {
     // ---- provider selection ----
 
     #[test]
+    fn the_palette_records_whether_it_is_dark_with_the_explicit_mode_first() {
+        assert_eq!((Palette::DARK.dark, Palette::LIGHT.dark), (true, false));
+        let with = |mode: &str, background: &str| {
+            parse_omarchy(&format!(
+                "mode = \"{mode}\"\nbackground = \"{background}\"\nforeground = \"#808080\"\n"
+            ))
+            .unwrap()
+        };
+        // An explicit mode beats the brightness of the background, in both directions.
+        assert!(!with("light", "#303030").dark);
+        assert!(with("dark", "#f0f0f0").dark);
+        // Without a (usable) mode the background decides.
+        let bare = |background: &str| {
+            parse_omarchy(&format!(
+                "background = \"{background}\"\nforeground = \"#808080\"\n"
+            ))
+            .unwrap()
+        };
+        assert!(bare("#101010").dark && !bare("#f0f0f0").dark);
+    }
+
+    #[test]
     fn a_valid_omarchy_palette_beats_the_system_scheme() {
         let omarchy = parse_omarchy(TOKYO).unwrap();
         for scheme in [Scheme::Dark, Scheme::Light, Scheme::Unknown] {
@@ -756,10 +740,6 @@ mod tests {
             Palette::DARK,
             "deterministic fallback"
         );
-        assert_eq!(Scheme::from_qt(1), Scheme::Light);
-        assert_eq!(Scheme::from_qt(2), Scheme::Dark);
-        assert_eq!(Scheme::from_qt(0), Scheme::Unknown);
-        assert_eq!(Scheme::from_qt(99), Scheme::Unknown);
     }
 
     #[test]

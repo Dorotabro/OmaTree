@@ -1,0 +1,6 @@
+#!/bin/sh
+# AppRun of the egui OmaTree AppImage. Nothing is bundled but the executable and its data files,
+# so there is no library path to set: the host's Wayland/X11/GL/font/D-Bus libraries are used.
+# Arguments (a notebook path, with spaces or any Unicode) go through unchanged and unexpanded.
+HERE=$(dirname "$(readlink -f "$0")")
+exec "$HERE/usr/bin/omatree-egui" "$@"

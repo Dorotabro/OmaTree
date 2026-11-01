@@ -5,15 +5,9 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 pub mod app;
-mod document;
 #[cfg(test)]
 mod integration_tests;
 pub mod markdown;
-mod notebook;
-mod recovery;
-mod search;
-mod storage;
-mod theme;
 pub mod theme_model;
 pub mod tree_model;
 

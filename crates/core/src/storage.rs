@@ -2,19 +2,36 @@
 //!
 //! Schema version 1 stores only the active nodes. Version 2 adds the id
 //! counter, Trash and recovery checkpoints. Version 3 adds the set of
-//! expanded nodes, which is view state rather than content. Older files stay
-//! readable and are migrated to version 3 only by a successful save.
+//! expanded nodes, which is view state rather than content. Version 4 adds
+//! the `attachments` table (image BLOBs). Version 5 adds the optional `colour` column of the
+//! three node tables (a note's colour tag), raised by a save only when a tag exists. Older files stay readable. A save
+//! migrates a file older than 3 to 3; a file only becomes version 4 when a save
+//! has an attachment to write, in the same transaction, so a notebook that never
+//! holds an image stays a version 3 file. Migration is one explicit step per
+//! version (`migrate`), never "re-run everything newer than the file".
 
 use std::collections::BTreeSet;
 use std::fmt;
 use std::path::Path;
+use std::time::Duration;
 
 use rusqlite::{params, Connection, OpenFlags, Transaction};
 
-use crate::notebook::{Node, NodeId, Notebook, NotebookError};
+use crate::attachments::{scan_references, Attachment, AttachmentId, AttachmentInfo, MediaType};
+use crate::notebook::{Colour, Node, NodeId, Notebook, NotebookError};
 use crate::recovery::{Checkpoint, Recovery, TrashEntry};
 
-const SCHEMA_VERSION: i64 = 3;
+/// The newest schema this build understands.
+const SCHEMA_VERSION: i64 = 5;
+/// What a notebook without attachments is: new files are created at this version and a
+/// text-only save never raises a file above it.
+const BASE_VERSION: i64 = 3;
+/// The first version that has the `attachments` table.
+const ATTACHMENT_VERSION: i64 = 4;
+/// The first version that has the `colour` column (a note's colour tag) in `nodes`, `trash_nodes`
+/// and `checkpoint_nodes`. A file only becomes version 5 when a save has a tag to write, in the
+/// same transaction; a notebook that never has one stays at 3 or 4 and older builds keep opening it.
+const COLOUR_VERSION: i64 = 5;
 /// The first version that has the recovery tables.
 const RECOVERY_VERSION: i64 = 2;
 const OLDEST_READABLE_VERSION: i64 = 1;
@@ -77,6 +94,85 @@ const VIEW_SCHEMA: &str = "
     );
 ";
 
+/// What version 4 adds. No foreign key to nodes, Trash or checkpoints: what an attachment
+/// belongs to is derived from the Markdown bodies, and `DELETE FROM nodes` (every save) must
+/// never reach it. `byte_len` must agree with the BLOB.
+const ATTACHMENT_SCHEMA: &str = "
+    CREATE TABLE attachments (
+        id         TEXT PRIMARY KEY CHECK (length(id) = 32),
+        media_type TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        byte_len   INTEGER NOT NULL CHECK (byte_len > 0),
+        data       BLOB NOT NULL,
+        CHECK (byte_len = length(data))
+    ) WITHOUT ROWID;
+";
+
+/// What version 5 adds: the colour tag, an optional identifier (`red`, `orange`, ...). The CHECK
+/// keeps anything but the six identifiers out of the file; existing rows get NULL (no tag).
+const COLOUR_SCHEMA: [&str; 3] = [
+    "ALTER TABLE nodes ADD COLUMN colour TEXT
+         CHECK (colour IS NULL OR colour IN ('red','orange','yellow','green','blue','purple'))",
+    "ALTER TABLE trash_nodes ADD COLUMN colour TEXT
+         CHECK (colour IS NULL OR colour IN ('red','orange','yellow','green','blue','purple'))",
+    "ALTER TABLE checkpoint_nodes ADD COLUMN colour TEXT
+         CHECK (colour IS NULL OR colour IN ('red','orange','yellow','green','blue','purple'))",
+];
+
+/// What a save should do about attachments besides keeping those already stored.
+#[derive(Default)]
+pub struct AttachmentPlan<'a> {
+    /// Held in memory until now; inserted by this save.
+    pub pending: Vec<&'a Attachment>,
+    /// Another notebook file whose stored attachments are copied into this one (Save As).
+    pub copy_from: Option<&'a Storage>,
+    /// This file is an existing notebook being replaced: what it stored is dropped first.
+    pub replace_existing: bool,
+}
+
+/// Which kind of stored body mentions which attachment ids (the sets overlap).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct StoredReferences {
+    pub active: BTreeSet<String>,
+    pub trash: BTreeSet<String>,
+    pub checkpoints: BTreeSet<String>,
+}
+
+/// What a committed prune removed and left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PruneOutcome {
+    pub removed: usize,
+    pub removed_bytes: u64,
+    pub retained: usize,
+    pub retained_bytes: u64,
+}
+
+/// SQLite's own view of the file's pages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PhysicalStats {
+    pub page_size: u64,
+    pub page_count: u64,
+    pub freelist_pages: u64,
+    pub journal_mode: String,
+}
+
+/// What `verify_integrity` found. Empty lists mean nothing was found, not that nothing was checked.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct IntegrityReport {
+    /// Lines from SQLite's `integrity_check` and `foreign_key_check` (none when healthy).
+    pub sqlite: Vec<String>,
+    /// Problems with attachment rows and images (none when healthy).
+    pub attachments: Vec<String>,
+    /// How many stored images had their bytes read and checked.
+    pub checked_attachments: usize,
+}
+
+impl IntegrityReport {
+    pub fn is_healthy(&self) -> bool {
+        self.sqlite.is_empty() && self.attachments.is_empty()
+    }
+}
+
 #[derive(Debug)]
 pub enum StorageError {
     Sqlite(rusqlite::Error),
@@ -118,7 +214,7 @@ impl From<NotebookError> for StorageError {
 
 pub struct Storage {
     conn: Connection,
-    /// Schema version of the file as it is on disk right now (1, 2 or 3).
+    /// Schema version of the file as it is on disk right now (1 to 4).
     version: i64,
     /// `PRAGMA data_version` of `conn`, as last seen. SQLite changes that
     /// number for a connection when *another* connection commits, and not for
@@ -131,7 +227,8 @@ pub struct Storage {
 }
 
 impl Storage {
-    /// Creates a version 3 notebook in a new (or empty) database file.
+    /// Creates a version 3 notebook in a new (or empty) database file (attachments make it 4
+    /// later, with the save that stores the first one).
     /// Refuses to touch a database that already contains anything.
     pub fn create(path: &Path) -> Result<Self, StorageError> {
         let mut conn = Connection::open(path)?;
@@ -157,17 +254,17 @@ impl Storage {
             "INSERT INTO notebook_meta (id, next_node_id) VALUES (1, 0)",
             [],
         )?;
-        tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        tx.pragma_update(None, "user_version", BASE_VERSION)?;
         tx.commit()?;
         let observed = data_version(&conn)?;
         Ok(Storage {
             conn,
-            version: SCHEMA_VERSION,
+            version: BASE_VERSION,
             observed,
         })
     }
 
-    /// Opens an existing notebook (schema version 1 to 3); never creates a
+    /// Opens an existing notebook (schema version 1 to 4); never creates a
     /// file and never modifies one. An older file is only upgraded by a
     /// later successful `save_document`.
     pub fn open(path: &Path) -> Result<Self, StorageError> {
@@ -181,6 +278,9 @@ impl Storage {
         if !(OLDEST_READABLE_VERSION..=SCHEMA_VERSION).contains(&version) {
             return Err(StorageError::UnsupportedSchemaVersion(version));
         }
+        if version >= ATTACHMENT_VERSION {
+            check_attachment_table(&conn)?;
+        }
         let observed = data_version(&conn)?;
         Ok(Storage {
             conn,
@@ -191,24 +291,45 @@ impl Storage {
 
     /// Replaces everything stored (active notebook, id counter, Trash,
     /// checkpoints and the expanded nodes) with the given state in a single
-    /// transaction. An older file is migrated to version 3 inside the same
-    /// transaction, so on any failure the previous valid file is left exactly
-    /// as it was. Expanded ids of nodes that do not exist are left out.
+    /// transaction. Attachments already stored are kept. An older file is migrated inside the same
+    /// transaction, so on any failure the previous valid file is left exactly as it was. Expanded
+    /// ids of nodes that do not exist are left out.
     pub fn save_document_with_view(
         &mut self,
         notebook: &Notebook,
         recovery: &Recovery,
         expanded: &BTreeSet<NodeId>,
     ) -> Result<(), StorageError> {
-        let migrating = self.version < SCHEMA_VERSION;
+        self.save_document_with_attachments(
+            notebook,
+            recovery,
+            expanded,
+            &AttachmentPlan::default(),
+        )
+    }
+
+    /// `save_document_with_view` that also writes attachments (see [`AttachmentPlan`]) in the
+    /// same checked transaction on the same connection: all of it commits or none of it does,
+    /// and the external-modification guard covers it. The file becomes version 4 here, inside
+    /// that transaction, if (and only if) there is anything to store in the attachments table.
+    pub fn save_document_with_attachments(
+        &mut self,
+        notebook: &Notebook,
+        recovery: &Recovery,
+        expanded: &BTreeSet<NodeId>,
+        plan: &AttachmentPlan,
+    ) -> Result<(), StorageError> {
         let from = self.version;
+        let copies = match plan.copy_from {
+            Some(source) => source.has_stored()?,
+            None => false,
+        };
+        let wants = !plan.pending.is_empty() || copies;
+        let tagged = has_colour(notebook) || recovery_has_colour(recovery);
+        let to = target_version(from.max(BASE_VERSION), wants, tagged);
         let tx = self.begin_checked_write()?;
-        if from < RECOVERY_VERSION {
-            tx.execute_batch(RECOVERY_SCHEMA)?;
-        }
-        if from < SCHEMA_VERSION {
-            tx.execute_batch(VIEW_SCHEMA)?;
-        }
+        migrate(&tx, from, to)?;
+        write_attachments(&tx, to, plan)?;
 
         // Children first for the nodes foreign key; the other tables cascade.
         tx.execute("DELETE FROM expanded_nodes", [])?;
@@ -217,18 +338,30 @@ impl Storage {
         tx.execute("DELETE FROM notebook_meta", [])?;
         tx.execute("DELETE FROM nodes", [])?;
 
-        write_nodes(&tx, notebook)?;
+        write_nodes(&tx, notebook, to)?;
         write_meta(&tx, full_next_id(notebook, recovery)?)?;
-        write_trash(&tx, recovery)?;
-        write_checkpoints(&tx, recovery)?;
+        write_trash(&tx, recovery, to)?;
+        write_checkpoints(&tx, recovery, to)?;
         write_expanded(&tx, notebook, expanded)?;
 
-        if migrating {
-            tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        if to != from {
+            tx.pragma_update(None, "user_version", to)?;
         }
         tx.commit()?;
-        self.version = SCHEMA_VERSION;
+        self.version = to;
         Ok(())
+    }
+
+    /// The connection itself, for failure injection. Tests only.
+    #[cfg(test)]
+    pub(crate) fn connection(&self) -> &Connection {
+        &self.conn
+    }
+
+    /// The baseline, for tests that check it is not moved by failures. Tests only.
+    #[cfg(test)]
+    pub(crate) fn baseline(&self) -> (i64, i64) {
+        (self.observed, data_version(&self.conn).unwrap())
     }
 
     /// Accepts the file as it is now as the baseline. Tests only: the test
@@ -263,10 +396,9 @@ impl Storage {
         self.save_document_with_view(notebook, recovery, &BTreeSet::new())
     }
 
-    /// Whether the file is already at the current schema version, i.e. it
-    /// has the recovery and view tables and supports `save_active_with_view`.
+    /// Whether the file already has the recovery and view tables (version 3 or 4) and supports `save_active_with_view`.
     pub fn is_current_schema(&self) -> bool {
-        self.version >= SCHEMA_VERSION
+        self.version >= BASE_VERSION
     }
 
     /// Persists only the active state: the `nodes` table, the next node id
@@ -278,15 +410,37 @@ impl Storage {
         notebook: &Notebook,
         expanded: &BTreeSet<NodeId>,
     ) -> Result<(), StorageError> {
+        self.save_active_with_attachments(notebook, expanded, &[])
+    }
+
+    /// `save_active_with_view` that also inserts `pending` attachments, in the same checked
+    /// transaction. A version 3 file is raised to 4 inside it when there is something to insert.
+    pub fn save_active_with_attachments(
+        &mut self,
+        notebook: &Notebook,
+        expanded: &BTreeSet<NodeId>,
+        pending: &[&Attachment],
+    ) -> Result<(), StorageError> {
         if !self.is_current_schema() {
             return Err(StorageError::UnsupportedSchemaVersion(self.version));
         }
+        let from = self.version;
+        let to = target_version(from, !pending.is_empty(), has_colour(notebook));
         let tx = self.begin_checked_write()?;
+        migrate(&tx, from, to)?;
+        write_attachments(
+            &tx,
+            to,
+            &AttachmentPlan {
+                pending: pending.to_vec(),
+                ..AttachmentPlan::default()
+            },
+        )?;
         // Deleting the nodes also deletes their expanded rows (cascade); the
         // current set is written back below.
         tx.execute("DELETE FROM expanded_nodes", [])?;
         tx.execute("DELETE FROM nodes", [])?;
-        write_nodes(&tx, notebook)?;
+        write_nodes(&tx, notebook, to)?;
         // The stored counter only ever goes up, so ids that live only in
         // Trash or checkpoints can never become reusable through this path.
         let next = i64::try_from(notebook.next_id())
@@ -298,7 +452,11 @@ impl Storage {
             [next],
         )?;
         write_expanded(&tx, notebook, expanded)?;
+        if to != from {
+            tx.pragma_update(None, "user_version", to)?;
+        }
         tx.commit()?;
+        self.version = to;
         Ok(())
     }
 
@@ -311,7 +469,7 @@ impl Storage {
     /// The stored expanded nodes that exist in `notebook`. A file older than
     /// version 3 has none. Ids of missing nodes are ignored, not an error.
     pub fn load_expanded(&self, notebook: &Notebook) -> Result<BTreeSet<NodeId>, StorageError> {
-        if self.version < SCHEMA_VERSION {
+        if self.version < BASE_VERSION {
             return Ok(BTreeSet::new());
         }
         let mut query = self.conn.prepare("SELECT node_id FROM expanded_nodes")?;
@@ -326,13 +484,370 @@ impl Storage {
         Ok(expanded)
     }
 
+    /// The schema version of the file as it is now.
+    pub fn schema_version(&self) -> i64 {
+        self.version
+    }
+
+    /// Whether the attachments table holds anything. An unreadable table is an error, never
+    /// "nothing": Save As would otherwise leave stored images behind without a word.
+    pub fn has_stored(&self) -> Result<bool, StorageError> {
+        if self.version < ATTACHMENT_VERSION {
+            return Ok(false);
+        }
+        Ok(self
+            .conn
+            .query_row("SELECT EXISTS (SELECT 1 FROM attachments)", [], |r| {
+                r.get(0)
+            })?)
+    }
+
+    /// The ids of every stored attachment (none before version 4). Every row is validated, so
+    /// a damaged row is an error here and never a quietly shorter list.
+    pub fn attachment_ids(&self) -> Result<Vec<AttachmentId>, StorageError> {
+        Ok(inventory(&self.conn, self.version)?
+            .into_iter()
+            .map(|a| a.0)
+            .collect())
+    }
+
+    /// Size and media type of a stored attachment, without reading the bytes.
+    pub fn attachment_info(
+        &self,
+        id: &AttachmentId,
+    ) -> Result<Option<AttachmentInfo>, StorageError> {
+        if self.version < ATTACHMENT_VERSION {
+            return Ok(None);
+        }
+        let row = self
+            .conn
+            .query_row(
+                "SELECT media_type, byte_len, length(data) FROM attachments WHERE id = ?1",
+                [id.as_str()],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, Option<i64>>(2)?,
+                    ))
+                },
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other),
+            })?;
+        row.map(|(mime, len, stored)| {
+            if stored != Some(len) {
+                return Err(StorageError::InvalidData(format!(
+                    "attachment {id} records {len} bytes but holds {}",
+                    stored.map_or("none".to_owned(), |n| n.to_string())
+                )));
+            }
+            Ok(AttachmentInfo {
+                len: u64::try_from(len)
+                    .map_err(|_| StorageError::InvalidData("negative attachment size".into()))?,
+                media_type: MediaType::from_mime(&mime).ok_or_else(|| {
+                    StorageError::InvalidData(format!("attachment of type {mime}"))
+                })?,
+            })
+        })
+        .transpose()
+    }
+
+    /// A stored attachment with its bytes, checked against its recorded length.
+    pub fn attachment(&self, id: &AttachmentId) -> Result<Option<Attachment>, StorageError> {
+        if self.version < ATTACHMENT_VERSION {
+            return Ok(None);
+        }
+        let row = self
+            .conn
+            .query_row(
+                "SELECT media_type, created_at, byte_len, data FROM attachments WHERE id = ?1",
+                [id.as_str()],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        // `as_blob` borrows SQLite's buffer; the copy is fallible (out of
+                        // memory is an error, not an abort).
+                        {
+                            let blob = r.get_ref(3)?.as_blob()?;
+                            let mut copy = Vec::new();
+                            copy.try_reserve_exact(blob.len()).map_err(|_| {
+                                rusqlite::Error::SqliteFailure(
+                                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_NOMEM),
+                                    Some("not enough memory to read the attachment".into()),
+                                )
+                            })?;
+                            copy.extend_from_slice(blob);
+                            copy
+                        },
+                    ))
+                },
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other),
+            })?;
+        let Some((mime, created_at, len, data)) = row else {
+            return Ok(None);
+        };
+        if i64::try_from(data.len()).ok() != Some(len) {
+            return Err(StorageError::InvalidData(format!(
+                "attachment {id} records {len} bytes but holds {}",
+                data.len()
+            )));
+        }
+        let media_type = MediaType::from_mime(&mime)
+            .ok_or_else(|| StorageError::InvalidData(format!("attachment of type {mime}")))?;
+        // The bytes are in hand anyway: a structural check (signature, chunk or segment layout,
+        // end marker) is cheap and catches truncation and a type that disagrees with the content.
+        // Decoding the pixels is the display boundary's job, not storage's.
+        match crate::attachments::sniff(&data) {
+            Ok(found) if found == media_type => {}
+            Ok(found) => {
+                return Err(StorageError::InvalidData(format!(
+                    "attachment {id} is recorded as {mime} but holds {}",
+                    found.mime()
+                )))
+            }
+            Err(e) => {
+                return Err(StorageError::InvalidData(format!(
+                    "attachment {id} is damaged: {e}"
+                )))
+            }
+        }
+        Ok(Some(Attachment {
+            id: id.clone(),
+            media_type,
+            created_at,
+            data,
+        }))
+    }
+
+    /// Id, size and media type of every stored attachment, by id, without reading any BLOB.
+    pub fn attachment_inventory(
+        &self,
+    ) -> Result<Vec<(AttachmentId, u64, MediaType)>, StorageError> {
+        inventory(&self.conn, self.version)
+    }
+
+    /// Every attachment id mentioned by a stored body: active notes, Trash (all descendants)
+    /// and checkpoints, by the plain-text rule of `scan_references`. Reads bodies only, never
+    /// a BLOB, and writes nothing. Empty before version 4 (there is nothing to protect).
+    pub fn stored_references(&self) -> Result<StoredReferences, StorageError> {
+        references(&self.conn, self.version)
+    }
+
+    /// Deletes exactly the attachments in `expected`, in one checked transaction on this
+    /// connection, and only if they are, inside that transaction, exactly the attachments that no
+    /// stored body mentions. Any difference (a reference appeared, an attachment is gone or new)
+    /// is `Ok(None)` and nothing is deleted. Notes, Trash, checkpoints and the expanded
+    /// nodes are not written. An empty `expected` does nothing, not even open a transaction.
+    pub fn prune_attachments(
+        &mut self,
+        expected: &[AttachmentId],
+    ) -> Result<Option<PruneOutcome>, StorageError> {
+        if expected.is_empty() {
+            let all = inventory(&self.conn, self.version)?;
+            return Ok(Some(PruneOutcome {
+                removed: 0,
+                removed_bytes: 0,
+                retained: all.len(),
+                retained_bytes: all.iter().map(|a| a.1).sum(),
+            }));
+        }
+        let version = self.version;
+        let tx = self.begin_checked_write()?;
+        let refs = references(&tx, version)?;
+        let mut removable = Vec::new();
+        let mut retained = 0;
+        let mut retained_bytes = 0;
+        for (id, len, _) in inventory(&tx, version)? {
+            let id_text = id.as_str();
+            if refs.active.contains(id_text)
+                || refs.trash.contains(id_text)
+                || refs.checkpoints.contains(id_text)
+            {
+                retained += 1;
+                retained_bytes += len;
+            } else {
+                removable.push((id, len));
+            }
+        }
+        // `inventory` is ordered by id, so `removable` is too.
+        let same = removable.len() == expected.len()
+            && removable
+                .iter()
+                .map(|r| &r.0)
+                .zip(expected)
+                .all(|(a, b)| a == b);
+        if !same {
+            return Ok(None);
+        }
+        let mut removed_bytes = 0;
+        for (id, len) in &removable {
+            let n = tx.execute("DELETE FROM attachments WHERE id = ?1", [id.as_str()])?;
+            if n != 1 {
+                return Err(StorageError::InvalidData(format!(
+                    "attachment {id} could not be removed"
+                )));
+            }
+            removed_bytes += len;
+        }
+        tx.commit()?;
+        Ok(Some(PruneOutcome {
+            removed: removable.len(),
+            removed_bytes,
+            retained,
+            retained_bytes,
+        }))
+    }
+
+    /// The explicit, full health check: SQLite's own `integrity_check` and `foreign_key_check`,
+    /// the attachments table's shape, every row's identity, type and recorded size, duplicate
+    /// ids, and the structure of every stored image (read one at a time, never all at once).
+    /// Writes nothing. It costs a pass over the whole file, so it is not part of an ordinary
+    /// open or save; a damaged-but-readable notebook is reported, never repaired.
+    pub fn verify_integrity(&self) -> Result<IntegrityReport, StorageError> {
+        let mut report = IntegrityReport::default();
+        let mut q = self.conn.prepare("PRAGMA integrity_check(20)")?;
+        for line in q.query_map([], |r| r.get::<_, String>(0))? {
+            let line = line?;
+            if line != "ok" {
+                report.sqlite.push(line);
+            }
+        }
+        let mut q = self.conn.prepare("PRAGMA foreign_key_check")?;
+        let violations = q.query_map([], |_| Ok(()))?.count();
+        if violations > 0 {
+            report
+                .sqlite
+                .push(format!("{violations} foreign key violation(s)"));
+        }
+        if self.version < ATTACHMENT_VERSION {
+            return Ok(report);
+        }
+        if let Err(e) = check_attachment_table(&self.conn) {
+            report.attachments.push(e.to_string());
+            return Ok(report);
+        }
+        let duplicates: i64 = self.conn.query_row(
+            "SELECT count(*) FROM (SELECT id FROM attachments GROUP BY id HAVING count(*) > 1)",
+            [],
+            |r| r.get(0),
+        )?;
+        if duplicates > 0 {
+            report.attachments.push(format!(
+                "{duplicates} attachment id(s) stored more than once"
+            ));
+        }
+        let mut valid = Vec::new();
+        {
+            let mut q = self.conn.prepare(ROW_SHAPE_SQL)?;
+            let mut rows = q.query([])?;
+            while let Some(row) = rows.next()? {
+                match RowShape::read(row)?.check() {
+                    Ok(entry) => valid.push(entry),
+                    Err(why) => report.attachments.push(why),
+                }
+            }
+        }
+        for (id, _, _) in valid {
+            report.checked_attachments += 1;
+            if let Err(e) = self.attachment(&id) {
+                report.attachments.push(e.to_string());
+            }
+        }
+        Ok(report)
+    }
+
+    /// Page counts and journal mode of the file, from SQLite itself.
+    pub fn physical_stats(&self) -> Result<PhysicalStats, StorageError> {
+        let n = |name: &str| -> Result<u64, StorageError> {
+            let v: i64 = self.conn.pragma_query_value(None, name, |r| r.get(0))?;
+            u64::try_from(v).map_err(|_| StorageError::InvalidData(format!("negative {name}")))
+        };
+        Ok(PhysicalStats {
+            page_size: n("page_size")?,
+            page_count: n("page_count")?,
+            freelist_pages: n("freelist_count")?,
+            journal_mode: self
+                .conn
+                .pragma_query_value(None, "journal_mode", |r| r.get(0))?,
+        })
+    }
+
+    /// `VACUUM` on this connection: rewrites the file without its free pages. Refused when
+    /// another connection has committed since this one last looked (`ExternallyModified`),
+    /// like a save. `VACUUM` cannot run inside a transaction, so a commit by someone else between
+    /// that check and SQLite taking its lock is not prevented, but it is never accepted either:
+    /// this connection's baseline (`observed`) is left alone, so the next save is refused rather
+    /// than overwriting the other writer. `busy` is how long to wait for a lock held elsewhere.
+    ///
+    /// A *failed* `VACUUM` rolls back, but SQLite then counts it in `data_version` as if someone
+    /// else had written (measured: 1 to 2 on a read-only failure). That would make this
+    /// document's next save a false conflict. So after a failure the baseline is re-accepted only
+    /// when the file's own change counter (header bytes 24..28, which every commit in rollback
+    /// journal mode increments) proves nobody committed meanwhile; in WAL mode, where the header
+    /// proves nothing, it is never re-accepted (a refusal, the safe side).
+    pub(crate) fn reclaim_space(
+        &mut self,
+        path: &Path,
+        busy: Duration,
+    ) -> Result<(), StorageError> {
+        // The change counter is read *before* the `data_version` check: a commit by someone else
+        // between the two is then caught by the check (a refusal), and one after both makes the
+        // counter move, so it can never be mistaken for "nobody wrote" below.
+        let counter_before = change_counter(path);
+        if data_version(&self.conn)? != self.observed {
+            return Err(StorageError::ExternallyModified);
+        }
+        self.conn.busy_timeout(busy)?;
+        let ran = self.conn.execute_batch("VACUUM");
+        // Always put the default wait back, whatever happened.
+        let restored = self.conn.busy_timeout(Duration::from_secs(5));
+        if let Err(e) = ran {
+            let rollback_journal = self
+                .physical_stats()
+                .is_ok_and(|s| s.journal_mode.eq_ignore_ascii_case("delete"));
+            if rollback_journal
+                && counter_before.is_some()
+                && change_counter(path) == counter_before
+            {
+                if let Ok(now) = data_version(&self.conn) {
+                    self.observed = now;
+                }
+            }
+            return Err(e.into());
+        }
+        restored?;
+        // In WAL mode the vacuum lives in the log until a checkpoint moves it into the file.
+        if self
+            .physical_stats()?
+            .journal_mode
+            .eq_ignore_ascii_case("wal")
+        {
+            self.conn
+                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+        }
+        Ok(())
+    }
+
     /// Loads and validates the stored notebook and recovery state. A
     /// version 1 file yields empty recovery state and an id counter derived
     /// from its nodes.
     pub fn load_document(&self) -> Result<(Notebook, Recovery), StorageError> {
         let nodes = read_nodes(
             &self.conn,
-            "SELECT id, parent_id, position, title, body FROM nodes",
+            if self.version >= COLOUR_VERSION {
+                "SELECT id, parent_id, position, title, body, colour FROM nodes"
+            } else {
+                "SELECT id, parent_id, position, title, body, NULL FROM nodes"
+            },
             [],
         )?;
         if self.version < RECOVERY_VERSION {
@@ -382,8 +897,13 @@ impl Storage {
             let root = id_from_sql(root)?;
             let mut nodes = read_nodes(
                 &self.conn,
-                "SELECT node_id, parent_id, position, title, body
-                 FROM trash_nodes WHERE entry_id = ?1 ORDER BY node_id",
+                if self.version >= COLOUR_VERSION {
+                    "SELECT node_id, parent_id, position, title, body, colour
+                     FROM trash_nodes WHERE entry_id = ?1 ORDER BY node_id"
+                } else {
+                    "SELECT node_id, parent_id, position, title, body, NULL
+                     FROM trash_nodes WHERE entry_id = ?1 ORDER BY node_id"
+                },
                 [entry_id],
             )?;
             // The entry's root goes first.
@@ -410,8 +930,13 @@ impl Storage {
             let (checkpoint_id, created_at, reason) = row?;
             let nodes = read_nodes(
                 &self.conn,
-                "SELECT node_id, parent_id, position, title, body
-                 FROM checkpoint_nodes WHERE checkpoint_id = ?1 ORDER BY node_id",
+                if self.version >= COLOUR_VERSION {
+                    "SELECT node_id, parent_id, position, title, body, colour
+                     FROM checkpoint_nodes WHERE checkpoint_id = ?1 ORDER BY node_id"
+                } else {
+                    "SELECT node_id, parent_id, position, title, body, NULL
+                     FROM checkpoint_nodes WHERE checkpoint_id = ?1 ORDER BY node_id"
+                },
                 [checkpoint_id],
             )?;
             checkpoints.push(Checkpoint::from_stored(created_at, reason, nodes)?);
@@ -432,14 +957,112 @@ impl Storage {
     }
 }
 
-fn write_nodes(tx: &Transaction, notebook: &Notebook) -> Result<(), StorageError> {
+/// The version a save leaves the file at: it never goes down, and only a save that has something
+/// for the attachments table takes a version 3 file to 4.
+fn target_version(at_least: i64, has_attachments: bool, has_colour: bool) -> i64 {
+    let mut to = at_least;
+    if has_attachments {
+        to = to.max(ATTACHMENT_VERSION);
+    }
+    if has_colour {
+        to = to.max(COLOUR_VERSION);
+    }
+    to
+}
+
+/// Whether any active note carries a colour tag.
+fn has_colour(notebook: &Notebook) -> bool {
+    notebook
+        .in_tree_order()
+        .into_iter()
+        .any(|n| n.colour().is_some())
+}
+
+/// Whether any note held in Trash or a checkpoint carries a colour tag.
+fn recovery_has_colour(recovery: &Recovery) -> bool {
+    recovery
+        .trash()
+        .iter()
+        .flat_map(|t| t.nodes())
+        .chain(recovery.checkpoints().iter().flat_map(|c| c.nodes()))
+        .any(|n| n.colour().is_some())
+}
+
+/// One explicit step per version. `to` is never lower than `from` and never above the newest.
+fn migrate(tx: &Transaction, from: i64, to: i64) -> Result<(), StorageError> {
+    if from < RECOVERY_VERSION && to >= RECOVERY_VERSION {
+        tx.execute_batch(RECOVERY_SCHEMA)?;
+    }
+    if from < BASE_VERSION && to >= BASE_VERSION {
+        tx.execute_batch(VIEW_SCHEMA)?;
+    }
+    if from < ATTACHMENT_VERSION && to >= ATTACHMENT_VERSION {
+        tx.execute_batch(ATTACHMENT_SCHEMA)?;
+    }
+    if from < COLOUR_VERSION && to >= COLOUR_VERSION {
+        for statement in COLOUR_SCHEMA {
+            tx.execute_batch(statement)?;
+        }
+    }
+    Ok(())
+}
+
+/// The attachment part of a save, inside its transaction: drop what an existing file held when
+/// it is being replaced, copy another file's attachments, insert the pending ones. A plain
+/// INSERT: an id that already exists fails the whole save rather than replacing data.
+fn write_attachments(
+    tx: &Transaction,
+    version: i64,
+    plan: &AttachmentPlan,
+) -> Result<(), StorageError> {
+    if version < ATTACHMENT_VERSION {
+        return Ok(());
+    }
+    if plan.replace_existing {
+        tx.execute("DELETE FROM attachments", [])?;
+    }
     let mut insert = tx.prepare(
-        "INSERT INTO nodes (id, parent_id, position, title, body)
+        "INSERT INTO attachments (id, media_type, created_at, byte_len, data)
          VALUES (?1, ?2, ?3, ?4, ?5)",
     )?;
+    let mut put = |a: &Attachment| -> Result<(), StorageError> {
+        let len = i64::try_from(a.data.len())
+            .map_err(|_| StorageError::InvalidData("attachment too large".into()))?;
+        insert.execute(params![
+            a.id.as_str(),
+            a.media_type.mime(),
+            a.created_at,
+            len,
+            a.data
+        ])?;
+        Ok(())
+    };
+    if let Some(source) = plan.copy_from {
+        for id in source.attachment_ids()? {
+            let a = source
+                .attachment(&id)?
+                .ok_or_else(|| StorageError::InvalidData(format!("attachment {id} vanished")))?;
+            put(&a)?;
+        }
+    }
+    for a in &plan.pending {
+        put(a)?;
+    }
+    Ok(())
+}
+
+fn write_nodes(tx: &Transaction, notebook: &Notebook, version: i64) -> Result<(), StorageError> {
+    let coloured = version >= COLOUR_VERSION;
+    let mut insert = tx.prepare(if coloured {
+        "INSERT INTO nodes (id, parent_id, position, title, body, colour)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+    } else {
+        "INSERT INTO nodes (id, parent_id, position, title, body)
+         VALUES (?1, ?2, ?3, ?4, ?5)"
+    })?;
     // Parents come before children, as the foreign key requires.
     for node in notebook.in_tree_order() {
-        insert_node(&mut insert, &[], node)?;
+        insert_node(&mut insert, &[], node, coloured)?;
     }
     Ok(())
 }
@@ -479,13 +1102,17 @@ fn write_meta(tx: &Transaction, next_id: u64) -> Result<(), StorageError> {
     Ok(())
 }
 
-fn write_trash(tx: &Transaction, recovery: &Recovery) -> Result<(), StorageError> {
+fn write_trash(tx: &Transaction, recovery: &Recovery, version: i64) -> Result<(), StorageError> {
+    let coloured = version >= COLOUR_VERSION;
     let mut entry =
         tx.prepare("INSERT INTO trash_entries (id, deleted_at, root_node_id) VALUES (?1, ?2, ?3)")?;
-    let mut node = tx.prepare(
+    let mut node = tx.prepare(if coloured {
+        "INSERT INTO trash_nodes (entry_id, node_id, parent_id, position, title, body, colour)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+    } else {
         "INSERT INTO trash_nodes (entry_id, node_id, parent_id, position, title, body)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-    )?;
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+    })?;
     // Row ids follow list order (oldest first), which load reads back.
     for (i, trashed) in recovery.trash().iter().enumerate() {
         let entry_id = i64::try_from(i + 1)
@@ -496,26 +1123,35 @@ fn write_trash(tx: &Transaction, recovery: &Recovery) -> Result<(), StorageError
             id_to_sql(trashed.root().id())?
         ])?;
         for n in trashed.nodes() {
-            insert_node(&mut node, &[entry_id.into()], n)?;
+            insert_node(&mut node, &[entry_id.into()], n, coloured)?;
         }
     }
     Ok(())
 }
 
-fn write_checkpoints(tx: &Transaction, recovery: &Recovery) -> Result<(), StorageError> {
+fn write_checkpoints(
+    tx: &Transaction,
+    recovery: &Recovery,
+    version: i64,
+) -> Result<(), StorageError> {
+    let coloured = version >= COLOUR_VERSION;
     let mut checkpoint =
         tx.prepare("INSERT INTO checkpoints (id, created_at, reason) VALUES (?1, ?2, ?3)")?;
-    let mut node = tx.prepare(
+    let mut node = tx.prepare(if coloured {
+        "INSERT INTO checkpoint_nodes
+             (checkpoint_id, node_id, parent_id, position, title, body, colour)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+    } else {
         "INSERT INTO checkpoint_nodes
              (checkpoint_id, node_id, parent_id, position, title, body)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-    )?;
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+    })?;
     for (i, saved) in recovery.checkpoints().iter().enumerate() {
         let checkpoint_id = i64::try_from(i + 1)
             .map_err(|_| StorageError::InvalidData("too many checkpoints".into()))?;
         checkpoint.execute(params![checkpoint_id, saved.created_at(), saved.reason()])?;
         for n in saved.nodes() {
-            insert_node(&mut node, &[checkpoint_id.into()], n)?;
+            insert_node(&mut node, &[checkpoint_id.into()], n, coloured)?;
         }
     }
     Ok(())
@@ -527,6 +1163,7 @@ fn insert_node(
     insert: &mut rusqlite::Statement,
     lead: &[rusqlite::types::Value],
     node: &Node,
+    coloured: bool,
 ) -> Result<(), StorageError> {
     use rusqlite::types::Value;
     let mut values: Vec<Value> = lead.to_vec();
@@ -542,11 +1179,18 @@ fn insert_node(
     )?));
     values.push(Value::Text(node.title().to_string()));
     values.push(Value::Text(node.body().to_string()));
+    if coloured {
+        values.push(
+            node.colour()
+                .map_or(Value::Null, |c| Value::Text(c.as_str().to_owned())),
+        );
+    }
     insert.execute(rusqlite::params_from_iter(values))?;
     Ok(())
 }
 
-/// Reads rows of (id, parent_id, position, title, body) into nodes.
+/// Reads rows of (id, parent_id, position, title, body, colour) into nodes. A stored colour that is
+/// not one of the six identifiers is an error: the file is refused rather than the tag dropped.
 fn read_nodes<P: rusqlite::Params>(
     conn: &Connection,
     sql: &str,
@@ -560,27 +1204,214 @@ fn read_nodes<P: rusqlite::Params>(
             row.get::<_, i64>(2)?,
             row.get::<_, String>(3)?,
             row.get::<_, String>(4)?,
+            row.get::<_, Option<String>>(5)?,
         ))
     })?;
 
     let mut nodes = Vec::new();
     for row in rows {
-        let (id, parent_id, position, title, body) = row?;
+        let (id, parent_id, position, title, body, colour) = row?;
+        let colour = colour
+            .map(|text| {
+                Colour::parse(&text)
+                    .ok_or_else(|| StorageError::InvalidData(format!("unknown colour {text:?}")))
+            })
+            .transpose()?;
         let position = usize::try_from(position)
             .map_err(|_| StorageError::InvalidData("negative position".into()))?;
-        nodes.push(Node::from_parts(
-            id_from_sql(id)?,
-            parent_id.map(id_from_sql).transpose()?,
-            position,
-            title,
-            body,
-        ));
+        nodes.push(
+            Node::from_parts(
+                id_from_sql(id)?,
+                parent_id.map(id_from_sql).transpose()?,
+                position,
+                title,
+                body,
+            )
+            .with_colour(colour),
+        );
     }
     Ok(nodes)
 }
 
 fn data_version(conn: &Connection) -> Result<i64, StorageError> {
     Ok(conn.pragma_query_value(None, "data_version", |row| row.get(0))?)
+}
+
+/// The file change counter of the database header (bytes 24..28), if the file can be read.
+fn change_counter(path: &Path) -> Option<u32> {
+    use std::io::Read;
+    let mut header = [0u8; 28];
+    std::fs::File::open(path)
+        .ok()?
+        .read_exact(&mut header)
+        .ok()?;
+    Some(u32::from_be_bytes([
+        header[24], header[25], header[26], header[27],
+    ]))
+}
+
+fn inventory(
+    conn: &Connection,
+    version: i64,
+) -> Result<Vec<(AttachmentId, u64, MediaType)>, StorageError> {
+    if version < ATTACHMENT_VERSION {
+        return Ok(Vec::new());
+    }
+    // `typeof` and `length` of a BLOB come from the record header: no payload is read.
+    let mut q = conn.prepare(ROW_SHAPE_SQL)?;
+    let mut rows = q.query([])?;
+    let mut all = Vec::new();
+    while let Some(row) = rows.next()? {
+        let shape = RowShape::read(row)?;
+        match shape.check() {
+            Ok(entry) => all.push(entry),
+            Err(why) => return Err(StorageError::InvalidData(why)),
+        }
+    }
+    Ok(all)
+}
+
+const ROW_SHAPE_SQL: &str = "SELECT id, media_type, byte_len, typeof(id), typeof(media_type),
+        typeof(byte_len), typeof(data), length(data) FROM attachments ORDER BY id";
+
+/// One attachments row as stored, without its BLOB.
+struct RowShape {
+    id: Option<String>,
+    media_type: Option<String>,
+    len: Option<i64>,
+    types: [String; 4],
+    data_len: Option<i64>,
+}
+
+impl RowShape {
+    fn read(row: &rusqlite::Row<'_>) -> Result<Self, StorageError> {
+        // Values of a surprising type must not make reading fail: that is for `check` to name.
+        let text = |i: usize| -> Option<String> {
+            match row.get_ref(i) {
+                Ok(rusqlite::types::ValueRef::Text(t)) => {
+                    std::str::from_utf8(t).ok().map(str::to_owned)
+                }
+                _ => None,
+            }
+        };
+        let int = |i: usize| -> Option<i64> {
+            match row.get_ref(i) {
+                Ok(rusqlite::types::ValueRef::Integer(n)) => Some(n),
+                _ => None,
+            }
+        };
+        Ok(RowShape {
+            id: text(0),
+            media_type: text(1),
+            len: int(2),
+            types: [
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+            ],
+            data_len: int(7),
+        })
+    }
+
+    /// The validated entry, or what is wrong with the row (naming its id when it has a sane one).
+    fn check(&self) -> Result<(AttachmentId, u64, MediaType), String> {
+        let shown = self.id.as_deref().unwrap_or("(unreadable id)");
+        let bad = |why: &str| format!("attachment row {shown}: {why}");
+        let [t_id, t_media, t_len, t_data] = &self.types;
+        if t_id != "text" || t_media != "text" || t_len != "integer" || t_data != "blob" {
+            return Err(bad("a column holds a value of the wrong type"));
+        }
+        let id = self
+            .id
+            .as_deref()
+            .ok_or_else(|| bad("unreadable id"))
+            .and_then(|t| AttachmentId::parse(t).map_err(|e| bad(&e.to_string())))?;
+        let media = self
+            .media_type
+            .as_deref()
+            .and_then(MediaType::from_mime)
+            .ok_or_else(|| bad("unsupported media type"))?;
+        let len = self
+            .len
+            .and_then(|n| u64::try_from(n).ok())
+            .filter(|n| *n > 0 && *n <= crate::attachments::MAX_ATTACHMENT_BYTES)
+            .ok_or_else(|| bad("recorded size is not between 1 byte and the limit"))?;
+        if self.data_len != i64::try_from(len).ok() {
+            return Err(bad("recorded size differs from the stored bytes"));
+        }
+        Ok((id, len, media))
+    }
+}
+
+/// The attachments table must have the columns, types and primary key this program writes.
+/// (The CHECK constraints are not readable this way; every row is validated on its own anyway.)
+fn check_attachment_table(conn: &Connection) -> Result<(), StorageError> {
+    let mut q = conn.prepare("PRAGMA table_info(attachments)")?;
+    let found: Vec<(String, String, bool, i64)> = q
+        .query_map([], |r| {
+            Ok((r.get(1)?, r.get::<_, String>(2)?, r.get(3)?, r.get(5)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    if found.is_empty() {
+        return Err(StorageError::InvalidData(
+            "the attachments table is missing".into(),
+        ));
+    }
+    const WANT: [(&str, &str, bool, bool); 5] = [
+        ("id", "TEXT", false, true),
+        ("media_type", "TEXT", true, false),
+        ("created_at", "INTEGER", true, false),
+        ("byte_len", "INTEGER", true, false),
+        ("data", "BLOB", true, false),
+    ];
+    let same = found.len() == WANT.len()
+        && found.iter().zip(WANT).all(|(f, w)| {
+            f.0 == w.0 && f.1.eq_ignore_ascii_case(w.1) && (f.2 || !w.2) && ((f.3 == 1) == w.3)
+        });
+    if same {
+        Ok(())
+    } else {
+        Err(StorageError::InvalidData(
+            "the attachments table does not have the expected columns or primary key".into(),
+        ))
+    }
+}
+
+fn references(conn: &Connection, version: i64) -> Result<StoredReferences, StorageError> {
+    let mut out = StoredReferences::default();
+    if version < ATTACHMENT_VERSION {
+        return Ok(out);
+    }
+    collect_references(conn, "SELECT body FROM nodes", &mut out.active)?;
+    collect_references(conn, "SELECT body FROM trash_nodes", &mut out.trash)?;
+    collect_references(
+        conn,
+        "SELECT body FROM checkpoint_nodes",
+        &mut out.checkpoints,
+    )?;
+    Ok(out)
+}
+
+fn collect_references(
+    conn: &Connection,
+    sql: &str,
+    into: &mut BTreeSet<String>,
+) -> Result<(), StorageError> {
+    let mut q = conn.prepare(sql)?;
+    let mut rows = q.query([])?;
+    while let Some(row) = rows.next()? {
+        // Borrowed straight from SQLite's buffer: no copy of the body.
+        let body = row.get_ref(0)?.as_str().map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+        scan_references(body, |id| {
+            if !into.contains(id) {
+                into.insert(id.to_owned());
+            }
+        });
+    }
+    Ok(())
 }
 
 fn user_version(conn: &Connection) -> Result<i64, StorageError> {
@@ -1205,10 +2036,10 @@ mod tests {
     }
 
     #[test]
-    fn schema_versions_above_3_and_empty_files_stay_unsupported() {
+    fn schema_versions_above_5_and_empty_files_stay_unsupported() {
         let db = TempDb::new();
         Storage::create(db.path()).unwrap();
-        for version in [4, 99] {
+        for version in [6, 99] {
             write_raw(db.path(), &format!("PRAGMA user_version = {version};"));
             match Storage::open(db.path()) {
                 Err(StorageError::UnsupportedSchemaVersion(v)) => assert_eq!(v, version),
