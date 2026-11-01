@@ -58,8 +58,7 @@ holds: plain `X.Y.Z`.
 | `SHA256SUMS` | the three lines above |
 
 After the E13 cut-over the names lose `-egui` (`omatree-0.2.0-1-x86_64.pkg.tar.zst`, `omatree_0.2.0_amd64.deb`,
-`OmaTree-0.2.0-x86_64.AppImage`). That also matches the pattern in `omastore.toml`
-(`omatree-{version}-*-x86_64.pkg.tar.zst`, `usr/bin/omatree`), which today names the **Qt** package.
+`OmaTree-0.2.0-x86_64.AppImage`). (The former `omastore.toml`, removed on 2026-10-31, named the **Qt** package with the pattern `omatree-{version}-*-x86_64.pkg.tar.zst`, `usr/bin/omatree`.)
 
 **Every location that must change together** (`0.1.2` → `0.2.0`):
 
@@ -135,7 +134,7 @@ version only. "Record" is what the repository's own records say was *run*; "R1" 
 
 | # | Finding | Why | Resolution |
 |---|---|---|---|
-| B1 | **Maintainer decisions are open**: cut-over versus side-by-side prerelease; canonical app ID / binary / package names; version; which platforms are in the release. | The scripts, names, README and `omastore.toml` all depend on them. | Section 8. |
+| B1 | **Maintainer decisions are open**: cut-over versus side-by-side prerelease; canonical app ID / binary / package names; version; which platforms are in the release. | The scripts, names and README all depend on them. | Section 8. |
 | B2 | **Editor ownership and copyright statement not confirmed** (section 5). | Public distribution under `MIT OR Apache-2.0` rests on it; `THIRD_PARTY.md` says the maintainer must confirm. | Maintainer; R1 decides nothing. |
 | B3 | **The packages in `dist/` are stale** (2026-10-28, before M1/T1–T3, version 0.1.2) and **no egui package has been built or verified from a tag**. | A release must be built from the tag in a clean worktree, verified, and smoke-tested. | `docs/RELEASING.md` steps 5–8. |
 | B4 | **Linux smoke test of T1–T3 on the final build is not recorded** (those tickets were verified on macOS). | "Mark GUI behaviour that was not actually exercised as **not tested**." | `docs/RELEASING.md` step 8, recorded in the release notes. |
@@ -199,14 +198,14 @@ E13 checklist (from the E13a record, status as of R1):
 | 9 | Rollback and compatibility documentation | partly (README notebook note, `RELEASING.md` §15) |
 | 10 | Rebuild all three packages from the final commit, verify, install once for real on a scratch system | open (B3) |
 | 11 | Document unsupported platforms | done in README and section 6 |
-| – | Update `omastore.toml` to the new asset names, then check with the `omastore-check` skill | open; today it points at the Qt asset |
+| – | ~~Update `omastore.toml`~~ | no longer applicable: the file was removed on 2026-10-31; a future OmaStore listing would need a new manifest |
 | – | Fresh clone of the **committed** revision | see "Validation" |
 
 ## 8. Decisions requiring maintainer approval
 
 1. **Release shape:** side-by-side prerelease named `omatree-egui` (no cut-over, no Qt removal) **or** full E13 cut-over
    first. Recommendation: do not cut over for the first prerelease; ship beside Qt, then cut over at the next release.
-   (`omastore.toml` names the Qt asset; only the post-cut-over names fit it.)
+   (The former `omastore.toml` named the Qt asset; it was removed on 2026-10-31.)
 2. **Platforms in the first prerelease:** Linux x86_64 only (recommended; Windows and macOS packaging does not exist).
 3. **Version:** `0.2.0`, tag `v0.2.0`, GitHub prerelease flag (recommended), versus a SemVer suffix (needs script work).
 4. **Editor licence and copyright:** confirm the copyright line, the status of AI-assisted code and the missing licence file

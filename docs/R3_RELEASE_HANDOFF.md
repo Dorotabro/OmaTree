@@ -1,6 +1,6 @@
 # R3 release handoff: OmaTree egui 0.2.0 (Linux x86_64 prerelease)
 
-Prepared on `egui-integration` (HEAD `3ddde99`, R2) with **uncommitted** changes in the working tree. No commit, tag, push,
+Prepared on `egui-integration`. The R3 work was committed by the maintainer as `c5cc89c`; the logo-provenance update (2026-10-31) described in sections 6 and 9 and the R3a licensing audit (2026-10-31) are follow-ups that are **not yet committed**. No commit, tag, push,
 GitHub release, upload or publication was made; no real notebook or system installation was touched.
 
 ## 1. Where things stand: four separate states
@@ -10,7 +10,7 @@ GitHub release, upload or publication was made; no real notebook or system insta
 | **1. Ready to commit** | **YES** | Source, metadata, documentation and the release script are consistent; the full validation passes on this exact tree (section 5). |
 | **2. Ready to tag** | **NO, not yet** | Needs the commit, the merge to `main` and the validation re-run on that exact commit (`docs/RELEASING.md` §4–§5). Recommended to hold until the licence items in section 6 are answered, because the tagged source carries the legal notices. |
 | **3. Ready to build final artifacts** | **NO** | Final artifacts are built from the tag (`--ref v0.2.0`). The script and the process are ready and were run on a scratch commit (candidate only). |
-| **4. Ready to publish** | **NO: BLOCKED** | The licensing gate is open (section 6), final artifacts do not exist, and the maintainer has not authorized tagging or publication. |
+| **4. Ready to publish** | **NO: BLOCKED** | The licensing gate is **closed** (2026-11-01, section 6), but final artifacts do not exist and the maintainer has not authorized tagging or publication. |
 
 ## 2. Decisions and proposed values
 
@@ -81,19 +81,19 @@ and no E13 renaming was done.
 
 No test was modified to force a pass. The macOS-only `ulimit -v` test was not run on a Mac (passes on Linux).
 
-## 6. Licensing gate: BLOCKED for public release
+## 6. Licensing gate: CLOSED (2026-11-01)
 
-Decided by the maintainer: `MIT OR Apache-2.0` continues. Recorded and checked. **Not resolved** (and not declared resolved; full list in
+**Final maintainer decision (2026-11-01):** `MIT OR Apache-2.0` approved for the project code the maintainer is entitled to license; "OmaTree contributors" accepted as the copyright attribution, with ChatGPT and Claude assistance documented separately; logo and icons are their own artwork; the OmaStore listing is removed; third-party dependencies, fonts and assets keep their licences and notices. Final checks found no unresolved obligation. Items below, all closed (full list in
 `docs/LICENSING_INVENTORY_0.2.0.md`, `docs/R3_LICENSING_REPORT.md`, `THIRD_PARTY.md`):
 
-1. **Logo and icon provenance** (SVG logo with an embedded raster, derived PNG icons, `windows/omatree.ico`): author, tool and terms are
-   documented nowhere; they ship in every package. **The maintainer must state their origin and distribution terms.**
-2. Editor crate: maintainer's confirmation that the copyright wording "OmaTree contributors" and distribution under `MIT OR Apache-2.0`
-   are intended for code imported from a repository that had no licence file and was developed primarily with AI assistance (recorded
-   as provenance; no legal conclusion drawn).
-3. Contributor identity ("Martin Rudinec" commits; one outside contribution of 7 lines with no contributor agreement).
-4. Liberation fonts: exact release and "unmodified" unverified against upstream.
-5. Debian ships the Apache text by reference (Debian convention).
+1. ~~Logo and icon provenance~~ **resolved 2026-10-31**: the maintainer states that he designed and drew the logo entirely in Affinity, with no AI-generated or third-party artwork, and authorizes the logo and its exported icons under `MIT OR Apache-2.0`. Recorded; the SVG, PNGs and ICO were verified against it and are hash-checked by `verify-sources.sh`.
+2. ~~Editor crate and generic holder~~ **accepted by the maintainer (2026-11-01)** (R3a findings: the prototype's 13 commits are all by the repository owner's account, no third-party
+   code was found, "OmaTree contributors" fits a history with several contributors; no licence file existed at the imported revision, and rights in
+   AI-assisted code are not decided here).
+3. ~~Contributor identity and the outside contribution~~ **resolved**: you stated that "Martin Rudinec" is your own identity ("Finish Some" is the same GitHub account id as `Dorotabro`), and you decided to **remove `omastore.toml`**, the only outside contribution (7 lines, PR #1), from the tree on 2026-10-31. It is gone from the tree and from the 0.2.0 source archive; it stays in Git history and earlier tags. No contributor question remains.
+4. ~~Liberation fonts~~ **resolved in R3a**: version 2.1.5, byte-identical to Arch `ttf-liberation 2.1.5-2`, compared with the upstream archive, unmodified by OmaTree, notices preserved.
+5. ~~Debian Apache text by reference~~ **resolved in R3a**: `LICENSE-MIT` and the complete `LICENSE-APACHE` installed under `/usr/share/doc/omatree-egui/`, `copyright` points at it (and keeps the lintian-required common-licenses reference). The shipped
+   Debian files changed, so the earlier Debian candidate is stale (section 9).
 
 Closed in R3: the three notice copies highlighted in R2 are identical to the repositories at the exact commits recorded in the locked
 crates (krilla 0.8.2, profiling 1.0.18, gl_generator 0.14.0 / khronos_api 3.1.0).
@@ -142,8 +142,9 @@ step: the native portal dialogs, drag and drop, Compact Notebook, X11, Hi-DPI.
 ## 9. Candidate provenance and checksums
 
 Built with the new script from a **scratch Git repository** that holds a copy of the working tree (a real commit does not exist yet), so the
-commit below cannot be fetched from GitHub. The packaged content equals the current working tree except three files that are not shipped
-(`release-build.sh`, `docs/PACKAGING_EGUI.md`, `docs/RELEASING.md`).
+commit below cannot be fetched from GitHub. The packaged content equalled the working tree at that moment except for files that are not shipped. **Since then `THIRD_PARTY.md`
+(shipped in every package) gained the logo provenance record, so the candidates now differ from the tree in that one shipped file**; a final build from the
+tag will include it. Candidate hashes are therefore doubly not final.
 
 | Field | Value |
 |---|---|
@@ -165,7 +166,7 @@ directory and run `sha256sum --check SHA256SUMS`; publish only if it passes.
 
 ## 10. Remaining blockers before publication
 
-1. Licensing gate (section 6), above all the logo/icon provenance statement.
+1. ~~Licensing gate (section 6)~~ **closed 2026-11-01**: every item is resolved or accepted.
 2. Maintainer authorization to commit, tag and upload (none given).
 3. Merge to `main` and the validation re-run on the exact commit; tag; final build from the tag; smoke test of the final packages;
    checksum check of the attached files.
@@ -187,7 +188,7 @@ cargo fmt --all -- --check && cargo clippy --locked --workspace --all-targets --
   && packaging/egui/tests/verify-sources.sh && python3 packaging/egui/third-party.py check THIRD_PARTY.md \
   && tools/pre-e9-compat.sh
 
-# 3. only after the licensing gate is cleared and you decide to tag
+# 3. the licensing gate is closed; only when you decide to tag
 git tag -a v0.2.0 -m "OmaTree egui 0.2.0 (prerelease)"
 git push origin v0.2.0
 
@@ -214,6 +215,6 @@ you prefer). Its links point at the `v0.2.0` tag, which must exist first. Check 
 ## 12. Recommendation
 
 - **Commit: GO.**
-- **Tag: HOLD** until the licensing items in section 6 (at least logo/icon provenance) are answered; technically ready after merge and re-validation.
+- **Tag: no licensing hold any more** (gate closed 2026-11-01); needs your explicit authorization, the commit, the merge to `main` and the validation re-run on that commit.
 - **Final build: GO once the tag exists** (script and process verified on a candidate).
-- **Publish: NO-GO (BLOCKED)** until licensing is resolved and final artifacts are built from the tag, smoke-tested and checksum-verified.
+- **Publish: NO-GO for now**: not a licensing block any more, but there is no tag and no final artifacts yet; they must be built from the tag, smoke-tested and checksum-verified, and you must authorize the upload.

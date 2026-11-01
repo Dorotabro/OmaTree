@@ -25,6 +25,8 @@ override_dh_auto_install:
 	mkdir -p debian/omatree-egui/usr/share/doc/omatree-egui
 	mv debian/omatree-egui/usr/share/licenses/omatree-egui/third-party-licenses.txt debian/omatree-egui/usr/share/doc/omatree-egui/
 	mv debian/omatree-egui/usr/share/licenses/omatree-egui/THIRD_PARTY.md debian/omatree-egui/usr/share/doc/omatree-egui/
+	# Both licence texts travel with the package; the copyright file does not rely on /usr/share/common-licenses.
+	mv debian/omatree-egui/usr/share/licenses/omatree-egui/LICENSE-MIT debian/omatree-egui/usr/share/licenses/omatree-egui/LICENSE-APACHE debian/omatree-egui/usr/share/doc/omatree-egui/
 	rm -rf debian/omatree-egui/usr/share/licenses
 
 # Not worth a -dbgsym package for this release.

@@ -8,7 +8,7 @@ was opened; nothing was installed into the normal system.
 ## 1. Release model
 
 - **Identity unchanged:** `io.github.Dorotabro.OmaTreeEgui`, binary `omatree-egui`, packages `omatree-egui`, desktop
-  `Name=OmaTree (egui)`. Qt packaging, `omastore.toml` and the published v0.1.0–v0.1.2 tags are untouched.
+  `Name=OmaTree (egui)`. Qt packaging and the published v0.1.0–v0.1.2 tags are untouched.
 - **Version 0.2.0 verified by building it**, in a scratch copy of the working tree (`git ls-files -co`, in
   `~/.cache/omatree-r2/rc`, its own throw-away Git repository) with only the version locations changed: the four
   `Cargo.toml`, the four workspace entries of `Cargo.lock`, a new AppStream `<release version="0.2.0">`, a new Debian
@@ -18,7 +18,7 @@ was opened; nothing was installed into the normal system.
   collide with `v0.1.2`.
 - **GitHub prerelease flag (standard GitHub behaviour, not exercised here):** a release created with `--prerelease` is
   not offered as "Latest", so `releases/latest` keeps pointing at v0.1.2 (Qt). That is the intended coexistence. It also
-  means anything that follows "latest" (including OmaStore through `omastore.toml`, which names the Qt asset) keeps
+  means anything that follows "latest" (including OmaStore, whose manifest `omastore.toml` named the Qt asset and has since been removed) keeps
   seeing v0.1.2. `docs/RELEASING.md` already says never to mark it latest.
 - **Exact proposed artifacts (pre-cut-over names):**
   `omatree-egui-0.2.0-1-x86_64.pkg.tar.zst`, `omatree-egui_0.2.0_amd64.deb`, `OmaTree-egui-0.2.0-x86_64.AppImage`,

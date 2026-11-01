@@ -44,6 +44,18 @@ files (each distinct text once, with the crates it came from).
 
 **Licensing decision and provenance (R3, 2026-10-31), and what is still open.**
 
+*Final licensing decision for 0.2.0 (2026-11-01).* The maintainer approves the existing **`MIT OR Apache-2.0`** dual licence for the
+project code they are entitled to license; accepts **"OmaTree contributors"** as the project's copyright attribution, with the
+development assistance from ChatGPT and Claude documented separately (the provenance paragraph below, not the copyright line);
+confirms the logo and icons as their own artwork (below); notes that the OmaStore listing was removed; and states that
+third-party dependencies, fonts and assets keep their own licences and notices (inventoried in this file and shipped in
+`third-party-licenses.txt`). Final checks found no unresolved obligation (R3b, 2026-11-01): the contributor history is accounted for
+(the maintainer's two Git identities, one account alias, and one outside contribution that no longer exists in the tree); no
+copied third-party code was found; the Liberation fonts, the sixteen upstream notice copies, the 300 compiled crates, SQLite and
+the logo are covered; every package carries both licence texts and the third-party notices. **The licensing gate is closed.** This
+records the maintainer's decision and the audit's findings; it is not legal advice, and it draws no conclusion about rights in
+AI-assisted output beyond the maintainer's own decision above.
+
 *Decision.* The maintainer authorizes continuing the existing dual licence for the whole repository: **`MIT OR
 Apache-2.0`**, at the user's option. `LICENSE-MIT` and `LICENSE-APACHE` at the repository root are the licence texts
 and were left exactly as they were (`LICENSE-APACHE` is byte-identical, ignoring line endings, to the unmodified
@@ -60,11 +72,12 @@ contributions are accepted under the project's licence.
 *The editor crate (`omatree-editor`, `crates/editor`).* Since ticket P2 it is a workspace crate, a clean snapshot (no
 Git history) of revision `30a95dd43064232dc1ac04315c8020e2307a223c` of the former private prototype repository. That
 revision carried **no licence file**; the crate now declares and is distributed under the workspace's licence on the
-maintainer's decision above. The prototype's 13 commits had a single author, the account that owns this repository;
-the imported source contains no copyright or "adapted from" marker.
+maintainer's decision above. The prototype's 13 commits all have one author identity, the account that owns this repository
+(same GitHub account id; re-checked in R3a); the imported source contains no copyright, SPDX or "adapted from" marker. Later
+changes in this repository (5 commits: 3 by the maintainer's account, including the 0.2.0 version bump, and 2, M1 and T3, by "Martin Rudinec") are covered by item 3 below.
 
 *Provenance: AI-assisted development.* **The maintainer confirms that the application, including the editor crate, was
-developed primarily with AI coding assistance.** This is recorded as a provenance fact. It is not treated as an automatic
+developed primarily with AI coding assistance (ChatGPT and Claude), and that all development and project contributions are theirs (the one outside contribution, the OmaStore listing, was removed on 2026-10-31).** This is recorded as a provenance fact. It is not treated as an automatic
 assignment of copyright to anyone, and not as a prohibition on licensing. This document draws **no legal conclusion**
 about whether, or to whom, rights subsist in AI-assisted output; that varies by jurisdiction and is the maintainer's
 responsibility. Consequences recorded here: the copyright line stays the generic project line above; nothing in the
@@ -98,29 +111,74 @@ analysis was done. The Qt-only C++ and QML are legacy and are not in the egui pa
    | `LiberationSans-Italic.ttf` | `8649cf5f2cbe4727549d78b714a3a7ee540718a13557769c4612fea105294c7e` |
    | `LiberationSans-Regular.ttf` | `baccc64becc3eb7d104b7c84d99f5314a0a1f896e2b3ea6c2f22fc08d2003bee` |
 
-   The font files report version 2.1.x in their metadata and are **not verified byte-for-byte against an upstream
-   release** (no upstream hashes were recorded); the OFL permits embedding, and the Reserved Font Name applies to
-   modified versions, so confirm that they are unmodified Liberation files if that matters.
+   **Origin and release (R3a, 2026-10-31).** All five files report `Version 2.1.5`, the copyright line above and the OFL licence
+   description in their `name` tables, all equal to the upstream 2.1.5 files'. `LICENSE-Liberation.txt` is byte-identical to the `LICENSE` of the upstream release
+   archive `liberation-fonts-ttf-2.1.5.tar.gz` (github.com/liberationfonts/liberation-fonts, archive SHA-256
+   `7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0`). The five files are **byte-identical** to the ones in
+   Arch Linux `ttf-liberation 2.1.5-2` (`pacman -Qkk`: 0 altered files). They are **not byte-identical** to the upstream
+   archive's TTFs, and neither are Debian's `fonts-liberation 1:2.1.5-3` (distributions rebuild the fonts). Table-by-table
+   comparison with the upstream 2.1.5 files: every glyph outline, advance width, `name` table, kerning and hinting table is
+   identical, and the character mapping is identical (only its binary encoding and the build timestamp differ), **except**
+   one glyph, U+25D5 (`uni25D5`), in `LiberationSans-Regular` and `LiberationSans-Italic`, which differs in outline. OmaTree
+   never edited the files (one commit adds them, `9924630`, ticket P2; they are byte-identical to the prototype repository's, added in `712f3e2` and
+   never changed there). Conclusion recorded: these are the unmodified Liberation 2.1.5 fonts as built and distributed by Arch Linux;
+   OmaTree has made no modification, so the Reserved Font Name restriction on modified versions does not arise from
+   OmaTree's use. The OFL requires the copyright notice and licence text to accompany redistribution; both are in
+   `LICENSE-Liberation.txt`, in `third-party-licenses.txt` of every package, and (R3a) in the Debian `copyright` file.
 
-**Unresolved rights and attribution issues (flagged, not resolved):**
+**Rights and attribution issues: status (all closed 2026-11-01; kept as the record of what was checked):**
 
-1. **AI-assisted provenance.** Recorded above. Whether anyone holds copyright in AI-assisted code, and the correctness of
-   the generic holder "OmaTree contributors", is not decided by this document. If the maintainer wants a named holder or
-   a different notice, `LICENSE-MIT`, Debian `copyright`, `packaging/windows/OmaTree.iss` and
-   `packaging/macos/Info.plist.in` carry the current line and must change together.
-2. **Logo and icon provenance is not documented.** `assets/logo/omatree-logo.svg` (it embeds a raster image), the PNG
-   icons derived from it and `windows/omatree.ico` were added by the maintainer's account (commit `8ea3bfa`, 2026-10-04).
-   Who created them, with which tool, and under what terms is **not recorded anywhere**. They are distributed in every
-   package, so the maintainer must state their origin and that they may be distributed under `MIT OR Apache-2.0` (or
-   state another licence for them).
-3. **Contributors other than the maintainer's accounts.** `git log` shows one outside contributor (Arthur Augusto,
-   `omastore.toml`, 7 lines, PR #1) and commits under the name "Martin Rudinec" from two local machine names. There is no
-   contributor licence agreement; `CONTRIBUTING.md` states that contributions are accepted under the project's licence.
-   The maintainer should confirm that the "Martin Rudinec" commits are theirs.
+1. **AI-assisted provenance and the generic holder.** Recorded above. Whether anyone holds copyright in AI-assisted code
+   is not decided by this document. R3a checked the history behind the wording "OmaTree contributors": the repository has at
+   least three contributing identities (below), so a generic project line is accurate and does not name an individual or an
+   AI provider (checked by `verify-sources.sh`). If the maintainer wants a named holder or a different notice,
+   `LICENSE-MIT`, Debian `copyright`, `packaging/windows/OmaTree.iss` and `packaging/macos/Info.plist.in` carry the current
+   line and must change together. **Closed: the maintainer accepted the wording on 2026-11-01 (above).**
+2. **Logo and icons: provenance and permission recorded; nothing open.** On 2026-10-31 the maintainer confirmed that the
+   original OmaTree logo was designed and drawn entirely by him in Affinity; that it consists of simple lines and dots on a
+   blue background; that no AI-generated graphics and no third-party artwork were used; and that he authorizes distribution
+   of the original logo and its exported icon variants under **`MIT OR Apache-2.0`**, alongside OmaTree. R3 checked the files
+   against that description: the SVG holds five circles, five paths and three rectangles plus one embedded 2000 x 2000 PNG
+   that is a single flat colour (`#283845`); the shipped PNG icons match the SVG rendered at the same size (RMSE 0.1-1.4 %); the
+   32, 64, 128 and 256 px frames of `windows/omatree.ico` are pixel-identical to the shipped PNGs and its 16, 24 and 48 px frames
+   show the same motif; the icons in the Arch, Debian and AppImage candidates are byte-identical to these files. The files'
+   SHA-256 (`verify-sources.sh` fails if one changes, so a new artwork needs a new statement):
+
+   | File | SHA-256 |
+   |---|---|
+   | `assets/logo/omatree-logo.svg` | `6e8581eedea7ee4d39aa22aadfd1c3e4d3f2a246a6c16391d323ed27e435a1bb` |
+   | `assets/logo/omatree-icon-32.png` | `b29ab1931fc556c9a15ac617e00f9cc0c8c1a329ef066056bcaa5cb946997a75` |
+   | `assets/logo/omatree-icon-64.png` | `0c16a8581beef7f52860d9d02e29c320a5896bcf6b2cc312a49596688836cd9e` |
+   | `assets/logo/omatree-icon-128.png` | `1a7023f604aef4c0b263c004a4be3ee8d5460acf6be447e71e7a919b4667f659` |
+   | `assets/logo/omatree-icon-256.png` | `b8ecc1bdfc853d7db3d852ceb5432a9d7ba4d4454fabf09f4d3b7d1cc8ab84e5` |
+   | `assets/logo/omatree-icon-512.png` | `d74df7c2ffca2725777c9214c4dd4c32e66dec2f6ba0162bd0426853deafb153` |
+   | `assets/logo/omatree-icon-1024.png` | `f4fb1e7a26e6f903dccf8968cf779afcd902e5ae8d9cd7db57aa7cc7d35707f9` |
+   | `windows/omatree.ico` | `5a049cde10e8459af63bede9bcda4218aabfc850e687e77e461cfcb4ecd4793a` |
+
+   This is the maintainer's statement of authorship and permission; the files themselves carry no author metadata, and no
+   legal conclusion is drawn here.
+3. **Contributors: history audit (R3a, 2026-10-31).** From `git log --all` (78 commits on all refs, none signed) and `git blame`
+   at HEAD (tracked text files, lines):
+
+   | Identity in Git | Commits | Lines at HEAD | What | Licensing position |
+   |---|---|---|---|---|
+   | `Dorotabro <261649146+Dorotabro@users.noreply.github.com>` | 66 (+3 below) | about 60,900 | the Qt and egui applications, core, editor, packaging | the repository owner's GitHub account |
+   | `Finish Some`, **same noreply address, same GitHub account id 261649146** | 3 | about 3,400 | Windows compatibility, installer, Preview key handling (`packaging/windows`, small edits in `src/`, `qml/`, `crates/core`) | same account as above under another display name: account identity, not the name, links them |
+   | `Martin Rudinec <neonapex@Mac.localdomain>` and `<neonapex@Martins-MacBook-Air.local>` | 4 + 4 | about 6,700 (editor 1,234; egui-app 3,030; core 660; packaging 1,528; Qt 259) | macOS packaging and compatibility (v0.1.1), M1 quit lifecycle, T1 colour tags, T2 header colour picker, T3 table inline formatting | two unconfigured local-machine identities with no account link in Git; **resolved by the maintainer's statement**: the maintainer states (2026-10-31) that "Martin Rudinec" is their own commit identity, from two of their machines, and that exactly one other human contributor exists (the OmaStore listing). Recorded as the maintainer's statement; it is not inferred from the name. Every commit is dated after `LICENSE-MIT`/`LICENSE-APACHE` (2026-10-03) and `CONTRIBUTING.md`'s licence sentence (2026-10-05) were committed |
+   | `Arthur Augusto <59454155+KitsuneSemCalda@users.noreply.github.com>` | 1 (merged by GitHub, PR #1, 2026-10-11) | 0 (the 7 lines were removed) | `omastore.toml`, **removed from the tree on 2026-10-31** | none remains in the tree; the commit stays in history |
+   | the prototype repository (`omatree-egui-editor-library`, 13 commits to `30a95dd`) | 13 | imported as `crates/editor` | the egui Markdown editor | all 13 commits by the account `Dorotabro` (same id); the revision has **no licence file, no copyright, SPDX or `license` field** |
+
+   *Outside contribution: no longer included.* PR #1 had added `omastore.toml`, seven lines of OmaStore listing metadata for the
+   Qt package; it was in no egui package. R3a inspected it (one commit, one file, unchanged since; no code, licence header,
+   trailer or notice requirement) and found no obligations, but it had no written grant from its author. **On 2026-10-31 the
+   maintainer decided to remove the file entirely**; it is deleted from the tree, so the 0.2.0 source archive and the packages
+   contain nothing from the outside contributor, and the maintainer chose not to contact the author. The commit `b29e0bf` remains in
+   Git history and in the earlier tags. Nothing in the tree depends on the file. **No contributor question remains**; the
+   maintainer states that all other development and contributions are theirs.
 4. **Screenshots** (`docs/screenshots/`) show OmaTree with the Kanagawa and a light palette and with Noto Emoji glyphs
    rendered; they are the maintainer's captures, are not in any package, and are covered by the repository licence unless
    stated otherwise. Colour palettes are data, not code.
-5. **Upstream licence copies and font release:** the Liberation fonts' exact release (above). The sixteen upstream copies (item 6) are still copies, not files shipped by the crates; the three taken from branch heads were verified identical to the commits the crates were published from.
+5. **Upstream licence copies:** the sixteen upstream copies (item 6) are still copies, not files shipped by the crates; the three taken from branch heads were verified identical to the commits the crates were published from. **Fonts: resolved in R3a** (origin, release and notices above). **Debian: resolved in R3a**, the `copyright` file keeps the Debian-conventional reference (lintian requires it and rejects an embedded copy) and now also points at the complete Apache-2.0 text that the package installs as `/usr/share/doc/omatree-egui/LICENSE-APACHE` beside `LICENSE-MIT`.
 
 6. Sixteen crates declare a licence expression but ship no licence file inside the published crate (the
    egui family: `egui`, `eframe`, `epaint`, `emath`, `ecolor`, `egui-winit`, `egui_glow`,

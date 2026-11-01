@@ -21,10 +21,10 @@ Version placeholders: `X.Y.Z` is the version in `Cargo.toml`, `vX.Y.Z` the tag. 
 - All **release blockers** in `docs/R1_RELEASE_AUDIT.md` are closed, and the maintainer has approved the version,
   the licence and copyright statement, and the artifact list.
 - **Licensing (R3):** the repository is `MIT OR Apache-2.0` by the maintainer's decision of 2026-10-31
-  (`THIRD_PARTY.md`, "Licensing decision and provenance"; `docs/EGUI_DECISIONS.md` decision 10). The items listed
-  there under "Unresolved rights and attribution issues" (notably the **logo and icon provenance**, and the AI-assistance
-  provenance) are either resolved by the maintainer in writing, with `THIRD_PARTY.md` updated, or accepted explicitly
-  for a prerelease. Do not publish with them silently open.
+  (`THIRD_PARTY.md`, "Licensing decision and provenance"; `docs/EGUI_DECISIONS.md` decision 10). The licensing gate was
+  **closed on 2026-11-01** by the maintainer's final decision (`THIRD_PARTY.md`, "Final licensing decision for 0.2.0"; every
+  item under "Rights and attribution issues: status" is resolved or accepted). If a later change adds code, artwork, fonts or a
+  contributor that those records do not cover, re-open it before publishing.
 - A Linux x86_64 machine with Rust (the pinned toolchain, see `docs/PACKAGING_EGUI.md` "Reproducibility"), `git`,
   `python3`, `makepkg`, Docker (or Podman) with network access, `bsdtar`, `readelf`, `objdump`, `xmllint`,
   `desktop-file-validate`, `appstreamcli`, and `gh` logged in.
@@ -77,7 +77,7 @@ reviewable, revertible change that:
 2. makes `omatree-egui` the workspace default and removes Qt (`default-members`, `build.rs`, `cpp/`, `qml/`, the
    `cxx`/`cxx-qt` dependencies, the QML tests, Qt packaging, Qt sections of `THIRD_PARTY.md`), keeping `crates/core`;
 3. adds `Provides/Conflicts/Replaces` (Arch, Debian) for the Qt package `omatree`;
-4. updates `omastore.toml` (it names the Qt asset `omatree-{version}-*-x86_64.pkg.tar.zst` and `usr/bin/omatree`);
+4. (no `omastore.toml` exists any more; it was removed on 2026-10-31, so there is no OmaStore manifest to update);
 5. updates `AGENTS.md`, `ARCHITECTURE.md`, `README.md`, `docs/PACKAGING_EGUI.md`.
 
 If the first egui prerelease ships **beside** Qt (no cut-over), skip 2 to 4 and publish under the `omatree-egui`
@@ -253,7 +253,7 @@ sha256sum --check SHA256SUMS
 
 Install one package on a clean system, start it, open and save a throw-away notebook. Check the release page
 (assets, prerelease flag, notes), the README at the tag (it must not describe unreleased things as available),
-and that `omastore.toml` (if kept) points at assets that exist. Open an issue for each defect found.
+and, if an OmaStore manifest is ever added again, that it points at assets that exist. Open an issue for each defect found.
 
 ## 15. Rollback and corrective release
 

@@ -14,8 +14,16 @@ Comment: OmaTree is dual-licensed: you may use it under either licence. The
  notice files are in /usr/share/doc/omatree-egui/third-party-licenses.txt. Qt
  is not part of this package. The editor (omatree-editor, a workspace
  crate of this source tree) is under the same terms as OmaTree, and embeds the
- Liberation fonts (SIL OFL-1.1); see THIRD_PARTY.md, "Flagged for manual
- review".
+ Liberation fonts (see the next paragraph).
+
+Files: crates/editor/assets/fonts/*
+Copyright: Digitized data copyright (c) 2010 Google Corporation
+ Copyright (c) 2012 Red Hat, Inc.
+License: OFL-1.1
+Comment: Liberation Sans (Regular, Bold, Italic, Bold Italic) and Liberation Mono
+ (Regular), version 2.1.5, embedded in the executable for PDF export. Reserved Font
+ Name "Liberation". The full SIL Open Font License 1.1 and the copyright notice are in
+ /usr/share/doc/omatree-egui/third-party-licenses.txt.
 
 License: MIT
  Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -38,4 +46,6 @@ License: MIT
 
 License: Apache-2.0
  On Debian systems, the full text of the Apache License, Version 2.0 can be
- found in /usr/share/common-licenses/Apache-2.0.
+ found in /usr/share/common-licenses/Apache-2.0. The same text is also shipped
+ with this package, so it does not depend on that file:
+ /usr/share/doc/omatree-egui/LICENSE-APACHE.

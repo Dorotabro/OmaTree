@@ -13,7 +13,7 @@ Working tree uncommitted; no commit, tag, push or publication; no Rust code, sch
 - Notices already in use: the same "Copyright (c) 2026 OmaTree contributors" in `LICENSE-MIT`, Debian `copyright`, the Windows
   installer resources and the macOS `Info.plist`. No SPDX or copyright headers exist in source files (none are required).
 - History: 65 commits by `Dorotabro`, 3 by "Finish Some" (same account email), 8 by "Martin Rudinec" (two local hostnames),
-  1 by an outside contributor (`omastore.toml`, PR #1).
+  1 by an outside contributor (`omastore.toml`, PR #1; the file was removed from the tree on 2026-10-31, see item 3 below).
 
 ## Requirements, one by one
 
@@ -23,9 +23,9 @@ Working tree uncommitted; no commit, tag, push or publication; no Rust code, sch
 | 2 | Consistent `MIT OR Apache-2.0` | **Done**: the four manifests were already consistent; AppStream `project_license`, Debian `copyright` ("MIT or Apache-2.0", DEP-5 spelling) and the PKGBUILD (`MIT`, `Apache-2.0`) agree. Checked by `verify-sources.sh`. |
 | 3 | Both licence files in the source distribution; notices in binary packages | **Verified**: both files and the fonts' notice are tracked (so in every `git archive` and in the source tarball built for the Arch package); Arch package and AppImage install `LICENSE-MIT`, `LICENSE-APACHE`, `THIRD_PARTY.md`, `third-party-licenses.txt` under `usr/share/licenses/omatree-egui/`; the `.deb` follows Debian policy: `copyright` (DEP-5) holds the MIT text and names Apache-2.0, whose text is the one in `/usr/share/common-licenses/Apache-2.0` on every Debian system, plus `THIRD_PARTY.md` and `third-party-licenses.txt` in `usr/share/doc/omatree-egui/`. The `.deb` therefore contains no copy of the Apache text itself; that is the Debian convention, but if a self-contained copy is wanted it is a packaging change for the maintainer to approve. |
 | 4 | Existing copyright attribution; no invented holders; no AI-provider ownership | **Done**: the project's existing generic line is kept everywhere; no person, company or AI provider was added. A check fails if an AI provider appears in a copyright line of the licence, Debian copyright, AppStream or manifests. |
-| 5 | Separately licensed dependencies, fonts, assets | **Documented and checked**: 300 crates (no copyleft-only; table current), egui default fonts (OFL, Ubuntu Font Licence, Hack), SQLite (public domain), `emojis` data (Unicode-3.0, `LICENSE-UNICODE` in the bundle), the five Liberation fonts (OFL-1.1, notice beside them and in the bundle; **SHA-256 now recorded in `THIRD_PARTY.md` and checked**). Unresolved: logo/icon provenance, below. |
+| 5 | Separately licensed dependencies, fonts, assets | **Documented and checked**: 300 crates (no copyleft-only; table current), egui default fonts (OFL, Ubuntu Font Licence, Hack), SQLite (public domain), `emojis` data (Unicode-3.0, `LICENSE-UNICODE` in the bundle), the five Liberation fonts (OFL-1.1, notice beside them and in the bundle; **SHA-256 now recorded in `THIRD_PARTY.md` and checked**). The logo and icons are the maintainer's original artwork under `MIT OR Apache-2.0` (recorded 2026-10-31, checked by hash). |
 | 6 | Third-party code copied into the project | **Reviewed, none found** by search (headers, "adapted/copied/based on/ported from", licence text, source URLs, vendored directories, data tables). A search cannot prove absence and no similarity analysis was done; stated as such in `THIRD_PARTY.md`. |
-| 7 | Flag unresolved issues | **Done**, below and in `THIRD_PARTY.md`, "Unresolved rights and attribution issues". |
+| 7 | Flag unresolved issues | **Done**, below and in `THIRD_PARTY.md`, "Rights and attribution issues: status". |
 | 8 | Update `THIRD_PARTY.md`, release docs, checks | **Done**: `THIRD_PARTY.md` (decision, AI provenance, copied-code review, separately licensed material, font hashes, open issues); `docs/EGUI_DECISIONS.md` decision 10; `docs/RELEASING.md` (licensing precondition, what `verify-sources.sh` now checks, release-note content); README licence section carries the notice; `verify-sources.sh` has 10 new licensing checks (negative controls: wrong manifest licence, appended text in `LICENSE-APACHE`, changed copyright holder in Debian `copyright`, one changed font byte each fail as intended). |
 
 **AI assistance.** Recorded in `THIRD_PARTY.md` as a provenance fact on the maintainer's confirmation: the application,
@@ -34,19 +34,20 @@ a prohibition, and **no legal conclusion is drawn** about whether or to whom rig
 maintainer carries that decision. Whether to say so in the public README or release notes is left to the maintainer (the
 README currently states only the licence and the generic notice).
 
-## Unresolved (flagged, not resolved)
+## Status of the flagged items (all closed 2026-11-01)
 
-1. **Logo and icon provenance.** `assets/logo/omatree-logo.svg` (embeds a raster image), the derived PNG icons and
-   `windows/omatree.ico` ship in every package. Their creator, tool and terms are recorded nowhere. The maintainer must state
-   origin and that they may be distributed under `MIT OR Apache-2.0` (or another stated licence). **Open; the only item I would
-   treat as needing an answer before a public prerelease.**
-2. **AI-assisted provenance and the generic holder "OmaTree contributors"**: a maintainer-owned legal judgement; the notice
-   is unchanged. If it changes, `LICENSE-MIT`, Debian `copyright`, `OmaTree.iss` and `Info.plist.in` change together.
-3. **Contributor identity:** confirm the "Martin Rudinec" commits are the maintainer's; one outside contribution (7 lines)
-   rests on the `CONTRIBUTING.md` statement, with no contributor agreement.
-4. Fonts: exact Liberation release (metadata reports 2.1.x) and "unmodified" are unverified against upstream; 16 crates'
-   notices are upstream copies (three from branch heads).
-5. Debian ships the Apache text by reference (above), a policy-conformant choice to confirm.
+**Final decision (2026-11-01):** the maintainer approves `MIT OR Apache-2.0` for the project code they are entitled to license, accepts "OmaTree contributors" as the copyright attribution (ChatGPT and Claude assistance documented separately in `THIRD_PARTY.md`), confirms the logo and icons as their own, notes the OmaStore listing is removed, and states that third-party dependencies, fonts and assets keep their licences and notices. Final checks found no unresolved obligation; **the licensing gate is closed.**
+
+
+1. ~~Logo and icon provenance~~ **Resolved 2026-10-31.** The maintainer confirmed that he designed and drew the logo entirely himself in Affinity (simple lines and dots on a blue background), that no AI-generated or third-party artwork was used, and authorized the logo and its exported icon variants under `MIT OR Apache-2.0`. Recorded in `THIRD_PARTY.md` and `docs/LICENSING_INVENTORY_0.2.0.md`; the files were verified against that description (flat-colour embedded raster, PNGs and ICO frames matching the SVG, packaged icons byte-identical) and their SHA-256 are now checked by `verify-sources.sh`.
+2. ~~AI-assisted provenance and the generic holder "OmaTree contributors"~~ **accepted by the maintainer (2026-11-01)**; the notice
+   is unchanged. R3a found the wording accurate for the history (several contributing identities); acceptance only. If it
+   changes, `LICENSE-MIT`, Debian `copyright`, `OmaTree.iss` and `Info.plist.in` change together.
+3. ~~Contributor identity and the outside contribution~~ **Resolved.** The maintainer states that "Martin Rudinec" is their own identity; "Finish Some" is the same GitHub account id as `Dorotabro`. The only outside contribution, `omastore.toml` (7 lines of Qt-package listing metadata, PR #1), was inspected (no obligations identified) and then **removed from the tree by the maintainer's decision (2026-10-31)**; the tree and the 0.2.0 source archive no longer include it. No contributor question remains. (The commit stays in Git history and in the earlier tags.)
+4. ~~Fonts~~ **Resolved in R3a**: Liberation 2.1.5, byte-identical to Arch `ttf-liberation 2.1.5-2`, compared with the upstream archive
+   (differences: one glyph in two files, cmap encoding, timestamp), unmodified by OmaTree, notices preserved (`THIRD_PARTY.md`). 16 crates'
+   notices are upstream copies (three from branch heads, verified).
+5. ~~Debian Apache text by reference~~ **Resolved in R3a**: `LICENSE-MIT` and the complete `LICENSE-APACHE` are installed in `/usr/share/doc/omatree-egui/` and `copyright` points at them; checked by `verify-deb.sh` and `verify-sources.sh`.
 
 ## Verification
 
@@ -64,5 +65,4 @@ README currently states only the licence and the generic notice).
 - **Source licensing checks: ready.** The licence is decided and consistently declared and enforced by checks; the licence
   texts are intact and shipped in the source; `THIRD_PARTY.md` is current.
 - **Package licensing checks: ready** for Arch and AppImage; ready for Debian by Debian convention.
-- **Not fully closed:** item 1 (logo/icon provenance) needs the maintainer's statement; items 2–5 are recorded and may be
-  accepted explicitly for a prerelease. Nothing is silently declared resolved.
+- **Not fully closed:** items 2–5 are recorded and need the maintainer's explicit acceptance (or answers) for a prerelease; the logo/icon item was closed on 2026-10-31. Nothing is silently declared resolved.
